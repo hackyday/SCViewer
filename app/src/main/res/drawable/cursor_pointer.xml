@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Virtual mouse cursor drawn over the WebView (white arrow, dark outline
+     so it is visible on any background). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="26dp"
+    android:height="28dp"
+    android:viewportWidth="16"
+    android:viewportHeight="17.5">
+    <path
+        android:pathData="M0.7,0.7 L0.7,14.6 L4.5,11.2 L6.9,16.3 L9.2,15.2 L6.8,10.2 L11.7,10.2 Z"
+        android:strokeColor="#E6000000"
+        android:strokeWidth="1.2"
+        android:fillColor="#FFFFFF" />
+</vector>

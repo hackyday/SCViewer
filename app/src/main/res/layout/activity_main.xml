@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/sc_background">
+
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:focusable="true"
+        android:focusableInTouchMode="true" />
+
+    <!-- Top status strip: domain + menu hint -->
+    <LinearLayout
+        android:id="@+id/topStrip"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:layout_gravity="top"
+        android:orientation="horizontal"
+        android:background="#AA000000"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:gravity="center_vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/domainLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/sc_text_secondary"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/sc_text_hint"
+            android:textSize="12sp"
+            android:text="@string/menu_home" />
+    </LinearLayout>
+
+    <!-- Loading overlay -->
+    <FrameLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/sc_background"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:indeterminateTint="@color/sc_accent" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="48dp"
+            android:text="@string/loading"
+            android:textColor="@color/sc_text_secondary"
+            android:textSize="14sp" />
+    </FrameLayout>
+
+    <!-- Skip intro button (top-right, focusable) -->
+    <FrameLayout
+        android:id="@+id/skipIntroContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="24dp"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/skipIntroButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="@dimen/skip_button_width"
+            android:minHeight="@dimen/skip_button_height"
+            android:backgroundTint="@color/sc_accent"
+            android:textColor="@color/sc_text_primary"
+            android:text="@string/skip_intro"
+            android:focusable="true"
+            android:clickable="true" />
+    </FrameLayout>
+
+    <!-- Bottom menu bar -->
+    <LinearLayout
+        android:id="@+id/menuBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:orientation="horizontal"
+        android:background="@drawable/overlay_rounded"
+        android:padding="4dp"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/menuBtnHome"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_home"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
+            android:id="@+id/menuBtnFavorites"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_favorites"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
+            android:id="@+id/menuBtnHistory"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_history"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
+            android:id="@+id/menuBtnReload"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_reload"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
+            android:id="@+id/menuBtnBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_back"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
+            android:id="@+id/menuBtnSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_settings"
+            android:textColor="@color/sc_text_primary" />
+    </LinearLayout>
+
+</FrameLayout>

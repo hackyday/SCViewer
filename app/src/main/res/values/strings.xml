@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SC Viewer</string>
+    <string name="app_description">Streaming Community viewer for Fire TV</string>
+
+    <!-- Overlays -->
+    <string name="favorites_title">Preferiti</string>
+    <string name="history_title">Cronologia</string>
+    <string name="search_hint">Cerca titolo…</string>
+    <string name="empty_favorites">Nessun preferito. Tieni premuto OK su una pagina per aggiungerla.</string>
+    <string name="empty_history">Nessuna cronologia.</string>
+    <string name="open_in_browser">Apri nel browser</string>
+    <string name="refresh_domain">Aggiorna dominio</string>
+    <string name="current_domain_label">Dominio attuale</string>
+
+    <!-- Skip intro -->
+    <string name="skip_intro">Salta intro</string>
+
+    <!-- Loading -->
+    <string name="loading">Caricamento…</string>
+    <string name="reconnecting">Riconnessione al sito…</string>
+    <string name="domain_refresh_success">Dominio aggiornato</string>
+    <string name="domain_refresh_failed">Aggiornamento dominio fallito, uso cache locale</string>
+    <string name="load_timeout_retry">Caricamento lento, riprovo…</string>
+    <string name="load_failed_hint">Impossibile caricare il sito. Premi Menu e scegli Ricarica</string>
+
+    <!-- Menu -->
+    <string name="menu_favorites">Preferiti</string>
+    <string name="menu_history">Cronologia</string>
+    <string name="menu_reload">Ricarica</string>
+    <string name="menu_home">Home</string>
+    <string name="menu_back">Indietro</string>
+    <string name="menu_settings">Impostazioni</string>
+
+    <!-- Settings (cursor speed) -->
+    <string name="settings_title">Impostazioni</string>
+    <string name="settings_speed_label">Velocità del cursore</string>
+    <string name="settings_speed_value">Velocità: %d</string>
+    <string name="settings_hint">Regola con i tasti sinistra/destra del telecomando, poi premi OK su Salva. Tenendo premuta una direzione il cursore accelera; spingendo contro il bordo alto o basso dello schermo la pagina scorre.</string>
+    <string name="settings_save">Salva</string>
+    <string name="settings_cancel">Annulla</string>
+    <string name="settings_saved_toast">Velocità cursore: %d</string>
+</resources>

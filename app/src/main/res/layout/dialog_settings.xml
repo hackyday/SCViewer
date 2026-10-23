@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Impostazioni" dialog: cursor speed control, D-pad friendly. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="560dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/overlay_rounded"
+        android:padding="28dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textColor="@color/sc_accent"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/settings_speed_label"
+            android:textColor="@color/sc_text_primary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/settingsSpeedValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/sc_accent"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/settingsSpeedSeek"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:progressBackgroundTint="#444444"
+            android:progressTint="@color/sc_accent"
+            android:thumbTint="@color/sc_accent" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/settings_hint"
+            android:textColor="@color/sc_text_hint"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="24dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/settingsCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="@string/settings_cancel"
+                android:textColor="@color/sc_text_secondary" />
+
+            <Button
+                android:id="@+id/settingsSave"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:backgroundTint="@color/sc_accent"
+                android:text="@string/settings_save"
+                android:textColor="@color/sc_text_primary" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

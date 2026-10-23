@@ -1,0 +1,108 @@
+# SC Viewer default ad-block hosts
+# Standard hosts syntax: [IP] hostname [# comment]
+# Lines starting with '#' are comments.
+
+# ---- Google / DoubleClick ad stack ----
+0.0.0.0 doubleclick.net
+0.0.0.0 googleads.g.doubleclick.net
+0.0.0.0 googleadservices.com
+0.0.0.0 googlesyndication.com
+0.0.0.0 googletagservices.com
+0.0.0.0 adservice.google.com
+0.0.0.0 adservice.google.it
+0.0.0.0 adx.g.doubleclick.net
+0.0.0.0 *.doubleclick.net
+0.0.0.0 *.googlesyndication.com
+0.0.0.0 *.googleadservices.com
+
+# ---- Common pop-under / redirect networks ----
+0.0.0.0 popads.net
+0.0.0.0 popcash.net
+0.0.0.0 propellerads.com
+0.0.0.0 adsterra.com
+0.0.0.0 hilltopads.com
+0.0.0.0 ads.exoclick.com
+0.0.0.0 main.exosrv.com
+0.0.0.0 syndication.exoclick.com
+0.0.0.0 *.propellerads.com
+0.0.0.0 *.popads.net
+0.0.0.0 *.popcash.net
+0.0.0.0 *.adsterra.com
+0.0.0.0 *.hilltopads.com
+
+# ---- Streaming-site ad / popup CDNs ----
+0.0.0.0 upornia.com
+0.0.0.0 amateurcommunity.com
+0.0.0.0 javhd.com
+0.0.0.0 tracepath.me
+0.0.0.0 adspyglass.com
+0.0.0.0 *.adspyglass.com
+0.0.0.0 adskeeper.com
+0.0.0.0 mgid.com
+0.0.0.0 *.mgid.com
+0.0.0.0 tdscarb.com
+0.0.0.0 *.tdscarb.com
+0.0.0.0 juicyparkour.com
+0.0.0.0 nuroflix.com
+0.0.0.0 *.nuroflix.com
+
+# ---- Trackers / analytics ----
+0.0.0.0 google-analytics.com
+0.0.0.0 ssl.google-analytics.com
+0.0.0.0 www.google-analytics.com
+0.0.0.0 hotjar.com
+0.0.0.0 *.hotjar.com
+0.0.0.0 mixpanel.com
+0.0.0.0 *.mixpanel.com
+0.0.0.0 segment.io
+0.0.0.0 *.segment.io
+0.0.0.0 scorecardresearch.com
+0.0.0.0 *.scorecardresearch.com
+0.0.0.0 quantserve.com
+0.0.0.0 *.quantserve.com
+0.0.0.0 chartbeat.com
+0.0.0.0 *.chartbeat.com
+
+# ---- Malicious / scammy ad networks ----
+0.0.0.0 admaven.com
+0.0.0.0 *.admaven.com
+0.0.0.0 ad-maven.com
+0.0.0.0 clickadu.com
+0.0.0.0 *.clickadu.com
+0.0.0.0 trafficstars.com
+0.0.0.0 *.trafficstars.com
+0.0.0.0 exoclick.com
+0.0.0.0 *.exoclick.com
+0.0.0.0 juicyads.com
+0.0.0.0 *.juicyads.com
+0.0.0.0 adsterra.com
+0.0.0.0 *.adsterra.com
+
+# ---- Suspicious redirect / popup patterns sometimes injected by stream sites ----
+0.0.0.0 realsrv.com
+0.0.0.0 *.realsrv.com
+0.0.0.0 adserver.com
+0.0.0.0 *.adserver.com
+0.0.0.0 clicksor.com
+0.0.0.0 *.clicksor.com
+
+# ---- Adult ad networks (commonly used by streamingcommunity as popunders) ----
+0.0.0.0 trafficjunky.com
+0.0.0.0 *.trafficjunky.com
+0.0.0.0 exosrv.com
+0.0.0.0 *.exosrv.com
+0.0.0.0 juicyads.com
+0.0.0.0 *.juicyads.com
+
+# ---- Generic ad-serving TLDs ----
+0.0.0.0 *.adsrvr.org
+0.0.0.0 *.adnxs.com
+0.0.0.0 *.criteo.com
+0.0.0.0 *.criteo.net
+0.0.0.0 *.rubiconproject.com
+0.0.0.0 *.pubmatic.com
+0.0.0.0 *.openx.net
+0.0.0.0 *.moatads.com
+0.0.0.0 *.adsystem.com
+0.0.0.0 *.smartadserver.com
+0.0.0.0 *.3lift.com

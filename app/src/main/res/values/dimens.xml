@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="overlay_width">480dp</dimen>
+    <dimen name="overlay_corner">12dp</dimen>
+    <dimen name="overlay_padding">16dp</dimen>
+    <dimen name="list_item_height">56dp</dimen>
+    <dimen name="skip_button_width">160dp</dimen>
+    <dimen name="skip_button_height">48dp</dimen>
+    <dimen name="banner_width">320dp</dimen>
+    <dimen name="banner_height">180dp</dimen>
+</resources>
