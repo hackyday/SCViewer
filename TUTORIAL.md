@@ -25,7 +25,7 @@ il telecomando e l'app **Downloader**.
 
 1. Torna alla home, apri **Cerca** (icona lente) e digita `downloader`.
 2. Scarica **Downloader** di **AFTVnews** (icona arancione con freccia
-   rossa) → **Ottieni / Scarica** → **Apri**.
+   bianca) → **Ottieni / Scarica** → **Apri**.
 3. Al primo avvio **consenti l'accesso a foto, media e file**
    (serve per salvare l'APK). Chiudi la schermata di benvenuto.
 
