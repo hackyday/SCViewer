@@ -131,6 +131,10 @@ serializers).
 
 ## Sideload on a Fire TV Stick
 
+> **No computer?** See [TUTORIAL.md](TUTORIAL.md) — install directly on the
+> Fire TV with the Downloader app and the short code `7770492`
+> (guide in Italian / guida in italiano).
+
 1. **Enable ADB debugging on the Fire TV:**
    Settings → My Fire TV → Developer Options → ADB Debugging = ON,
    Install Unknown Apps = ON for "Docs" (or any file manager).
