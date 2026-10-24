@@ -8,9 +8,12 @@
  *     <video> — to the native side (AndroidJs.onVideoState). The native side
  *     uses this to auto-hide the cursor while watching.
  *  2. Apply playback commands from the native side (AndroidJs.takeCommand —
- *     remote play/pause key). Native -> JS pushing isn't possible into
-     * cross-origin iframes, so the agent polls; the command is only consumed
- *     by the frame that actually owns an active video.
+ *     remote play/pause key and "Riprendi" seek-to). Native -> JS pushing
+ *     isn't possible into cross-origin iframes, so the agent polls; the
+ *     command is only consumed by the frame that owns an active video.
+ *  3. Report playback position periodically (AndroidJs.onProgress) so the
+ *     native side can persist "continue watching" state (position + the
+ *     season/episode info it reads from the main frame).
  */
 (function () {
   if (window.__scvAgent) return;
@@ -51,8 +54,26 @@
     document.addEventListener(t, report, true);
   });
 
-  // Command pump: remote play/pause. Only the frame owning the active video
-  // takes the command, so the main frame and the player iframe never fight.
+  // Progress reporting for the "Riprendi" (continue watching) feature.
+  // Throttled to one report every 10 s while playing, plus an immediate
+  // report when the video pauses (capture phase, any frame).
+  var lastProgressAt = 0;
+  function maybeReportProgress(force) {
+    try {
+      var v = activeVideo();
+      if (!v || !v.duration) return;
+      var now = Date.now();
+      if (!force && now - lastProgressAt < 10000) return;
+      lastProgressAt = now;
+      AndroidJs.onProgress(Math.round(v.currentTime), Math.round(v.duration));
+    } catch (e) { /* no-op */ }
+  }
+  setInterval(function () { maybeReportProgress(false); }, 2000);
+  document.addEventListener('pause', function () { maybeReportProgress(true); }, true);
+
+  // Command pump: remote play/pause and resume seek-to. Only the frame
+  // owning the active video takes the command, so the main frame and the
+  // player iframe never fight over one request.
   setInterval(function () {
     try {
       var v = activeVideo();
@@ -64,6 +85,11 @@
           if (p && p.catch) p.catch(function () { /* autoplay refusal */ });
         } else {
           v.pause();
+        }
+      } else if (cmd.indexOf('seek-to:') === 0) {
+        var target = parseFloat(cmd.slice(8));
+        if (!isNaN(target)) {
+          try { v.currentTime = Math.max(0, Math.min((v.duration || 1e9) - 1, target)); } catch (e) { /* no-op */ }
         }
       }
     } catch (e) { /* no-op */ }

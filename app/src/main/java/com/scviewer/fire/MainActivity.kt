@@ -21,6 +21,9 @@ import androidx.webkit.WebViewFeature
 import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.HistoryStore
+import com.scviewer.fire.data.PageInfo
+import com.scviewer.fire.data.ProgressStore
+import com.scviewer.fire.data.WatchProgress
 import com.scviewer.fire.network.AdBlocker
 import com.scviewer.fire.ui.CursorController
 import com.scviewer.fire.ui.OverlayDialog
@@ -36,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 
 class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
@@ -47,11 +51,28 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private lateinit var skipIntroController: SkipIntroController
     private lateinit var cursorCtl: CursorController
     private lateinit var jsBridge: JsInterface
+    private lateinit var resumeChip: TextView
 
     /** True while a film is being watched (reported by the video agent
      *  running inside the player iframe). While set, D-pad left/right seeks
      *  and the cursor auto-hides after a few idle seconds. */
     @Volatile private var cinemaMode = false
+
+    /** Page state from the site's Inertia data (reported by page_inject.js on
+     *  every navigation): which show, movie/series, season/episode. */
+    @Volatile private var currentPageInfo: PageInfo? = null
+
+    /** Playback position last reported by the video agent (seconds). */
+    @Volatile private var lastVideoPos = 0
+    @Volatile private var lastVideoDur = 0
+
+    /** Set when the user picks "Riprendi": titleId -> position to seek to
+     *  once the video actually starts (native cannot push into the cross-
+     * origin player iframe; the video agent polls for the seek command). */
+    @Volatile private var pendingResume: Pair<Int, Int>? = null
+
+    /** titleId the resume chip was already shown for on the current page. */
+    private var resumeChipShownFor = 0
 
     /** Uptime of the last D-pad interaction — drives cursor auto-hide. */
     private var lastDpadAt = 0L
@@ -65,8 +86,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private val favorites: FavoritesStore by lazy { FavoritesStore.get(this) }
     private val history: HistoryStore by lazy { HistoryStore.get(this) }
     private val adBlocker: AdBlocker by lazy { AdBlocker.get(this) }
+    private val progress: ProgressStore by lazy { ProgressStore.get(this) }
 
     private val handler = Handler(Looper.getMainLooper())
+
+    /** Lenient parser for the PageInfo JSON coming from the page bridge. */
+    private val pageJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** Consecutive failed main-frame loads. Each failure triggers one
      *  domain refresh + reload until this hits zero; without the cap a dead
@@ -133,6 +158,32 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         )
         cursorCtl.attach()
         cursorCtl.show()
+
+        // "Riprendi" chip (top-right): offered when the user lands on a page
+        // of a show whose playback position we remember.
+        val density = resources.displayMetrics.density
+        resumeChip = TextView(this).apply {
+            visibility = View.GONE
+            text = getString(R.string.resume_chip_prefix)
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setBackgroundResource(R.drawable.overlay_rounded)
+            val pad = (10 * density).toInt()
+            setPadding(pad * 2, pad, pad * 2, pad)
+            elevation = 10f * density
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onResumeChipClicked() }
+        }
+        findViewById<FrameLayout>(android.R.id.content).addView(
+            resumeChip,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP or android.view.Gravity.END
+            ).apply { topMargin = (24 * density).toInt(); marginEnd = (24 * density).toInt() }
+        )
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -184,7 +235,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             jsBridge = JsInterface(
                 onSkipIntro = { available -> runOnUiThread { skipIntroController.setAvailable(available) } },
                 onAdBlockHit = { host -> adBlocker.addRuntime(host) },
-                onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } }
+                onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } },
+                onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
+                onProgress = { pos, dur -> runOnUiThread { onVideoProgress(pos, dur) } }
             )
             addJavascriptInterface(jsBridge, "AndroidJs")
 
@@ -221,6 +274,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         findViewById<Button>(R.id.menuBtnHistory).setOnClickListener {
             closeMenu()
             showHistory()
+        }
+        findViewById<Button>(R.id.menuBtnResume).setOnClickListener {
+            closeMenu()
+            showResumeDialog()
         }
         findViewById<Button>(R.id.menuBtnReload).setOnClickListener {
             closeMenu()
@@ -301,8 +358,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         showLoading(false)
         loadRetriesLeft = MAX_LOAD_RETRIES
         autoReloadUsed = false
-        // Record into history (deduped, capped at 20).
-        history.add(url, title.ifBlank { url })
+        // History is recorded by onPageInfoChanged — it knows the REAL show
+        // name and which pages are worth remembering (document.title here is
+        // just "StreamingCommunity" for every page).
+        resumeChip.visibility = View.GONE
     }
 
     override fun onPageError(errorCode: Int, description: String) {
@@ -357,6 +416,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 Log.i(TAG, "cinema mode ON (cursor auto-hides when idle)")
                 handler.removeCallbacks(cursorAutoHideRunnable)
                 handler.postDelayed(cursorAutoHideRunnable, CURSOR_HIDE_AFTER_MS)
+                // "Riprendi" in flight? Jump to the saved position now that
+                // the video is actually running.
+                if (pendingResume != null) pushPendingResumeSeek()
             }
         } else {
             // Debounce: buffering stalls flap the state; only leave cinema
@@ -387,6 +449,137 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
+    // -- Riprendi (continue watching) -----------------------------------------
+
+    /** Called from the JsInterface callback (UI thread): the Inertia page
+     *  state changed — the user navigated to a new page of the site. */
+    private fun onPageInfoChanged(json: String) {
+        val info = runCatching { pageJson.decodeFromString<PageInfo>(json) }.getOrNull() ?: return
+        if (info.titleId == 0) return
+        val prev = currentPageInfo
+        currentPageInfo = info
+
+        // A pending resume that doesn't match the page the user actually went
+        // to is stale — drop it (they aborted the resume).
+        pendingResume?.let { (tid, _) -> if (tid != info.titleId) pendingResume = null }
+
+        // History: record only meaningful pages, with the REAL show name (the
+        // document title alone is just "StreamingCommunity"). Watch pages get
+        // the season/episode suffix so the list is actually usable.
+        val url = webView.url ?: return
+        when {
+            info.isWatchPage -> history.add(url, info.displayLabel())
+            info.isTitlePage -> history.add(url, info.name)
+            else -> {} // home / genres / search: not history-worthy
+        }
+
+        // Resume chip: only on title/watch pages of a show we have progress
+        // for, once per page, and not when a resume is already in flight.
+        val p = progress.get(info.titleId)
+        if (p != null && p.isResumeable() && pendingResume == null &&
+            resumeChipShownFor != info.titleId
+        ) {
+            resumeChipShownFor = info.titleId
+            val tag = p.seasonEpisodeTag()
+            resumeChip.text = getString(R.string.resume_chip_prefix) + " " +
+                p.positionLabel() + (if (tag.isNotEmpty()) " ($tag)" else "")
+            resumeChip.visibility = View.VISIBLE
+            resumeChip.bringToFront()
+            Log.i(TAG, "resume chip shown for ${info.name} at ${p.positionLabel()}")
+        } else if (p == null || pendingResume != null) {
+            resumeChip.visibility = View.GONE
+        }
+        if (prev?.titleId != info.titleId) Log.i(TAG, "page info: $info")
+    }
+
+    /** Called from the JsInterface callback (UI thread) ~every 10 s while a
+     *  film plays (and once when it pauses). */
+    private fun onVideoProgress(posSec: Int, durSec: Int) {
+        lastVideoPos = posSec
+        lastVideoDur = durSec
+
+        // Seek confirmation: once playback is near the requested resume
+        // position, the resume is fulfilled.
+        pendingResume?.let { (tid, target) ->
+            if (tid == currentPageInfo?.titleId && kotlin.math.abs(posSec - target) < 20) {
+                Log.i(TAG, "resume seek confirmed at $posSec")
+                pendingResume = null
+            }
+        }
+
+        val info = currentPageInfo ?: return
+        if (!info.isWatchPage || durSec < 60) return
+        progress.save(
+            WatchProgress(
+                titleId = info.titleId,
+                name = info.name,
+                slug = info.slug,
+                type = info.type,
+                season = info.season,
+                episode = info.episode,
+                episodeName = info.episodeName,
+                positionSec = posSec,
+                durationSec = durSec,
+                url = webView.url ?: "",
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /** User picked a resume entry: reload its exact watch URL and remember
+     *  where to seek once the video is running. */
+    private fun startResume(p: WatchProgress) {
+        Log.i(TAG, "resume -> ${p.name} ${p.seasonEpisodeTag()} at ${p.positionLabel()}")
+        pendingResume = p.titleId to p.positionSec
+        resumeChip.visibility = View.GONE
+        resumeChipShownFor = p.titleId   // don't re-offer what we just started
+        if (p.url.isNotBlank() && p.url.startsWith("http")) {
+            webView.loadUrl(p.url)
+        } else {
+            showToast(getString(R.string.resume_unavailable))
+            pendingResume = null
+        }
+    }
+
+    private fun onResumeChipClicked() {
+        val info = currentPageInfo ?: return
+        val p = progress.get(info.titleId) ?: return
+        startResume(p)
+    }
+
+    /** Fires after the video started playing following a "Riprendi": push the
+     *  seek a few times (the player may still be buffering when the first
+     *  command lands) until a progress report confirms it. */
+    private fun pushPendingResumeSeek() {
+        val (tid, target) = pendingResume ?: return
+        if (tid != currentPageInfo?.titleId) return
+        jsBridge.requestSeekTo(target)
+        handler.postDelayed({ if (pendingResume != null) jsBridge.requestSeekTo(target) }, 3500)
+        handler.postDelayed({ if (pendingResume != null) jsBridge.requestSeekTo(target) }, 8000)
+    }
+
+    /** "Riprendi" dialog: everything in progress, most recent first. */
+    private fun showResumeDialog() {
+        val entries = progress.resumeable()
+        val items = entries.map { p ->
+            val tag = p.seasonEpisodeTag()
+            OverlayItem(
+                title = p.name + (if (tag.isNotEmpty()) " · $tag" else ""),
+                subtitle = "riprendi da ${p.positionLabel()}",
+                tag = p.titleId.toString()
+            )
+        }
+        val byId = entries.associateBy { it.titleId.toString() }
+        OverlayDialog(
+            context = this,
+            title = getString(R.string.menu_resume),
+            items = items,
+            emptyMessage = getString(R.string.empty_resume),
+            onItemClick = { item -> byId[item.tag]?.let { startResume(it) } },
+            onAddCurrent = null
+        ).show()
+    }
+
     private fun onMainLoadTimeout() {
         Log.i(TAG, "main-frame load timed out after ${LOAD_TIMEOUT_MS}ms")
         showLoading(false)
@@ -403,7 +596,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showFavorites() {
         val items = favorites.all().map {
-            OverlayItem(title = it.title, subtitle = it.url, tag = it.url)
+            // No URL in the list — the name is the info the user needs; the
+            // link travels in the tag.
+            OverlayItem(title = it.title, subtitle = "", tag = it.url)
         }
         val dialog = OverlayDialog(
             context = this,
@@ -413,7 +608,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             onItemClick = { item -> webView.loadUrl(item.tag) },
             onAddCurrent = {
                 val url = webView.url ?: return@OverlayDialog
-                val title = webView.title ?: url
+                // Prefer the real show name from the page bridge; the
+                // document title is just "StreamingCommunity".
+                val title = currentPageInfo?.takeIf { it.titleId != 0 }?.displayLabel()
+                    ?: (webView.title ?: url)
                 favorites.add(url, title)
                 Toast.makeText(this, "Aggiunto ai preferiti", Toast.LENGTH_SHORT).show()
             }
@@ -423,7 +621,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showHistory() {
         val items = history.all().map {
-            OverlayItem(title = it.title, subtitle = it.url, tag = it.url)
+            OverlayItem(title = it.title, subtitle = "", tag = it.url)
         }
         val dialog = OverlayDialog(
             context = this,

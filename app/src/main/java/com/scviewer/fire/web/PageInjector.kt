@@ -16,8 +16,11 @@ class PageInjector(private val context: Context) {
 
     fun injectInto(webView: WebView) {
         if (injectScript.isBlank()) return
-        // Wrap in an IIFE call to keep global scope clean.
-        val wrapped = "(function(){\n$injectScript\n})();"
+        // Wrap in an IIFE call to keep global scope clean; the trailing call
+        // re-reports the Inertia page state (the script itself is idempotent
+        // and won't re-install on SPA documents).
+        val wrapped = "(function(){\n$injectScript\n})();" +
+            "(window.__scvReportPageInfo&&window.__scvReportPageInfo());"
         webView.evaluateJavascript(wrapped, null)
     }
 

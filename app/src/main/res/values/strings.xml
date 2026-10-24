@@ -27,10 +27,16 @@
     <!-- Menu -->
     <string name="menu_favorites">Preferiti</string>
     <string name="menu_history">Cronologia</string>
+    <string name="menu_resume">Riprendi</string>
     <string name="menu_reload">Ricarica</string>
     <string name="menu_home">Home</string>
     <string name="menu_back">Indietro</string>
     <string name="menu_settings">Impostazioni</string>
+
+    <!-- Riprendi (continue watching) -->
+    <string name="resume_chip_prefix">Riprendi da</string>
+    <string name="empty_resume">Nessuna visione in corso. Guarda qualcosa e ritroverai qui il punto in cui eri.</string>
+    <string name="resume_unavailable">Impossibile riprendere, link non valido</string>
 
     <!-- Settings (cursor speed) -->
     <string name="settings_title">Impostazioni</string>

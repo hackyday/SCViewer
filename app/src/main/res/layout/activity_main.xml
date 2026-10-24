@@ -125,6 +125,14 @@
             android:textColor="@color/sc_text_primary" />
 
         <Button
+            android:id="@+id/menuBtnResume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/menu_resume"
+            android:textColor="@color/sc_text_primary" />
+
+        <Button
             android:id="@+id/menuBtnReload"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

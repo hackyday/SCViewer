@@ -223,12 +223,13 @@ branch name ever changes.
 | D-pad held at top/bottom edge | Scroll the page up/down |
 | OK (short press) | **Click** at the cursor position (real tap dispatched to the WebView) |
 | OK (long press) | Open the **Favorites** overlay |
-| Menu button | Toggle the bottom **menu bar** (Home / Favorites / History / Reload / Back / Impostazioni) |
+| Menu button | Toggle the bottom **menu bar** (Home / Favorites / History / Riprendi / Reload / Back / Impostazioni) |
 | Play/Pause | Toggle **play/pause** of the film being watched (works inside the player iframe via the video agent bridge) |
 | Impostazioni | Adjust the **cursor speed** (1–10) with a D-pad-friendly seek bar |
 | Back | Go back in WebView history; close overlay/menu if open |
 | Rewind / Fast-forward | Scroll the page (if the remote has these keys) |
 | Skip intro button (bottom-right) | Visible only when a video is in the intro window; press to jump to 30s |
+| **Riprendi** (menu) | **Continue watching** — per-show playback position (and season/episode for series); while browsing a title page a "Riprendi da…" chip offers to jump straight back |
 
 While a film is actually playing (a long, large video detected by the video
 agent injected in every frame), the cursor **auto-hides** ~4 s after the last

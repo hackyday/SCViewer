@@ -178,6 +178,81 @@
   setupSkipIntro();
   installScrollGuard();
 
+  // ---- 6. Page info collector -----------------------------------------------
+  // The site is Laravel Inertia: the server embeds the page state as JSON in
+  // the data-page attribute of the SSR HTML (Vue strips it at hydration, so
+  // the LIVE DOM has no [data-page]). Same-origin fetch of the current URL
+  // reliably returns it: show name, movie/series type and — on watch pages —
+  // the exact season/episode being played. Native uses it for History and
+  // Favorites naming and for the "Riprendi" (resume) feature.
+  function unescapeAttr(s) {
+    return s.replace(/&quot;/g, '"')
+            .replace(/&#0?39;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&');
+  }
+
+  function extractInfo(html) {
+    try {
+      var m = html.match(/data-page="([^"]+)"/);
+      if (!m) return null;
+      var j = JSON.parse(unescapeAttr(m[1]));
+      var t = j && j.props && j.props.title;
+      if (!t || !t.id) return null;
+      var ep = j.props.episode || null;
+      return {
+        component: j.component || '',
+        titleId: t.id,
+        name: t.name || '',
+        slug: t.slug || '',
+        type: t.type || '',
+        season: (ep && ep.season) ? ep.season.number : null,
+        episode: ep ? ep.number : null,
+        episodeId: ep ? ep.id : null,
+        episodeName: ep ? (ep.name || '') : null
+      };
+    } catch (e) { return null; }
+  }
+
+  var infoBusy = false;
+  function reportPageInfo() {
+    if (infoBusy) return;
+    infoBusy = true;
+    try {
+      fetch(location.pathname + location.search, { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          infoBusy = false;
+          var info = extractInfo(html);
+          if (info) {
+            try { AndroidJs.onPageInfo(JSON.stringify(info)); } catch (e) { /* no-op */ }
+          }
+        })
+        .catch(function () { infoBusy = false; });
+    } catch (e) { infoBusy = false; }
+  }
+  window.__scvReportPageInfo = reportPageInfo;
+
+  // First load: report quickly, then again in case the router settled late.
+  setTimeout(reportPageInfo, 500);
+  setTimeout(reportPageInfo, 2500);
+
+  // SPA navigation: Inertia drives history.pushState/replaceState — hook
+  // them (plus popstate) and re-report after the new page settles.
+  var navReport = function () { setTimeout(reportPageInfo, 700); };
+  try {
+    ['pushState', 'replaceState'].forEach(function (name) {
+      var orig = history[name].bind(history);
+      history[name] = function () {
+        var r = orig.apply(null, arguments);
+        navReport();
+        return r;
+      };
+    });
+  } catch (e) { /* no-op */ }
+  window.addEventListener('popstate', function () { setTimeout(reportPageInfo, 700); });
+
   // Re-run the cosmetic hide on DOM mutations (the site is a SPA), debounced.
   // hideAds() no longer mutates the DOM on no-op calls (see above), so the
   // observer cannot feed back into itself.
