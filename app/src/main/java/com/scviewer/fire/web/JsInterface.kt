@@ -22,7 +22,12 @@ class JsInterface(
     private val onAdBlockHit: (String) -> Unit,
     private val onVideoState: (Boolean) -> Unit,
     private val onPageInfo: (String) -> Unit,
-    private val onProgress: (Int, Int) -> Unit
+    private val onProgress: (Int, Int) -> Unit,
+    /** Called synchronously from the page when the user clicks a "Guarda"
+     *  link. Returns "resume" when a playback position exists for the title
+     *  (the page must block navigation while the native popup asks), or
+     *  "none" to let it proceed. Runs on the JS bridge thread. */
+    private val onPlayClicked: (Int) -> String
 ) {
 
     private data class Cmd(val text: String, val atMs: Long, val ttlMs: Long)
@@ -61,6 +66,15 @@ class JsInterface(
     @JavascriptInterface
     fun onProgress(positionSec: Int, durationSec: Int) {
         if (durationSec > 0 && positionSec >= 0) onProgress.invoke(positionSec, durationSec)
+    }
+
+    /** Called by page_inject.js on every "Guarda" click: the page blocks its
+     *  navigation when this returns "resume" and the native popup asks the
+     *  user whether to continue from the saved minute. */
+    @JavascriptInterface
+    fun onPlayClicked(titleId: String): String {
+        val tid = titleId.toIntOrNull() ?: return "none"
+        return onPlayClicked.invoke(tid)
     }
 
     /** Called by the video agent (80 ms poll). Returns and clears the next

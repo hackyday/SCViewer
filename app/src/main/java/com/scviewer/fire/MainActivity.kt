@@ -1,6 +1,7 @@
 package com.scviewer.fire
 
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.ComponentCallbacks2
 import android.os.Bundle
 import android.os.Handler
@@ -73,6 +74,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     /** titleId the resume chip was already shown for on the current page. */
     private var resumeChipShownFor = 0
+
+    /** The modal dialog currently on screen (favorites / history / resume /
+     *  settings / resume-question), if any. While one is up, D-pad keys go to
+     *  its native focus and cursor taps are routed to its window. */
+    private var activeDialog: Dialog? = null
 
     /** Uptime of the last D-pad interaction — drives cursor auto-hide. */
     private var lastDpadAt = 0L
@@ -156,6 +162,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             this, webView,
             findViewById<FrameLayout>(android.R.id.content)
         )
+        // While a dialog is on screen, cursor taps must land on the dialog's
+        // own window (the WebView below is hidden behind it and dead).
+        cursorCtl.overlayTargetProvider = { activeDialog?.window?.decorView }
         cursorCtl.attach()
         cursorCtl.show()
 
@@ -237,7 +246,20 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 onAdBlockHit = { host -> adBlocker.addRuntime(host) },
                 onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } },
                 onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
-                onProgress = { pos, dur -> runOnUiThread { onVideoProgress(pos, dur) } }
+                onProgress = { pos, dur -> runOnUiThread { onVideoProgress(pos, dur) } },
+                onPlayClicked = { tid ->
+                    // JS bridge thread — synchronous verdict. "resume" makes
+                    // the page hold the navigation while the popup asks.
+                    // NOTE: this@MainActivity — inside webView.apply the
+                    // unqualified `progress` is WebView.getProgress()!
+                    val p = if (tid != 0) this@MainActivity.progress.get(tid) else null
+                    if (p != null && p.isResumeable() && activeDialog == null) {
+                        runOnUiThread { showResumeQuestion(p) }
+                        "resume"
+                    } else {
+                        "none"
+                    }
+                }
             )
             addJavascriptInterface(jsBridge, "AndroidJs")
 
@@ -289,7 +311,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
         findViewById<Button>(R.id.menuBtnSettings).setOnClickListener {
             closeMenu()
-            SettingsDialog(this) { _ -> }.show()
+            SettingsDialog(this, onSaved = { _ -> }, onActiveChange = { d -> activeDialog = d }).show()
         }
     }
 
@@ -547,6 +569,34 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         startResume(p)
     }
 
+    /** "Guarda" clicked on a title we have progress for: ask whether to
+     *  continue from the saved minute or start over. */
+    private fun showResumeQuestion(p: WatchProgress) {
+        val tag = p.seasonEpisodeTag()
+        val name = p.name + (if (tag.isNotEmpty()) " · $tag" else "")
+        val dlg = android.app.AlertDialog.Builder(this, R.style.SCOverlay)
+            .setTitle(R.string.resume_question_title)
+            .setMessage(getString(R.string.resume_question_msg, name, p.positionLabel()))
+            .setPositiveButton(R.string.resume_yes) { _, _ -> startResume(p) }
+            .setNeutralButton(R.string.resume_restart) { _, _ ->
+                progress.remove(p.titleId)
+                resumeChip.visibility = View.GONE
+                // Let the original navigation proceed to the play page.
+                webView.evaluateJavascript(
+                    "(window.__scvContinuePlay&&window.__scvContinuePlay());", null
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        activeDialog = dlg
+        dlg.setOnDismissListener { activeDialog = null }
+        dlg.show()
+        // Default focus on "Riprendi" — the safe choice. (AlertDialog would
+        // otherwise land on a different button, and accidentally confirming
+        // "Ricomincia da capo" would throw the saved position away.)
+        dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.requestFocus()
+    }
+
     /** Fires after the video started playing following a "Riprendi": push the
      *  seek a few times (the player may still be buffering when the first
      *  command lands) until a progress report confirms it. */
@@ -576,7 +626,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             items = items,
             emptyMessage = getString(R.string.empty_resume),
             onItemClick = { item -> byId[item.tag]?.let { startResume(it) } },
-            onAddCurrent = null
+            onAddCurrent = null,
+            onActiveChange = { d -> activeDialog = d }
         ).show()
     }
 
@@ -614,7 +665,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     ?: (webView.title ?: url)
                 favorites.add(url, title)
                 Toast.makeText(this, "Aggiunto ai preferiti", Toast.LENGTH_SHORT).show()
-            }
+            },
+            onActiveChange = { d -> activeDialog = d }
         )
         dialog.show()
     }
@@ -629,7 +681,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             items = items,
             emptyMessage = getString(R.string.empty_history),
             onItemClick = { item -> webView.loadUrl(item.tag) },
-            onAddCurrent = null
+            onAddCurrent = null,
+            onActiveChange = { d -> activeDialog = d }
         )
         dialog.show()
     }
@@ -669,8 +722,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             return super.dispatchKeyEvent(event)   // default: leave the app
         }
 
-        // While the menu bar is open the native focus system walks its buttons.
-        if (isMenuOpen()) return super.dispatchKeyEvent(event)
+        // While the menu bar or a modal dialog is open, the native focus
+        // system walks it (menu buttons / list rows / dialog buttons) — the
+        // virtual cursor must not steal the keys.
+        if (activeDialog != null || isMenuOpen()) return super.dispatchKeyEvent(event)
 
         // Any D-pad touch counts as "user is interacting" for cursor auto-hide.
         if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&

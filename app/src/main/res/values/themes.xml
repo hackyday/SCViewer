@@ -36,9 +36,13 @@
         <item name="android:padding">16dp</item>
         <item name="android:textColor">@color/sc_text_primary</item>
         <item name="android:textSize">18sp</item>
-        <item name="android:focusable">true</item>
-        <item name="android:focusableInTouchMode">true</item>
-        <item name="android:clickable">true</item>
+        <!-- NOT clickable / NOT focusable-in-touch-mode: a clickable row
+             consumes DPAD_CENTER (TextView.performClick with no listener)
+             instead of firing the ListView's item click — that made every
+             overlay item dead to the OK button. The ListView manages focus
+             and clicks itself. -->
+        <item name="android:focusable">false</item>
+        <item name="android:clickable">false</item>
     </style>
 
     <style name="SCTitle">

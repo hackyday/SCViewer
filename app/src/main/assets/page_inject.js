@@ -172,6 +172,35 @@
     }
   };
 
+  // ---- 7. "Guarda" interceptor (resume popup) --------------------------------
+  // The play button (hero + title pages) is an anchor to /watch/<id>. When
+  // the user has saved progress for that title, the native side asks "riprendi?"
+  // BEFORE navigation: we query it synchronously here (JS-interface calls
+  // return on the calling thread) and block the navigation while the popup is
+  // up. Native restarts navigation via __scvContinuePlay on "Ricomincia".
+  document.addEventListener('click', function (e) {
+    try {
+      var a = e.target && e.target.closest ? e.target.closest('a[href*="/watch/"]') : null;
+      if (!a) return;
+      var m = (a.getAttribute('href') || '').match(/\/watch\/(\d+)/);
+      if (!m) return;
+      var verdict = 'none';
+      try { verdict = AndroidJs.onPlayClicked(m[1]) || 'none'; } catch (err) { return; }
+      if (verdict === 'resume') {
+        window.__scvPendingPlayHref = a.href;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    } catch (err2) { /* no-op */ }
+  }, true);
+
+  window.__scvContinuePlay = function () {
+    var h = window.__scvPendingPlayHref;
+    window.__scvPendingPlayHref = null;
+    if (h) { window.location.href = h; return 'ok'; }
+    return 'no-href';
+  };
+
   // ---- Run ----------------------------------------------------------------
   hideAds();
   killPopunders();

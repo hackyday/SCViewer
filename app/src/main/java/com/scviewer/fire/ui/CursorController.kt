@@ -129,40 +129,48 @@ class CursorController(
         if (heldDirs.isEmpty()) stopLoop()
     }
 
+    /** When a native dialog is on screen the host activity supplies its
+     *  decor view here, so cursor taps land ON THE DIALOG instead of the
+     *  WebView underneath (invisible behind it and dead to the user). */
+    var overlayTargetProvider: (() -> View?)? = null
+
     /** Dispatches a tap at the pointer position.
      *
      * Two-stage strategy for maximum reliability:
      *  1. PRIMARY: a real synthetic touch (ACTION_DOWN + ACTION_UP,
-     *     touchscreen source, finger tool type) dispatched to the WebView
-     *     SYNCHRONOUSLY — no JS round-trip before the DOWN, because slow
+     *     touchscreen source, finger tool type) dispatched SYNCHRONOUSLY —
+     *     to the active dialog's decor when one is up, otherwise to the
+     *     WebView. No JS round-trip before the DOWN, because slow
      *     renderers can stall evaluateJavascript callbacks and the tap
      *     would feel dead to the user.
-     *  2. VERIFY: ~380 ms later the page is asked for its mousedown
-     *     counter. If the counter did not advance, the WebView dropped the
-     *     synthetic touch and a full DOM-level mouse sequence + click() is
-     *     fired on the element under the pointer. The check is fully
-     *     self-contained (it re-installs the counter itself if
+     *  2. VERIFY (WebView taps only): ~380 ms later the page is asked for
+     *     its mousedown counter. If the counter did not advance, the WebView
+     *     dropped the synthetic touch and a full DOM-level mouse sequence +
+     *     click() is fired on the element under the pointer. The check is
+     *     fully self-contained (it re-installs the counter itself if
      *     page_inject.js is missing), so the fallback can never silently
      *     no-op. */
     fun click() {
         val c = cursor ?: return
         if (!active || clickPending) return
-        if (webView.parent == null) return   // detached during fullscreen video
+
+        val target = overlayTargetProvider?.invoke()
+        if (target == null && webView.parent == null) return   // detached during fullscreen video
 
         clickPending = true
 
         val tip = IntArray(2)
         c.getLocationInWindow(tip)
-        val wloc = IntArray(2)
-        webView.getLocationInWindow(wloc)
-        val lx = (tip[0] - wloc[0]).coerceIn(0, max(webView.width - 1, 0)).toFloat()
-        val ly = (tip[1] - wloc[1]).coerceIn(0, max(webView.height - 1, 0)).toFloat()
-        Log.i(TAG, "click at ($lx, $ly) view=${webView.width}x${webView.height}")
+        val tloc = IntArray(2)
+        target?.getLocationInWindow(tloc)
+        val lx = (tip[0] - tloc[0]).coerceIn(0, max((target?.width ?: 1) - 1, 0)).toFloat()
+        val ly = (tip[1] - tloc[1]).coerceIn(0, max((target?.height ?: 1) - 1, 0)).toFloat()
+        Log.i(TAG, "click at ($lx, $ly) on ${if (target != null) "dialog" else "webview"} ${target?.width ?: webView.width}x${target?.height ?: webView.height}")
 
         // 1) Primary path: dispatch the touch stream right now.
         val now = SystemClock.uptimeMillis()
         val down = makeTouch(MotionEvent.ACTION_DOWN, now, now, lx, ly)
-        val downOk = webView.dispatchTouchEvent(down)
+        val downOk = (target ?: webView).dispatchTouchEvent(down)
         down.recycle()
         Log.i(TAG, "touch DOWN consumed=$downOk")
 
@@ -174,10 +182,15 @@ class CursorController(
         handler.postDelayed({
             val t = SystemClock.uptimeMillis()
             val up = makeTouch(MotionEvent.ACTION_UP, now, t, lx, ly)
-            val upOk = webView.dispatchTouchEvent(up)
+            val upOk = (target ?: webView).dispatchTouchEvent(up)
             up.recycle()
             Log.i(TAG, "touch UP consumed=$upOk")
 
+            if (target != null) {
+                // Dialog tap — the page-verification fallback doesn't apply.
+                clickPending = false
+                return@postDelayed
+            }
             handler.postDelayed({
                 clickPending = false
                 if (webView.parent == null) return@postDelayed

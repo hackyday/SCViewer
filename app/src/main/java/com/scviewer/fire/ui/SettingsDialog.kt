@@ -22,7 +22,8 @@ import com.scviewer.fire.data.SettingsStore
  */
 class SettingsDialog(
     context: Context,
-    private val onSaved: (Int) -> Unit
+    private val onSaved: (Int) -> Unit,
+    private val onActiveChange: ((Dialog?) -> Unit)? = null
 ) : Dialog(context, R.style.SCOverlay) {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +74,8 @@ class SettingsDialog(
 
     override fun show() {
         super.show()
+        onActiveChange?.invoke(this)
+        setOnDismissListener { onActiveChange?.invoke(null) }
         // Land the remote focus on the seek bar so left/right adjusts at once.
         findViewById<SeekBar>(R.id.settingsSpeedSeek).requestFocus()
     }

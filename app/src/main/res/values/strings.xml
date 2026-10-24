@@ -37,6 +37,10 @@
     <string name="resume_chip_prefix">Riprendi da</string>
     <string name="empty_resume">Nessuna visione in corso. Guarda qualcosa e ritroverai qui il punto in cui eri.</string>
     <string name="resume_unavailable">Impossibile riprendere, link non valido</string>
+    <string name="resume_question_title">Riprendi la visione?</string>
+    <string name="resume_question_msg">Hai lasciato %1$s al minuto %2$s. Riprendere da lì?</string>
+    <string name="resume_yes">Riprendi</string>
+    <string name="resume_restart">Ricomincia da capo</string>
 
     <!-- Settings (cursor speed) -->
     <string name="settings_title">Impostazioni</string>
