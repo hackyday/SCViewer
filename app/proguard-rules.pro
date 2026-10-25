@@ -1,8 +1,11 @@
-# Keep WebView JS interface (must be public to be invoked from JS)
--keepclassmembers class com.scviewer.fire.web.*$JsInterface {
-    public *;
+# Keep WebView JS interface: R8 must not rename/remove the @JavascriptInterface
+# methods (they are invoked from JS by NAME — unreachable from Java code, so
+# without this rule R8 strips or renames them and the whole bridge dies in
+# release builds while debug keeps working).
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
 }
--keep class com.scviewer.fire.web.*$JsInterface { *; }
+-keep class com.scviewer.fire.web.JsInterface { *; }
 
 # Keep kotlinx.serialization generated serializers
 -keepattributes *Annotation*, InnerClasses

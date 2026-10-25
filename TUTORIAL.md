@@ -3,7 +3,7 @@
 Guida completa per chi non ha mai fatto sideload: senza computer, solo con
 il telecomando e l'app **Downloader**.
 
-> **Tempo richiesto:** ~10 minuti · **Codice breve:** `7770492`
+> **Tempo richiesto:** ~10 minuti · **Codice breve:** `5157886`
 
 ---
 
@@ -29,17 +29,18 @@ il telecomando e l'app **Downloader**.
 3. Al primo avvio **consenti l'accesso a foto, media e file**
    (serve per salvare l'APK). Chiudi la schermata di benvenuto.
 
-## 3. Scarica e installa SC Viewer (codice 7770492)
+## 3. Scarica e installa SC Viewer (codice 5157886)
 
 1. Nella home di Downloader seleziona la barra
    **"Enter a URL or Search Term"**.
-2. Digita solo il codice **`7770492`** (tutti numeri, comodo col telecomando)
+2. Digita solo il codice **`5157886`** (tutti numeri, comodo col telecomando)
    e premi **Vai**. Downloader traduce i codici numerici in
-   `aftv.news/7770492` — in alternativa puoi digitare l'indirizzo completo.
-3. La pagina "Redirect… AFTVnews" ti porta automaticamente sulla
-   **pagina GitHub della release**.
-4. Scorri fino alla sezione **Assets** (premi OK per espanderla se è
-   chiusa) e clicca su **`app-release.apk`**.
+   `aftv.news/5157886` — in alternativa puoi digitare l'indirizzo completo.
+3. La pagina "Redirect… AFTVnews" ti porta automaticamente sull'**elenco
+   delle release** di SC Viewer su GitHub (mostra sempre l'ultima versione).
+4. Apri l'ultima release in cima all'elenco (es. **v1.2.0**), scorri fino
+   alla sezione **Assets** (premi OK per espanderla se è chiusa) e clicca
+   su **`app-release.apk`**.
 5. Il download parte (~1,3 MB). A fine download Downloader chiede di
    installare → **Installa** → **Apri** (o **Fatto**).
 6. (Opzionale) Fatto questo puoi cancellare l'APK dai download di

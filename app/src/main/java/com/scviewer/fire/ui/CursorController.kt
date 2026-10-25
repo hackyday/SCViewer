@@ -63,6 +63,7 @@ class CursorController(
     private var cursorW = 0f
     private var cursorH = 0f
     private var density = 1f
+    private var positionInitialized = false
 
     /** Creates and adds the pointer overlay to [container]. */
     fun attach() {
@@ -84,12 +85,32 @@ class CursorController(
         container.addView(iv)
         cursor = iv
 
-        // Start centred once the container has been measured.
-        iv.post {
-            x = container.width / 2f - cursorW / 2f
-            y = container.height / 2f - cursorH / 2f
-            applyPosition()
+        // Centre once the container has been measured. A plain iv.post {} can
+        // run before the first layout pass (width still 0 on some sticks),
+        // leaving the pointer parked off-screen at negative coordinates — so
+        // listen for layout instead and wait for a real size.
+        container.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View?, l: Int, t: Int, r: Int, b: Int,
+                ol: Int, ot: Int, or_: Int, ob: Int
+            ) {
+                if (!positionInitialized && container.width > 0 && container.height > 0) {
+                    centerPointer()
+                    container.removeOnLayoutChangeListener(this)
+                }
+            }
+        })
+        if (container.width > 0 && container.height > 0) {
+            centerPointer()
         }
+    }
+
+    private fun centerPointer() {
+        x = container.width / 2f - cursorW / 2f
+        y = container.height / 2f - cursorH / 2f
+        positionInitialized = true
+        applyPosition()
+        Log.i(TAG, "centered at ($x, $y) container=${container.width}x${container.height}")
     }
 
     fun show() {
@@ -110,11 +131,10 @@ class CursorController(
         if (!active) return
         lastHeartbeat = SystemClock.uptimeMillis()
         if (repeatCount == 0) {
-            // A fresh press always replaces the tracked direction (a D-pad
-            // can only hold one arrow at a time; clearing also heals a lost
-            // key-up of the previous direction).
             heldDirs.clear()
             heldDirs.addLast(keyCode)
+            Log.i(TAG, "dir down kc=$keyCode container=${container.width}x${container.height} " +
+                "pos=(${"%.0f".format(x)}, ${"%.0f".format(y)}) maxX=${max(container.width - cursorW, 0f)}")
         }
         // (Re)start the loop — idempotent while it runs, and it revives
         // movement if a repeat ever arrives after the watchdog stopped it.
@@ -159,13 +179,14 @@ class CursorController(
 
         clickPending = true
 
-        val tip = IntArray(2)
-        c.getLocationInWindow(tip)
-        val tloc = IntArray(2)
-        target?.getLocationInWindow(tloc)
-        val lx = (tip[0] - tloc[0]).coerceIn(0, max((target?.width ?: 1) - 1, 0)).toFloat()
-        val ly = (tip[1] - tloc[1]).coerceIn(0, max((target?.height ?: 1) - 1, 0)).toFloat()
-        Log.i(TAG, "click at ($lx, $ly) on ${if (target != null) "dialog" else "webview"} ${target?.width ?: webView.width}x${target?.height ?: webView.height}")
+        // The cursor and the WebView are SIBLINGS inside android.R.id.content,
+        // both anchored at (0,0) — the tracked floats ARE WebView coordinates.
+        // (getLocationInWindow() returns (0,0) for views that haven't been
+        // laid out in the current frame — e.g. just re-shown after GONE —
+        // which made every click land at the top-left corner on some sticks.)
+        val lx = (x + TIP_OFFSET_PX * density).coerceIn(0f, max((target?.width ?: webView.width) - 1f, 0f))
+        val ly = (y + TIP_OFFSET_PX * density).coerceIn(0f, max((target?.height ?: webView.height) - 1f, 0f))
+        Log.i(TAG, "click at (${"%.0f".format(lx)}, ${"%.0f".format(ly)}) on ${if (target != null) "dialog" else "webview"} ${target?.width ?: webView.width}x${target?.height ?: webView.height}")
 
         // 1) Primary path: dispatch the touch stream right now.
         val now = SystemClock.uptimeMillis()
@@ -352,8 +373,10 @@ class CursorController(
 
     private fun applyPosition() {
         val c = cursor ?: return
-        c.x = x
-        c.y = y
+        // Clamp: a never-initialised or edge-sliding position must never
+        // push the pointer off-screen (an off-screen pointer = dead clicks).
+        c.x = x.coerceIn(0f, max(container.width - cursorW, 0f))
+        c.y = y.coerceIn(0f, max(container.height - cursorH, 0f))
     }
 
     private fun scrollPage(px: Float) {
@@ -368,6 +391,9 @@ class CursorController(
     companion object {
         private const val CURSOR_W_DP = 26f
         private const val CURSOR_H_DP = 28f
+        /** Arrow-tip offset inside the pointer drawable (dp) — the tap must
+         *  land on the TIP, not the sprite's top-left. */
+        private const val TIP_OFFSET_PX = 1.2f
         /** Base speed in dp/s contributed by each settings point (1..10). */
         private const val DP_PER_SEC_PER_STEP = 42f
         /** Extra multiplier once fully ramped (total = 1 + ACCEL_FACTOR). */
