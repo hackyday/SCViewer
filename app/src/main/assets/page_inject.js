@@ -53,7 +53,10 @@
     'a[href*="adsterra"]',
     // Streamingcommunity-specific common offenders
     'div[class*="ads-container"]',
-    'div[id*="ads-container"]'
+    'div[id*="ads-container"]',
+    // Site's own Telegram banner bar (top) + its ✕ button
+    'header a>div.banner',
+    'header div.close-banner'
   ];
 
   function hideAds() {

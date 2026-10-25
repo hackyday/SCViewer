@@ -272,9 +272,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             // (see SCWebViewClient).
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    // Video agent (every frame) + early banner hide, so the
+                    // Telegram bar never paints at all.
                     val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
-                    WebViewCompat.addDocumentStartJavaScript(this, agent, setOf("*"))
-                    Log.i(TAG, "video agent registered for all frames")
+                    val earlyHide = assets.open("early_hide.js").bufferedReader().use { it.readText() }
+                    WebViewCompat.addDocumentStartJavaScript(this, agent + "\n" + earlyHide, setOf("*"))
+                    Log.i(TAG, "video agent + early-hide registered for all frames")
                 } else {
                     Log.w(TAG, "DOCUMENT_START_SCRIPT unsupported — agent limited to main frame")
                 }
