@@ -27,6 +27,8 @@ import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.WatchProgress
 import com.scviewer.fire.network.AdBlocker
+import com.scviewer.fire.network.HlsRewriter
+import com.google.android.gms.cast.framework.CastButtonFactory
 import com.scviewer.fire.ui.CursorController
 import com.scviewer.fire.ui.OverlayDialog
 import com.scviewer.fire.ui.OverlayItem
@@ -80,6 +82,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
      *  settings / resume-question), if any. While one is up, D-pad keys go to
      *  its native focus and cursor taps are routed to its window. */
     private var activeDialog: Dialog? = null
+
+    /** Telefono/tablet (touchscreen presente) vs Fire TV: sul telefono il
+     *  cursore virtuale non esiste e c'è il pulsante menu touch con Cast. */
+    private val isTouchDevice by lazy {
+        packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+    }
+    private lateinit var phoneMenuButton: TextView
 
     /** Uptime of the last D-pad interaction — drives cursor auto-hide. */
     private var lastDpadAt = 0L
@@ -159,6 +168,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // Virtual mouse cursor, attached to the activity's content root so it
         // floats above the WebView. Elevation keeps it on top even when other
         // views (fullscreen video, overlays) are re-added at runtime.
+        // NOT attached on phones/tablets: there the site is used with direct
+        // touch and the pointer would just get in the way (no D-pad exists).
         cursorCtl = CursorController(
             this, webView,
             findViewById<FrameLayout>(android.R.id.content)
@@ -166,8 +177,48 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // While a dialog is on screen, cursor taps must land on the dialog's
         // own window (the WebView below is hidden behind it and dead).
         cursorCtl.overlayTargetProvider = { activeDialog?.window?.decorView }
-        cursorCtl.attach()
-        cursorCtl.show()
+        if (!isTouchDevice) {
+            cursorCtl.attach()
+            cursorCtl.show()
+        }
+
+        // Telefono/tablet: pulsante menu flottante (Touch) — da qui si
+        // apre anche la funzione Trasmetti (Chromecast).
+        if (isTouchDevice) {
+            val density = resources.displayMetrics.density
+            phoneMenuButton = TextView(this).apply {
+                text = "☰"
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 22f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setBackgroundResource(R.drawable.overlay_rounded)
+                gravity = android.view.Gravity.CENTER
+                elevation = 10f * density
+                val side = (48 * density).toInt()
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { showPhoneMenu() }
+            }
+            findViewById<FrameLayout>(android.R.id.content).addView(
+                phoneMenuButton,
+                FrameLayout.LayoutParams(
+                    (48 * density).toInt(), (48 * density).toInt(),
+                    android.view.Gravity.BOTTOM or android.view.Gravity.END
+                ).apply {
+                    marginEnd = (20 * density).toInt()
+                    bottomMargin = (20 * density).toInt()
+                }
+            )
+            // Init del framework Cast (serve solo su telefoni con GMS).
+            runCatching {
+                com.google.android.gms.cast.framework.CastContext.getSharedInstance(this)
+                com.google.android.gms.cast.framework.CastContext.getSharedInstance(this)
+                    .sessionManager.addSessionManagerListener(
+                        castSessionListener,
+                        com.google.android.gms.cast.framework.CastSession::class.java
+                    )
+            }.onFailure { Log.w(TAG, "Cast framework non disponibile (no Play Services?)") }
+        }
 
         // "Riprendi" chip (top-right): offered when the user lands on a page
         // of a show whose playback position we remember.
@@ -636,6 +687,206 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             onAddCurrent = null,
             onActiveChange = { d -> activeDialog = d }
         ).show()
+    }
+
+    // -- Cast (Chromecast, telefoni/tablet) -----------------------------------
+    //
+    // Il telefono cattura la playlist HLS del player (HlsRewriter la vede
+    // transitare in shouldInterceptRequest) e la passa al Default Media
+    // Receiver del Chromecast; poi apre CastRemoteActivity che fa da
+    // telecomando (play/pausa, ±10/±30, seekbar). La posizione riprodotta
+    // sul TV continua a finire nel ProgressStore: "Riprendi" funziona da
+    // qualunque dispositivo con lo stesso stato.
+    //
+    // HANDOFF AUTOMATICO: se quando ci si collega un contenuto sta già
+    // girando nel WebView (lastVideoPos > 0), parte sul Chromecast DAL
+    // MINUTO IN CUI SI ERA e il video locale va in pausa.
+
+    /** Sessione cast attiva in questo momento (null se no). */
+    private var castSession: com.google.android.gms.cast.framework.CastSession? = null
+
+    private val castSessionListener =
+        object : com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession> {
+            override fun onSessionStarted(session: com.google.android.gms.cast.framework.CastSession, sessionId: String) {
+                castSession = session
+                runOnUiThread { onCastSessionReady(session) }
+            }
+
+            override fun onSessionEnded(session: com.google.android.gms.cast.framework.CastSession, error: Int) {
+                castSession = null
+                runOnUiThread {
+                    showToast(getString(R.string.cast_stop))
+                    // Il video locale era in pausa per il cast: riprendilo.
+                    if (cinemaMode) jsBridge.requestPauseToggle()
+                }
+            }
+
+            override fun onSessionResumed(p0: com.google.android.gms.cast.framework.CastSession, p1: Boolean) {}
+            override fun onSessionStarting(p0: com.google.android.gms.cast.framework.CastSession) {}
+            override fun onSessionStartFailed(p0: com.google.android.gms.cast.framework.CastSession, p1: Int) {
+                runOnUiThread { showToast("Connessione al Chromecast fallita") }
+            }
+            override fun onSessionEnding(p0: com.google.android.gms.cast.framework.CastSession) {}
+            override fun onSessionResuming(p0: com.google.android.gms.cast.framework.CastSession, p1: String) {}
+            override fun onSessionResumeFailed(p0: com.google.android.gms.cast.framework.CastSession, p1: Int) {}
+            override fun onSessionSuspended(p0: com.google.android.gms.cast.framework.CastSession, p1: Int) {}
+        }
+
+    /** Sessione pronta: se un contenuto sta girando nel WebView, lo carica
+     *  sul Chromecast dal punto in cui si era e apre il telecomando. */
+    private fun onCastSessionReady(session: com.google.android.gms.cast.framework.CastSession) {
+        val remote = session.remoteMediaClient ?: return
+        val playlist = HlsRewriter.lastMasterPlaylistUrl
+            ?.takeIf { HlsRewriter.hasFreshCapturedPlaylist() }
+        val info = currentPageInfo
+
+        if (playlist != null && info != null && info.isWatchPage && lastVideoPos > 0) {
+            val p = progress.get(info.titleId)
+            loadMediaOnReceiver(remote, playlist, info.name, lastVideoPos)
+            openCastRemote(info.titleId, p)
+            // Pausa la riproduzione locale (il contenuto vive ora sul TV).
+            jsBridge.requestPauseToggle()
+            showToast(getString(R.string.cast_started))
+        } else {
+            Toast.makeText(this, getString(R.string.cast_pick_device), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Carica la playlist sul receiver con eventuale posizione iniziale. */
+    private fun loadMediaOnReceiver(
+        remote: com.google.android.gms.cast.framework.media.RemoteMediaClient,
+        playlistUrl: String, name: String, startAtSec: Int
+    ) {
+        val meta = com.google.android.gms.cast.MediaMetadata(
+            com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE
+        ).apply { putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, name) }
+
+        val mediaInfo = com.google.android.gms.cast.MediaInfo.Builder(playlistUrl)
+            .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType("application/x-mpegurl")
+            .setMetadata(meta)
+            .build()
+
+        val request = com.google.android.gms.cast.MediaLoadRequestData.Builder()
+            .setMediaInfo(mediaInfo)
+            .setAutoplay(true)
+            .setCurrentTime(startAtSec * 1000L)
+            .build()
+        remote.load(request)
+        Log.i(TAG, "cast load: $name @ ${startAtSec}s")
+    }
+
+    private fun openCastRemote(titleId: Int, p: WatchProgress?) {
+        val intent = android.content.Intent(this, com.scviewer.fire.cast.CastRemoteActivity::class.java)
+            .putExtra(com.scviewer.fire.cast.CastRemoteActivity.EXTRA_TITLE_ID, titleId)
+        if (p != null) {
+            intent.putExtra(
+                com.scviewer.fire.cast.CastRemoteActivity.EXTRA_PROGRESS,
+                com.scviewer.fire.cast.CastRemoteActivity.ProgressSnapshot.of(p)
+            )
+        }
+        startActivity(intent)
+    }
+
+    /** Riprendi via cast: se il contenuto non è in riproduzione locale non
+     *  c'è playlist catturata — carico la watch URL nel WebView (il player
+     *  autoplaya e HlsRewriter cattura), aspetto la cattura, poi cast. */
+    private fun castFromProgress(p: WatchProgress) {
+        val link = p.resolveUrl(domainRepo.currentDomain())
+        if (link == null) {
+            showToast(getString(R.string.resume_unavailable))
+            return
+        }
+        val existing = HlsRewriter.lastMasterPlaylistUrl
+        if (existing != null && HlsRewriter.hasFreshCapturedPlaylist() &&
+            currentPageInfo?.titleId == p.titleId
+        ) {
+            // Playlist già in mano (contenuto in riproduzione adesso).
+            castSession?.remoteMediaClient?.let {
+                loadMediaOnReceiver(it, existing, p.name, p.positionSec)
+                openCastRemote(p.titleId, p)
+                return
+            }
+        }
+        showToast(getString(R.string.cast_waiting))
+        pendingCastProgress = p
+        if (currentPageInfo?.titleId == p.titleId) {
+            pollCapturedPlaylist(p)
+        } else {
+            webView.loadUrl(link)
+            // onPageInfoChanged aggiornerà currentPageInfo; polla da lì.
+            handler.postDelayed({ pollCapturedPlaylist(p) }, 4000)
+        }
+    }
+
+    private var pendingCastProgress: WatchProgress? = null
+
+    /** Polla la cattura della playlist (max ~12 s), poi casta. */
+    private fun pollCapturedPlaylist(p: WatchProgress) {
+        var attempts = 0
+        object : Runnable {
+            override fun run() {
+                val url = HlsRewriter.lastMasterPlaylistUrl
+                if (url != null && HlsRewriter.hasFreshCapturedPlaylist()) {
+                    castSession?.remoteMediaClient?.let {
+                        loadMediaOnReceiver(it, url, p.name, p.positionSec)
+                        openCastRemote(p.titleId, p)
+                        // Ferma la riproduzione locale (gira ora sul TV).
+                        jsBridge.requestPauseToggle()
+                        return
+                    }
+                }
+                attempts++
+                if (attempts < 12) handler.postDelayed(this, 1000)
+                else showToast(getString(R.string.cast_unavailable))
+            }
+        }.run()
+    }
+
+    /** Menu touch per telefoni/tablet (cursore virtuale assente lì). */
+    private fun showPhoneMenu() {
+        val view = layoutInflater.inflate(R.layout.dialog_phone_menu, null)
+        val dlg = android.app.AlertDialog.Builder(this, R.style.SCOverlay)
+            .setView(view)
+            .create()
+        activeDialog = dlg
+        dlg.setOnDismissListener { activeDialog = null }
+
+        val routeBtn = view.findViewById<androidx.mediarouter.app.MediaRouteButton>(R.id.phoneMenuRouteBtn)
+        runCatching { CastButtonFactory.setUpMediaRouteButton(this, routeBtn) }
+        // Su Fire TV / dispositivi senza Play Services la voce Trasmetti non
+        // c'è (il framework non scoprirebbe nulla).
+        val gmsOk = runCatching {
+            com.google.android.gms.common.GoogleApiAvailability.getInstance()
+                .isGooglePlayServicesAvailable(this) == com.google.android.gms.common.ConnectionResult.SUCCESS
+        }.getOrDefault(false)
+        if (!gmsOk) {
+            view.findViewById<View>(R.id.phoneMenuCastRow).visibility = View.GONE
+        }
+
+        view.findViewById<View>(R.id.phoneMenuCastRow).setOnClickListener {
+            // La MediaRouteButton apre da sé il selettore dispositivi.
+            routeBtn.performClick()
+        }
+        view.findViewById<View>(R.id.phoneMenuHome).setOnClickListener {
+            dlg.dismiss(); mainScope.launch { loadHome() }
+        }
+        view.findViewById<View>(R.id.phoneMenuFavorites).setOnClickListener {
+            dlg.dismiss(); showFavorites()
+        }
+        view.findViewById<View>(R.id.phoneMenuHistory).setOnClickListener {
+            dlg.dismiss(); showHistory()
+        }
+        view.findViewById<View>(R.id.phoneMenuResume).setOnClickListener {
+            dlg.dismiss(); showResumeDialog()
+        }
+        view.findViewById<View>(R.id.phoneMenuSettings).setOnClickListener {
+            dlg.dismiss(); SettingsDialog(this, onSaved = { _ -> }).show()
+        }
+        view.findViewById<View>(R.id.phoneMenuExit).setOnClickListener {
+            dlg.dismiss(); finishAffinity()
+        }
+        dlg.show()
     }
 
     private fun onMainLoadTimeout() {

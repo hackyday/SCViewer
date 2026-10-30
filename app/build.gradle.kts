@@ -27,8 +27,8 @@ android {
         applicationId = "com.scviewer.fire"
         minSdk = 24          // Fire TV Stick Lite / 4K and most sticks still in use
         targetSdk = 34
-        versionCode = 6      // v1.3.0 (v1.0.0=1, v1.1.0=2, v1.2.0=3, v1.2.1=4, v1.2.2=5)
-        versionName = "1.3.0"
+        versionCode = 7      // v1.4.0 (…v1.2.2=5, v1.3.0=6)
+        versionName = "1.4.0"
 
         // In case the user is on a non-UI build, but Fire TV always has Leanback.
         vectorDrawables { useSupportLibrary = true }
@@ -103,4 +103,11 @@ dependencies {
     // EVERY frame — the player lives inside the vixcloud iframe, which
     // evaluateJavascript (main frame only) cannot reach.
     implementation("androidx.webkit:webkit:1.11.0")
+
+    // Google Cast (telefoni/tablet): trasmette il flusso video al Chromecast
+    // (Default Media Receiver) e il telefono diventa il telecomando.
+    // Richiede Google Play Services; su Fire TV (senza GMS) la UI cast
+    // non viene mostrata.
+    implementation("com.google.android.gms:play-services-cast-framework:21.3.0")
+    implementation("androidx.mediarouter:mediarouter:1.6.0")
 }

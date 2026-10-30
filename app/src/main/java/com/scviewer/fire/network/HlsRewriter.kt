@@ -64,6 +64,30 @@ object HlsRewriter {
         return u.contains("type=video") || u.contains("type=audio") || u.contains("type=subtitle")
     }
 
+    // -- Cattura per il CAST (Chromecast) ------------------------------------
+    // Quando il player chiede la master playlist la URL originale (token +
+    // h=1) è ESATTAMENTE quello che il Chromecast deve riprodurre: il
+    // telefono la cattura qui e la passa al Default Media Receiver.
+
+    @Volatile var lastMasterPlaylistUrl: String? = null
+        private set
+    @Volatile var lastMasterPlaylistAt: Long = 0
+        private set
+
+    /** True se la playlist catturata è abbastanza fresca (i token vixcloud
+     *  scadono; oltre questa età meglio rifare il load della pagina). */
+    fun hasFreshCapturedPlaylist(maxAgeMs: Long = 15 * 60_000L): Boolean =
+        lastMasterPlaylistUrl != null && System.currentTimeMillis() - lastMasterPlaylistAt <= maxAgeMs
+
+    /** URL della master con h=1 (se c'è un token): è quella con la variante
+     *  1080p — quella che il Chromecast deve caricare. */
+    fun unlockedUrl(url: String): String {
+        if (!url.contains("token=")) return url
+        if (url.contains("h=1")) return url
+        val sep = if (url.contains('?')) '&' else '?'
+        return "$url${sep}h=1"
+    }
+
     /**
      * Punto d'ingresso da WebViewClient.shouldInterceptRequest.
      * Restituisce la risposta riscritta, oppure null per "lascia passare".
@@ -72,6 +96,9 @@ object HlsRewriter {
         val url = request.url.toString()
         if (!isPlaylistUrl(url)) return null
         if (isMediaPlaylistUrl(url)) return null   // segmenti/media: mai toccati
+        // Cattura per il cast: URL master (token incluso), sbloccato h=1.
+        lastMasterPlaylistUrl = unlockedUrl(url)
+        lastMasterPlaylistAt = System.currentTimeMillis()
         return try {
             val body = rewrittenMaster(url, request) ?: return null
             val resp = WebResourceResponse(

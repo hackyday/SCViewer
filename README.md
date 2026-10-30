@@ -273,6 +273,7 @@ branch name ever changes.
 |---|---|
 | D-pad ↑ ↓ ← → | Move the **virtual mouse cursor**; it accelerates while held |
 | D-pad held at top/bottom edge | Scroll the page up/down |
+| **Phones/tablets** (touch) | Floating ☰ button opens the touch menu: **Trasmetti** (Chromecast), Home, Preferiti, Cronologia, Riprendi, Impostazioni |
 | OK (short press) | **Click** at the cursor position (real tap dispatched to the WebView) |
 | OK (long press) | Open the **Favorites** overlay |
 | Menu button | Toggle the bottom **menu bar** (Home / Favorites / History / Riprendi / Reload / Back / Impostazioni) |
@@ -287,6 +288,21 @@ While a film is actually playing (a long, large video detected by the video
 agent injected in every frame), the cursor **auto-hides** ~4 s after the last
 D-pad press; any D-pad key brings it back (first OK only reveals it, so it
 never clicks blindly).
+
+## Casting to a Chromecast (phones/tablets)
+
+On a phone or tablet (touchscreen build), the floating ☰ button opens the
+touch menu with **Trasmetti**: the app captures the HLS playlist the player
+requests (via the HlsRewriter interceptor, with `h=1` so 1080p is included)
+and hands it to the Chromecast's **Default Media Receiver**. The phone then
+becomes the remote (play/pause, ±10 s/±30 s, seekbar) via
+`CastRemoteActivity`. If a title is already playing when you connect, it
+starts on the TV **from the exact minute you were at** (and the local
+playback pauses). The casted position keeps being saved to ProgressStore,
+so "Riprendi" stays in sync across the phone and the Fire TV stick.
+
+Requires Google Play Services on the casting device (not present on Fire TV
+sticks, where the cast UI is simply hidden).
 
 ## License & disclaimer
 

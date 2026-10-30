@@ -42,6 +42,19 @@
     <string name="resume_yes">Riprendi</string>
     <string name="resume_restart">Ricomincia da capo</string>
 
+    <!-- Cast (Chromecast, telefoni/tablet) -->
+    <string name="menu_cast">Trasmetti</string>
+    <string name="phone_menu_title">Menu</string>
+    <string name="phone_menu_exit">Esci dall\'app</string>
+    <string name="cast_play">Play</string>
+    <string name="cast_pause">Pausa</string>
+    <string name="cast_stop">Interrompi trasmissione</string>
+    <string name="cast_no_media">Nessun contenuto in riproduzione sul Chromecast</string>
+    <string name="cast_unavailable">Trasmetti non disponibile su questo dispositivo (serve Google Play Services)</string>
+    <string name="cast_waiting">Preparo il contenuto per il Chromecast…</string>
+    <string name="cast_started">In trasmissione sul Chromecast</string>
+    <string name="cast_pick_device">Scegli il tuo Chromecast</string>
+
     <!-- Settings (cursor speed) -->
     <string name="settings_title">Impostazioni</string>
     <string name="settings_speed_label">Velocità del cursore</string>
