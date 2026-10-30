@@ -16,6 +16,10 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // Mirror ufficiale Google di Maven Central — usato per primo:
+        // repo.maven.apache.org applicava rate-limit (HTTP 429) agli IP
+        // dei datacenter, bloccando la risoluzione delle dipendenze.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
         mavenCentral()
     }
 }

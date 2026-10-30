@@ -6,6 +6,15 @@ catalogue in a WebView with:
 - **Desktop Chrome UA spoof** — Fire TV reports itself as a Windows 11 Chrome
   browser so the site serves the full catalogue + the standard web player
   (it would otherwise detect the `AFT...` UA and gate the UI).
+- **SEMPRE 1080p** (v1.3.0) — the master playlist of the vixcloud player is
+  intercepted at network level and rewritten: the `h=1` parameter unlocks the
+  FHD rendition on the CDN and only the best variant <= 1080p is left in the
+  manifest, so the player can never drop to 720p/480p (see below for the
+  measured proof).
+- **Link salvati a prova di cambio dominio** (v1.3.0) — cronologia, preferiti
+  e "Riprendi" salvano il solo PATH dell'URL e lo rimontano sul dominio
+  corrente a ogni apertura (`SiteUrl`); i dati delle versioni precedenti
+  vengono migrati automaticamente alla prima lettura.
 - **Network ad block** — a hosts-style list (~70 ad networks + popunder
   domains) is enforced via `WebViewClient.shouldInterceptRequest`, so ad
   requests are dropped at the network layer with a canned 403 response.
@@ -169,6 +178,49 @@ report additional ad hosts it observes) are appended and persist across
 sessions.
 
 To ship an updated list, edit the asset, rebuild, and reinstall.
+
+## How "sempre 1080p" works (v1.3.0)
+
+The vixcloud player gates the FHD rendition behind the `h=1` query parameter
+on the master playlist request. Without it the CDN manifest only offers
+480p/720p and the player's "Default" quality stays at 720p.
+
+`network/HlsRewriter.kt` hooks `WebViewClient.shouldInterceptRequest`:
+
+1. Master playlist requests (`/playlist/…?token=…&expires=…`) are re-fetched
+   server-side with `h=1` appended (same token — it is not signed against the
+   query string).
+2. The manifest is rewritten keeping ONLY the best variant <= 1080p
+   (exactly `RESOLUTION=1920x1080` when present, otherwise the highest
+   available — a 720p-only title keeps playing 720p; a 4K manifest is capped
+   to 1080p for 1 GB sticks).
+3. The rewritten manifest (audio/subtitle tracks preserved) is served to the
+   player with permissive CORS headers. With a single variant left, the
+   player must play it: no more silent downgrades.
+4. Media playlists and segments are NEVER touched (they pass through
+   untouched), AES-128 keys included. On ANY error the interceptor returns
+   `null` and the WebView loads the original URL — worst case is the old
+   behaviour, playback can never be broken by the rewrite.
+
+### Measured proof (real stream, Fight Club via the same player)
+
+- Master playlist WITH `h=1` offers: `854x480` (1.2 Mbps), `1280x720`
+  (2.15 Mbps), **`1920x1080` (4.5 Mbps)**.
+- Segment of the `rendition=1080p` variant, decrypted (AES-128) and probed
+  with ffprobe: `codec_name=h264, width=1920, height=1080, avg_frame_rate=24/1`.
+- The rewritten manifest keeps exactly one `#EXT-X-STREAM-INF` (1920x1080)
+  and all 8 `#EXT-X-MEDIA` audio/subtitle tracks.
+
+## How saved links survive domain changes (v1.3.0)
+
+`data/SiteUrl.kt` — history entries, favourites and "Riprendi" records now
+store the URL **relative** (path + query, e.g. `/it/watch/123?e=5`) instead of
+the absolute URL. When an entry is opened, `SiteUrl.resolve()` rebuilds it on
+the CURRENT domain from `DomainRepository`; legacy absolute URLs stored by
+older versions are transparently migrated on first read (history/favourites)
+or resolved on the fly (progress records). De-duplication also works by path,
+so re-visiting a title after a domain switch bubbles up the existing entry
+instead of adding a duplicate.
 
 ## How the desktop UA spoof works
 

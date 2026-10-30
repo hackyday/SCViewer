@@ -24,6 +24,7 @@ import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
 import com.scviewer.fire.data.ProgressStore
+import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.WatchProgress
 import com.scviewer.fire.network.AdBlocker
 import com.scviewer.fire.ui.CursorController
@@ -545,24 +546,27 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 episodeName = info.episodeName,
                 positionSec = posSec,
                 durationSec = durSec,
-                url = webView.url ?: "",
+                // Relativo (path+query): sopravvive ai cambi di dominio del sito.
+                url = SiteUrl.relativeOf(webView.url) ?: "",
                 updatedAt = System.currentTimeMillis()
             )
         )
     }
 
-    /** User picked a resume entry: reload its exact watch URL and remember
-     *  where to seek once the video is running. */
+    /** User picked a resume entry: reload its watch URL (RISCRITTO sul
+     *  dominio corrente — i record legacy puntavano al vecchio dominio) and
+     *  remember where to seek once the video is running. */
     private fun startResume(p: WatchProgress) {
         Log.i(TAG, "resume -> ${p.name} ${p.seasonEpisodeTag()} at ${p.positionLabel()}")
-        pendingResume = p.titleId to p.positionSec
-        resumeChip.visibility = View.GONE
-        resumeChipShownFor = p.titleId   // don't re-offer what we just started
-        if (p.url.isNotBlank() && p.url.startsWith("http")) {
-            webView.loadUrl(p.url)
+        val link = p.resolveUrl(domainRepo.currentDomain())
+        if (link != null) {
+            pendingResume = p.titleId to p.positionSec
+            resumeChip.visibility = View.GONE
+            resumeChipShownFor = p.titleId   // don't re-offer what we just started
+            Log.i(TAG, "resume url: $link (saved: ${p.url})")
+            webView.loadUrl(link)
         } else {
             showToast(getString(R.string.resume_unavailable))
-            pendingResume = null
         }
     }
 
@@ -659,7 +663,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             title = getString(R.string.favorites_title),
             items = items,
             emptyMessage = getString(R.string.empty_favorites),
-            onItemClick = { item -> webView.loadUrl(item.tag) },
+            onItemClick = { item ->
+                // Rimonta il path salvato sul dominio CORRENTE: i link
+                // salvati con un vecchio dominio continuano a funzionare.
+                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let {
+                    webView.loadUrl(it)
+                }
+            },
             onAddCurrent = {
                 val url = webView.url ?: return@OverlayDialog
                 // Prefer the real show name from the page bridge; the
@@ -683,7 +693,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             title = getString(R.string.history_title),
             items = items,
             emptyMessage = getString(R.string.empty_history),
-            onItemClick = { item -> webView.loadUrl(item.tag) },
+            onItemClick = { item ->
+                // Rimonta il path salvato sul dominio CORRENTE.
+                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let {
+                    webView.loadUrl(it)
+                }
+            },
             onAddCurrent = null,
             onActiveChange = { d -> activeDialog = d }
         )

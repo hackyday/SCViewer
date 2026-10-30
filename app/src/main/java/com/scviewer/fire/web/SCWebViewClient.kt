@@ -11,6 +11,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.network.AdBlocker
+import com.scviewer.fire.network.HlsRewriter
 
 /**
  * WebViewClient tuned for streamingcommunity.
@@ -48,6 +49,12 @@ class SCWebViewClient(
         if (adBlocker.shouldBlock(request)) {
             return adBlocker.blockedResponse()
         }
+
+        // Forza 1080p: la master playlist del player vixcloud viene servita
+        // con la variante FHD sbloccata (h=1) e le varianti inferiori
+        // rimosse, così il player non può scendere sotto il massimo
+        // disponibile (<= 1080p). Media playlist e segmenti passano invariati.
+        HlsRewriter.intercept(request)?.let { return it }
 
         val url = request.url
         val path = (url.path ?: "").lowercase()

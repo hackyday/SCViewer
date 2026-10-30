@@ -27,8 +27,8 @@ android {
         applicationId = "com.scviewer.fire"
         minSdk = 24          // Fire TV Stick Lite / 4K and most sticks still in use
         targetSdk = 34
-        versionCode = 5      // v1.2.2 (v1.0.0=1, v1.1.0=2, v1.2.0=3, v1.2.1=4)
-        versionName = "1.2.2"
+        versionCode = 6      // v1.3.0 (v1.0.0=1, v1.1.0=2, v1.2.0=3, v1.2.1=4, v1.2.2=5)
+        versionName = "1.3.0"
 
         // In case the user is on a non-UI build, but Fire TV always has Leanback.
         vectorDrawables { useSupportLibrary = true }

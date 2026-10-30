@@ -40,10 +40,13 @@ data class WatchProgress(
     val episodeName: String? = null,
     val positionSec: Int,
     val durationSec: Int,
-    /** The exact watch URL this progress was recorded on (/it/watch/…). */
+    /** Watch URL (/it/watch/…) — salvato RELATIVO (path+query) da v1.3:
+     *  i record legacy contengono ancora un URL assoluto, gestito da [SiteUrl]. */
     val url: String,
     val updatedAt: Long
 ) {
+    /** Link pronto per il loadUrl, rimontato sul dominio CORRENTE. */
+    fun resolveUrl(currentDomain: String): String? = SiteUrl.resolve(url, currentDomain)
     /** True when it makes sense to offer "Riprendi": started but not finished. */
     fun isResumeable(): Boolean {
         if (durationSec < 60) return false
