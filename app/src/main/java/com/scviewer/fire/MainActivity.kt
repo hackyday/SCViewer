@@ -746,6 +746,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     /** Sessione pronta: se un contenuto sta girando nel WebView, lo carica
      *  sul Chromecast dal punto in cui si era e apre il telecomando. */
     private fun onCastSessionReady(session: com.google.android.gms.cast.framework.CastSession) {
+        // Le callback del framework girano nel processo: qualunque eccezione
+        // qui crasha l'app a cast avviato. Meglio loggare e degradare.
+        runCatching { onCastSessionReadyInner(session) }
+            .onFailure { Log.e(TAG, "cast session ready failed", it) }
+    }
+
+    private fun onCastSessionReadyInner(session: com.google.android.gms.cast.framework.CastSession) {
         val remote = session.remoteMediaClient ?: return
         val playlist = HlsRewriter.lastMasterPlaylistUrl
             ?.takeIf { HlsRewriter.hasFreshCapturedPlaylist() }
@@ -808,6 +815,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
      *  c'è playlist catturata — carico la watch URL nel WebView (il player
      *  autoplaya e HlsRewriter cattura), aspetto la cattura, poi cast. */
     private fun castFromProgress(p: WatchProgress) {
+        runCatching { castFromProgressInner(p) }
+            .onFailure { Log.e(TAG, "cast from progress failed", it) }
+    }
+
+    private fun castFromProgressInner(p: WatchProgress) {
         val link = p.resolveUrl(domainRepo.currentDomain())
         if (link == null) {
             showToast(getString(R.string.resume_unavailable))
@@ -867,6 +879,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         val dlg = android.app.AlertDialog.Builder(this, R.style.SCOverlay)
             .setView(view)
             .create()
+        // AlertDialog con setView collassa al minimo: larghezza esplicita.
+        dlg.setOnShowListener {
+            dlg.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.82).toInt(),
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+        }
         activeDialog = dlg
         dlg.setOnDismissListener { activeDialog = null }
 
@@ -936,6 +955,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             )
         }
         dlg.show()
+        // Dopo show(): l'OnShowListener da solo può essere ignorato.
+        dlg.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.82).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
     }
 
     private fun onMainLoadTimeout() {

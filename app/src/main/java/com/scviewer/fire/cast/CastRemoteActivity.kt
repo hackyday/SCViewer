@@ -129,6 +129,10 @@ class CastRemoteActivity : Activity() {
 
     /** Aggiorna testo/seekbar dallo stato del receiver. */
     private fun updateUi() {
+        runCatching { updateUiInner() }.onFailure { it.printStackTrace() }
+    }
+
+    private fun updateUiInner() {
         val c = remote()
         val info = c?.mediaInfo
         if (info == null) {
