@@ -3,6 +3,7 @@ package com.scviewer.fire
 import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
+import com.scviewer.fire.BuildConfig
 import com.scviewer.fire.work.DomainRefreshScheduler
 
 /**
@@ -27,6 +28,18 @@ class App : Application(), Configuration.Provider {
         // re-throws to the default JVM behaviour after logging.
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e("SCViewer-Crash", "Uncaught on ${thread.name}", throwable)
+            // Persist the stack for phone-side diagnosis (no ADB needed:
+            // the touch menu offers "Segnala errore" when a crash exists).
+            runCatching {
+                filesDir.resolve("last_crash.txt").writeText(
+                    buildString {
+                        appendLine("time: " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(java.util.Date()))
+                        appendLine("version: " + BuildConfig.VERSION_NAME)
+                        appendLine("thread: " + thread.name)
+                        appendLine(android.util.Log.getStackTraceString(throwable))
+                    }
+                )
+            }
             // Defer to the previous handler (the default Android one will
             // surface the standard "app keeps stopping" dialog and kill the
             // process).

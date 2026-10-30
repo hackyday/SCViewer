@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Cast (Chromecast, telefoni/tablet): senza il tipo di foreground
+         service dichiarato, Android 14+ uccide l'app quando il framework
+         promuove MediaNotificationService a foreground (media partita sul
+         TV) — crash 1-2 s dopo l'avvio della trasmissione. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Fire TV is a TV-only platform. Declare so feature is required. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -57,6 +65,23 @@
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.scviewer.fire.cast.CastOptionsProvider" />
+
+        <!-- Android 14+: il framework Cast promuove questi servizi a
+             foreground quando il media parte sul TV — senza
+             foregroundServiceType="mediaPlayback" l'app crasha. -->
+        <service
+            android:name="com.google.android.gms.cast.framework.media.MediaNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="com.google.android.gms.cast.framework.ReconnectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <activity
             android:name=".cast.CastRemoteActivity"

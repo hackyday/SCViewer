@@ -218,6 +218,14 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                         com.google.android.gms.cast.framework.CastSession::class.java
                     )
             }.onFailure { Log.w(TAG, "Cast framework non disponibile (no Play Services?)") }
+
+            // Notifica media del cast: su Android 13+ serve il permesso.
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
         }
 
         // "Riprendi" chip (top-right): offered when the user lands on a page
@@ -895,6 +903,37 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
         view.findViewById<View>(R.id.phoneMenuExit).setOnClickListener {
             dlg.dismiss(); finishAffinity()
+        }
+        // Diagnostica: se l'app è crashata in passato, consenti di condividere
+        // lo stack salvato (i telefoni non hanno ADB come gli stick).
+        val crashFile = filesDir.resolve("last_crash.txt")
+        if (crashFile.exists()) {
+            val reportBtn = TextView(this).apply {
+                text = getString(R.string.phone_menu_report)
+                setTextColor(0xFFFF9800.toInt())
+                textSize = 15f
+                val pad = (12 * resources.displayMetrics.density).toInt()
+                setPadding(pad, pad / 2, pad, pad / 2)
+                gravity = android.view.Gravity.CENTER
+                setOnClickListener {
+                    dlg.dismiss()
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, crashFile.readText())
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, "SC Viewer crash log")
+                    }
+                    runCatching {
+                        startActivity(android.content.Intent.createChooser(send, "Segnala errore"))
+                    }
+                }
+            }
+            (view as? android.view.ViewGroup)?.addView(
+                reportBtn,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
         dlg.show()
     }

@@ -46,6 +46,7 @@
     <string name="menu_cast">Trasmetti</string>
     <string name="phone_menu_title">Menu</string>
     <string name="phone_menu_exit">Esci dall\'app</string>
+    <string name="phone_menu_report">Segnala errore (log crash)</string>
     <string name="cast_play">Play</string>
     <string name="cast_pause">Pausa</string>
     <string name="cast_stop">Interrompi trasmissione</string>
