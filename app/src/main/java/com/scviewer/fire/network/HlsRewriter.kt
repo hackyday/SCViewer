@@ -79,6 +79,13 @@ object HlsRewriter {
     fun hasFreshCapturedPlaylist(maxAgeMs: Long = 15 * 60_000L): Boolean =
         lastMasterPlaylistUrl != null && System.currentTimeMillis() - lastMasterPlaylistAt <= maxAgeMs
 
+    /** Dimentica la cattura precedente (usato prima di caricare la watch
+     *  URL di un ALTRO titolo: la poll deve vedere solo la nuova playlist). */
+    fun resetCapture() {
+        lastMasterPlaylistUrl = null
+        lastMasterPlaylistAt = 0
+    }
+
     /** URL della master con h=1 (se c'è un token): è quella con la variante
      *  1080p — quella che il Chromecast deve caricare. */
     fun unlockedUrl(url: String): String {
@@ -99,6 +106,7 @@ object HlsRewriter {
         // Cattura per il cast: URL master (token incluso), sbloccato h=1.
         lastMasterPlaylistUrl = unlockedUrl(url)
         lastMasterPlaylistAt = System.currentTimeMillis()
+        Log.i(TAG, "cast capture: ${"$"}lastMasterPlaylistUrl")
         return try {
             val body = rewrittenMaster(url, request) ?: return null
             val resp = WebResourceResponse(

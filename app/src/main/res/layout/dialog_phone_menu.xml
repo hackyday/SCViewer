@@ -3,7 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="20dp">
+    android:padding="20dp"
+    android:gravity="center_horizontal">
 
     <TextView
         android:id="@+id/phoneMenuTitle"
@@ -11,6 +12,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="12dp"
+        android:layout_gravity="center_horizontal"
+        android:textAlignment="center"
         android:text="@string/phone_menu_title" />
 
     <!-- Riga Trasmetti: apre la scelta del Chromecast -->
@@ -44,7 +47,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
@@ -57,7 +60,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
@@ -70,7 +73,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
@@ -83,7 +86,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
@@ -96,7 +99,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
@@ -110,7 +113,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:background="?attr/selectableItemBackground"
-        android:gravity="start|center_vertical"
+        android:gravity="center"
         android:minHeight="48dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"

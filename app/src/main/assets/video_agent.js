@@ -86,6 +86,13 @@
         } else {
           v.pause();
         }
+      } else if (cmd === 'pause') {
+        if (!v.paused) v.pause();
+      } else if (cmd === 'play') {
+        if (v.paused) {
+          var pp = v.play();
+          if (pp && pp.catch) pp.catch(function () { /* autoplay refusal */ });
+        }
       } else if (cmd.indexOf('seek-to:') === 0) {
         var target = parseFloat(cmd.slice(8));
         if (!isNaN(target)) {

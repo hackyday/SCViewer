@@ -97,6 +97,17 @@ class JsInterface(
         enqueue("toggle-play", TOGGLE_TTL_MS)
     }
 
+    /** Native side: put the local video in pause (used by the cast handoff —
+     *  a plain toggle would RESUME a paused video). */
+    fun requestPause() {
+        enqueue("pause", TOGGLE_TTL_MS)
+    }
+
+    /** Native side: resume the local video. */
+    fun requestPlay() {
+        enqueue("play", TOGGLE_TTL_MS)
+    }
+
     /** Native side: "Riprendi" — jump the active video to [sec]. Longer TTL
      *  than toggle: the player may still be starting when it's requested. */
     fun requestSeekTo(sec: Int) {

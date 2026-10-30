@@ -683,7 +683,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             title = getString(R.string.menu_resume),
             items = items,
             emptyMessage = getString(R.string.empty_resume),
-            onItemClick = { item -> byId[item.tag]?.let { startResume(it) } },
+            onItemClick = { item ->
+                val p = byId[item.tag] ?: return@OverlayDialog
+                if (castSession != null) castFromProgress(p) else startResume(p)
+            },
             onAddCurrent = null,
             onActiveChange = { d -> activeDialog = d }
         ).show()
@@ -740,15 +743,20 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             ?.takeIf { HlsRewriter.hasFreshCapturedPlaylist() }
         val info = currentPageInfo
 
-        if (playlist != null && info != null && info.isWatchPage && lastVideoPos > 0) {
+        if (playlist != null && info != null && info.isWatchPage) {
+            // Contenuto già in visione (o appena avviato): handoff automatico
+            // dal punto corrente (o da quello salvato se si è a inizio film).
+            val saved = info.titleId.let { progress.get(it) }?.positionSec ?: 0
+            val startPos = maxOf(lastVideoPos, if (lastVideoPos > 0) 0 else saved)
             val p = progress.get(info.titleId)
-            loadMediaOnReceiver(remote, playlist, info.name, lastVideoPos)
+            loadMediaOnReceiver(remote, playlist, info.name, if (lastVideoPos > 0) lastVideoPos else saved)
             openCastRemote(info.titleId, p)
             // Pausa la riproduzione locale (il contenuto vive ora sul TV).
-            jsBridge.requestPauseToggle()
+            jsBridge.requestPause()
             showToast(getString(R.string.cast_started))
         } else {
-            Toast.makeText(this, getString(R.string.cast_pick_device), Toast.LENGTH_SHORT).show()
+            // Nessun video attivo: apri il selettore di cosa trasmettere.
+            showResumeDialog()
         }
     }
 
@@ -813,8 +821,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         if (currentPageInfo?.titleId == p.titleId) {
             pollCapturedPlaylist(p)
         } else {
+            // Dimentica qualunque playlist precedente (altro titolo): la
+            // poll deve vedere solo la cattura del contenuto richiesto.
+            HlsRewriter.resetCapture()
             webView.loadUrl(link)
-            // onPageInfoChanged aggiornerà currentPageInfo; polla da lì.
             handler.postDelayed({ pollCapturedPlaylist(p) }, 4000)
         }
     }
