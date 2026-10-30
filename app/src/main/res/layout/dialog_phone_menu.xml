@@ -17,32 +17,6 @@
         android:textAlignment="center"
         android:text="@string/phone_menu_title" />
 
-    <!-- Riga Trasmetti: apre la scelta del Chromecast -->
-    <LinearLayout
-        android:id="@+id/phoneMenuCastRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="?attr/selectableItemBackground"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="12dp">
-
-        <androidx.mediarouter.app.MediaRouteButton
-            android:id="@+id/phoneMenuRouteBtn"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:mediaRouteTypes="user" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:text="@string/menu_cast"
-            android:textColor="@color/sc_accent"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
     <Button
         android:id="@+id/phoneMenuHome"
         android:layout_width="match_parent"
