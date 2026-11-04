@@ -32,6 +32,7 @@ data class DomainsConfig(
 data class Favorite(
     val url: String,
     val title: String,
+    val poster: String? = null,
     val addedAt: Long
 )
 
@@ -42,5 +43,6 @@ data class Favorite(
 data class HistoryEntry(
     val url: String,
     val title: String,
+    val poster: String? = null,
     val visitedAt: Long
 )

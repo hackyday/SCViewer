@@ -289,20 +289,36 @@ agent injected in every frame), the cursor **auto-hides** ~4 s after the last
 D-pad press; any D-pad key brings it back (first OK only reveals it, so it
 never clicks blindly).
 
-## Casting to a Chromecast (phones/tablets)
+## Features
 
-On a phone or tablet (touchscreen build), the floating ☰ button opens the
-touch menu with **Trasmetti**: the app captures the HLS playlist the player
-requests (via the HlsRewriter interceptor, with `h=1` so 1080p is included)
-and hands it to the Chromecast's **Default Media Receiver**. The phone then
-becomes the remote (play/pause, ±10 s/±30 s, seekbar) via
-`CastRemoteActivity`. If a title is already playing when you connect, it
-starts on the TV **from the exact minute you were at** (and the local
-playback pauses). The casted position keeps being saved to ProgressStore,
-so "Riprendi" stays in sync across the phone and the Fire TV stick.
+### Prossimo episodio automatico (serie)
+Quando un episodio è negli ultimi 90 secondi e la pagina dichiara un
+episodio successivo, un chip con countdown (10 s) appare in basso a destra:
+si naviga da solo al termine del countdown, si anticipa col tap sul chip e
+si annulla col ✕. L'episodio terminato viene segnato come visto ("Riprendi"
+non lo ripropone).
 
-Requires Google Play Services on the casting device (not present on Fire TV
-sticks, where the cast UI is simply hidden).
+### Salta intro (fix) / Salta finale
+Il rilevamento skip-intro ora vive nel video agent (dentro l'iframe del
+player — il vecchio codice guardava solo il main frame e non ha mai visto
+il video). Per i film, negli ultimi 2 minuti compare "Salta finale" che
+salta ai crediti.
+
+### Copertine negli elenchi
+Preferiti, Cronologia e Riprendi mostrano il poster del titolo (catturato
+dalla pagina al momento della visita e salvato nei dati).
+
+### Controllo aggiornamenti
+Ogni 12 ore l'app verifica l'ultima release GitHub e mostra un chip
+"Aggiorna" che apre la pagina di download.
+
+### Qualità massima selezionabile
+Impostazioni → Qualità massima video: Auto (1080p) / 720p / 480p — applicata
+al forzatore HLS subito dopo il salvataggio.
+
+### Blocklist annunci sincronizzata
+Il worker dei 30 minuti aggiorna anche `adblock_hosts.txt` dalla repo
+(unione con gli host appresi a runtime: nulla si perde).
 
 ## License & disclaimer
 

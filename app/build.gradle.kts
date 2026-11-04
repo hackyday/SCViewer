@@ -27,8 +27,8 @@ android {
         applicationId = "com.scviewer.fire"
         minSdk = 24          // Fire TV Stick Lite / 4K and most sticks still in use
         targetSdk = 34
-        versionCode = 7      // v1.3.1 (v1.3.0=6)
-        versionName = "1.3.1"
+        versionCode = 8      // v1.5.0 (v1.3.1=7)
+        versionName = "1.5.0"
 
         // In case the user is on a non-UI build, but Fire TV always has Leanback.
         vectorDrawables { useSupportLibrary = true }
@@ -104,4 +104,6 @@ dependencies {
     // evaluateJavascript (main frame only) cannot reach.
     implementation("androidx.webkit:webkit:1.11.0")
 
+    // Copertine negli overlay (async + cache di memoria/disco)
+    implementation("io.coil-kt:coil:2.6.0")
 }

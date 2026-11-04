@@ -49,6 +49,34 @@
             android:thumbTint="@color/sc_accent" />
 
         <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/settings_quality_label"
+            android:textColor="@color/sc_text_primary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/settingsQualityValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/sc_accent"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/settingsQualitySeek"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:max="2"
+            android:focusable="true"
+            android:progressBackgroundTint="#444444"
+            android:progressTint="@color/sc_accent"
+            android:thumbTint="@color/sc_accent" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"

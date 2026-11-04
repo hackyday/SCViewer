@@ -90,6 +90,36 @@ class AdBlocker private constructor(context: Context) {
     }
 
     /**
+     * Sincronizza la blocklist da GitHub (raw del repo): unisce le righe
+     * scaricate con quelle già presenti (host appresi a runtime non si
+     * perdono). Ritorna true se la lista è stata aggiornata.
+     */
+    fun syncFromGitHub(): Boolean {
+        val url = "https://raw.githubusercontent.com/hackyday/SCViewer/main/app/src/main/assets/adblock_hosts.txt"
+        return runCatching {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) return false
+                val body = resp.body?.string() ?: return false
+                if (body.isBlank() || !body.contains("0.0.0.0")) return false
+                val current = if (hostsFile.exists()) hostsFile.readText() else ""
+                val merged = LinkedHashSet<String>()
+                (current.lines() + body.lines()).forEach { line ->
+                    val t = line.trim()
+                    if (t.isNotEmpty()) merged.add(t)
+                }
+                if (merged.size == current.lines().filter { it.trim().isNotEmpty() }.size) return false
+                hostsFile.writeText(merged.joinToString("\n") + "\n")
+                loadFromDisk()
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
      * Append a runtime-learned host (e.g. detected via an anti-redirect
      * rule firing on a domain we hadn't seen yet).
      */

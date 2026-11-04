@@ -9,6 +9,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.scviewer.fire.data.DomainRepository
+import com.scviewer.fire.network.AdBlocker
 import java.util.concurrent.TimeUnit
 
 /**
@@ -28,6 +29,8 @@ class DomainRefreshWorker(
     override suspend fun doWork(): Result {
         return try {
             DomainRepository.get(applicationContext).refreshOnline()
+            // Blocklist annunci: stessa cadenza, fallback silenzioso.
+            runCatching { AdBlocker.get(applicationContext).syncFromGitHub() }
             Result.success()
         } catch (t: Throwable) {
             // Soft failure — the cached copy is still valid for the next load.

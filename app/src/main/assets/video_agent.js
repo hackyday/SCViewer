@@ -57,6 +57,24 @@
   // Progress reporting for the "Riprendi" (continue watching) feature.
   // Throttled to one report every 10 s while playing, plus an immediate
   // report when the video pauses (capture phase, any frame).
+  // Skip intro: qui il video c'è davvero (il vecchio detection in
+  // page_inject.js girava solo nel main frame e non ha MAI visto il video).
+  var introReported = -1;   // ultimo stato riportato (-1 = mai)
+  function maybeReportIntro() {
+    try {
+      var v = activeVideo();
+      var on = v && v.duration > 60 && v.currentTime > 0.5 && v.currentTime < 30;
+      var val = on ? 1 : 0;
+      if (val !== introReported) {
+        introReported = val;
+        AndroidJs.onSkipIntroAvailable(on === 1);
+      }
+    } catch (e) { /* no-op */ }
+  }
+  setInterval(maybeReportIntro, 1000);
+  document.addEventListener('play', maybeReportIntro, true);
+  document.addEventListener('seeked', maybeReportIntro, true);
+
   var lastProgressAt = 0;
   function maybeReportProgress(force) {
     try {
@@ -93,6 +111,8 @@
           var pp = v.play();
           if (pp && pp.catch) pp.catch(function () { /* autoplay refusal */ });
         }
+      } else if (cmd === 'skip-intro') {
+        try { v.currentTime = Math.min(v.duration || 1e9, 30); } catch (e) { /* no-op */ }
       } else if (cmd.indexOf('seek-to:') === 0) {
         var target = parseFloat(cmd.slice(8));
         if (!isNaN(target)) {

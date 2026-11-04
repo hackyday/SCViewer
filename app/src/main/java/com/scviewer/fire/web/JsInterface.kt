@@ -108,6 +108,11 @@ class JsInterface(
         enqueue("play", TOGGLE_TTL_MS)
     }
 
+    /** Native side: "Salta intro" — porta il video corrente a 30 s. */
+    fun requestSkipIntro() {
+        enqueue("skip-intro", TOGGLE_TTL_MS)
+    }
+
     /** Native side: "Riprendi" — jump the active video to [sec]. Longer TTL
      *  than toggle: the player may still be starting when it's requested. */
     fun requestSeekTo(sec: Int) {

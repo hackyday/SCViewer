@@ -108,43 +108,6 @@
     } catch (e) { /* no-op */ }
   }
 
-  // ---- 3. Skip-intro detection ---------------------------------------------
-  function setupSkipIntro() {
-    try {
-      var tried = 0;
-      var interval = setInterval(function () {
-        tried++;
-        if (tried > 60) { // give up after ~30 s
-          clearInterval(interval);
-          return;
-        }
-        var v = document.querySelector('video');
-        if (!v) return;
-        clearInterval(interval);
-
-        var reported = false;
-        function check() {
-          if (!v.duration) return;
-          if (!reported && v.currentTime < 30 && v.currentTime > 0.5) {
-            try { AndroidJs.onSkipIntroAvailable(true); } catch (e) {}
-            reported = true;
-          } else if (reported && v.currentTime >= 30) {
-            try { AndroidJs.onSkipIntroAvailable(false); } catch (e) {}
-            reported = false;
-          }
-        }
-        v.addEventListener('timeupdate', check);
-        // Also poll, since some sites never fire timeupdate during scrubbing.
-        setInterval(check, 1000);
-
-        // Provide a JS-side skip too, in case the native button isn't focused.
-        AndroidJs.skipIntro = function () {
-          v.currentTime = Math.min(v.duration || 60, 30);
-        };
-      }, 500);
-    } catch (e) { /* no-op */ }
-  }
-
   // ---- 4. Virtual tap helper (native cursor support) -----------------------
   // CursorController dispatches a synthetic touch to the WebView. If the
   // WebView drops it, no mousedown appears; the native side then calls
@@ -207,7 +170,6 @@
   // ---- Run ----------------------------------------------------------------
   hideAds();
   killPopunders();
-  setupSkipIntro();
   installScrollGuard();
 
   // ---- 6. Page info collector -----------------------------------------------
@@ -242,7 +204,10 @@
         season: (ep && ep.season) ? ep.season.number : null,
         episode: ep ? ep.number : null,
         episodeId: ep ? ep.id : null,
-        episodeName: ep ? (ep.name || '') : null
+        episodeName: ep ? (ep.name || '') : null,
+        nextEpisodeId: (j.props.nextEpisode) ? j.props.nextEpisode.id : null,
+        nextEpisodeNumber: (j.props.nextEpisode) ? j.props.nextEpisode.number : null,
+        poster: (html.match(/property="og:image" content="([^"]*)"/) || [])[1] || ''
       };
     } catch (e) { return null; }
   }

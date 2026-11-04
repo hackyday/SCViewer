@@ -37,6 +37,10 @@ object HlsRewriter {
     private const val TAG = "HlsRewriter"
     private const val MAX_HEIGHT = 1080
 
+    /** Altezza scelta dall'utente nelle Impostazioni (1080 = comportamento
+     *  di default). Impostata da MainActivity all'avvio e al cambio. */
+    @Volatile var maxHeightOverride: Int = MAX_HEIGHT
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -106,7 +110,7 @@ object HlsRewriter {
         val unlocked = unlockedVariantUrl(url)?.let { fetch(it, request) }
         val source = if (unlocked != null && hasStreamInf(unlocked)) unlocked else original
 
-        val rewritten = keepBestVariant(source, maxHeight = MAX_HEIGHT) ?: return null
+        val rewritten = keepBestVariant(source, maxHeight = maxHeightOverride) ?: return null
         cache[url] = rewritten to now
         Log.i(TAG, "master playlist riscritta: 1 variante (<= ${MAX_HEIGHT}p) su ${url.substringBefore('?')}")
         return rewritten

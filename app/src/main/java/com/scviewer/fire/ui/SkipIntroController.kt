@@ -1,7 +1,6 @@
 package com.scviewer.fire.ui
 
 import android.view.View
-import android.webkit.WebView
 import android.widget.Button
 import android.widget.FrameLayout
 
@@ -18,19 +17,14 @@ import android.widget.FrameLayout
 class SkipIntroController(
     private val container: FrameLayout,
     private val button: Button,
-    private val webView: WebView
+    private val onSkip: () -> Unit
 ) {
     init {
         container.visibility = View.GONE
         button.setOnClickListener {
-            // The skip function is dynamically attached by page_inject.js.
-            // Calling AndroidJs.skipIntro() only works after the video was
-            // detected, which is the same condition under which the button
-            // is visible — so the call is safe here.
-            webView.evaluateJavascript(
-                "(function(){ if (window.AndroidJs && AndroidJs.skipIntro) AndroidJs.skipIntro(); })();",
-                null
-            )
+            // Il video vive nell'iframe del player: il salto passa per il
+            // bridge (comando 'skip-intro' consumato dal video agent).
+            onSkip()
             hide()
         }
     }

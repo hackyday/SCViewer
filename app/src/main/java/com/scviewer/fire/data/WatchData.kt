@@ -14,11 +14,21 @@ data class PageInfo(
     val season: Int? = null,
     val episode: Int? = null,
     val episodeId: Int? = null,
-    val episodeName: String? = null
+    val episodeName: String? = null,
+    /** Props.nextEpisode della watch page: abilita il passaggio automatico. */
+    val nextEpisodeId: Int? = null,
+    val nextEpisodeNumber: Int? = null,
+    /** Poster del titolo (og:image della pagina, su CDN del sito). */
+    val poster: String? = null
 ) {
     val isTitlePage: Boolean get() = component == "Titles/Title"
     val isWatchPage: Boolean get() = component == "Titles/Watch"
     val isSeries: Boolean get() = type == "tv"
+
+    /** "S1E3" del prossimo episodio, se presente. */
+    fun nextEpisodeTag(): String =
+        if (isSeries && season != null && nextEpisodeNumber != null)
+            "S${season}E$nextEpisodeNumber" else ""
 
     /** Display label like "MobLand — S1E2 · Jigsaw Puzzle". */
     fun displayLabel(): String = when {
@@ -43,6 +53,8 @@ data class WatchProgress(
     /** Watch URL (/it/watch/…) — salvato RELATIVO (path+query) da v1.3:
      *  i record legacy contengono ancora un URL assoluto, gestito da [SiteUrl]. */
     val url: String,
+    /** Poster del titolo (captato dalla pagina). */
+    val poster: String? = null,
     val updatedAt: Long
 ) {
     /** Link pronto per il loadUrl, rimontato sul dominio CORRENTE. */

@@ -35,13 +35,13 @@ class FavoritesStore private constructor(context: Context) {
         return parsed
     }
 
-    fun add(url: String, title: String) {
+    fun add(url: String, title: String, poster: String? = null) {
         // Salva SEMPRE relativo (solo path+query).
         val rel = SiteUrl.relativeOf(url) ?: return
         val list = all().toMutableList()
         // De-dupe per PATH: ri-aggiungere sul nuovo dominio sposta in cima.
         list.removeAll { it.url == rel }
-        list.add(0, Favorite(url = rel, title = title, addedAt = System.currentTimeMillis()))
+        list.add(0, Favorite(url = rel, title = title, poster = poster, addedAt = System.currentTimeMillis()))
         // Cap at 50 entries — beyond that the overlay becomes unscrollable.
         persist(list.take(50))
     }

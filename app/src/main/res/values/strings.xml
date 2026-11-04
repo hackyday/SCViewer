@@ -42,6 +42,12 @@
     <string name="resume_yes">Riprendi</string>
     <string name="resume_restart">Ricomincia da capo</string>
 
+    <!-- Settings -->
+    <string name="settings_quality_label">Qualità massima video</string>
+    <string name="settings_quality_auto">Auto (fino a 1080p)</string>
+    <string name="settings_quality_720">720p (reti lente)</string>
+    <string name="settings_quality_480">480p (risparmio dati)</string>
+
     <!-- Settings (cursor speed) -->
     <string name="settings_title">Impostazioni</string>
     <string name="settings_speed_label">Velocità del cursore</string>
@@ -55,5 +61,8 @@
     <string name="phone_menu_title">Menu</string>
     <string name="phone_menu_exit">Esci dall\'app</string>
     <string name="phone_menu_report">Segnala errore (log crash)</string>
+    <string name="next_episode_chip">Prossimo episodio</string>
+    <string name="skip_outro_chip">Salta finale ▶</string>
+    <string name="update_chip">Aggiorna SC Viewer — %s</string>
 
 </resources>

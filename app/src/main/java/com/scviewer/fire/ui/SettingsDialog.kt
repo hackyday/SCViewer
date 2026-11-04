@@ -58,10 +58,30 @@ class SettingsDialog(
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
 
+        // Qualità massima (3 stop: Auto/720p/480p), applicata subito.
+        val qualityText = findViewById<TextView>(R.id.settingsQualityValue)
+        val qualitySeek = findViewById<SeekBar>(R.id.settingsQualitySeek)
+        val qualityLabels = listOf(
+            context.getString(R.string.settings_quality_auto),
+            context.getString(R.string.settings_quality_720),
+            context.getString(R.string.settings_quality_480)
+        )
+        qualitySeek.progress = SettingsStore.getQualityStop(context)
+        qualityText.text = qualityLabels[qualitySeek.progress.coerceIn(0, 2)]
+        qualitySeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                qualityText.text = qualityLabels[progress.coerceIn(0, 2)]
+            }
+
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+
         findViewById<Button>(R.id.settingsCancel).setOnClickListener { dismiss() }
         findViewById<Button>(R.id.settingsSave).setOnClickListener {
             val v = seek.progress + SettingsStore.MIN_SPEED
             SettingsStore.setCursorSpeed(context, v)
+            SettingsStore.setQualityStop(context, qualitySeek.progress)
             onSaved.invoke(v)
             Toast.makeText(
                 context,

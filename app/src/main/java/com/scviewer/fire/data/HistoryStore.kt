@@ -36,14 +36,14 @@ class HistoryStore private constructor(context: Context) {
         return parsed
     }
 
-    fun add(url: String, title: String) {
+    fun add(url: String, title: String, poster: String? = null) {
         // Salva SEMPRE relativo: il dominio corrente non deve restare congelato nel link.
         val rel = SiteUrl.relativeOf(url) ?: return
         val list = all().toMutableList()
         // De-dupe per PATH (non per URL assoluto): rivisitare sul nuovo dominio
         // sposta in cima la stessa voce invece di duplicarla.
         list.removeAll { it.url == rel }
-        list.add(0, HistoryEntry(url = rel, title = title, visitedAt = System.currentTimeMillis()))
+        list.add(0, HistoryEntry(url = rel, title = title, poster = poster, visitedAt = System.currentTimeMillis()))
         persist(list.take(MAX))
     }
 

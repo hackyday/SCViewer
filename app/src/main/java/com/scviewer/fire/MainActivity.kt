@@ -19,14 +19,17 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.scviewer.fire.BuildConfig
 import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
 import com.scviewer.fire.data.ProgressStore
+import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.WatchProgress
 import com.scviewer.fire.network.AdBlocker
+import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.CursorController
 import com.scviewer.fire.ui.OverlayDialog
 import com.scviewer.fire.ui.OverlayItem
@@ -80,6 +83,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
      *  settings / resume-question), if any. While one is up, D-pad keys go to
      *  its native focus and cursor taps are routed to its window. */
     private var activeDialog: Dialog? = null
+
+    private var updateChip: TextView? = null
 
     /** Telefono/tablet (touchscreen presente) vs Fire TV: sul telefono il
      *  cursore virtuale non esiste e c'è il pulsante menu touch. */
@@ -150,6 +155,81 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         // Initial one-shot domain refresh (VibraVid-style: runs on every app launch).
         mainScope.launch { refreshAndLoad() }
+
+        // Qualità HLS scelta dall'utente (1080 di default).
+        HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+        // Controllo nuove release GitHub (throttle 12 h).
+        checkForUpdates()
+    }
+
+    // -- Controllo aggiornamenti ----------------------------------------------
+
+    private fun checkForUpdates() {
+        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val prefs = getSharedPreferences("scviewer_updates", MODE_PRIVATE)
+            val last = prefs.getLong("last_check", 0L)
+            if (System.currentTimeMillis() - last < 12 * 3600_000L) return@launch
+            val latest = runCatching {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(
+                    okhttp3.Request.Builder()
+                        .url("https://api.github.com/repos/hackyday/SCViewer/releases/latest")
+                        .header("Accept", "application/vnd.github+json")
+                        .build()
+                ).execute().use { resp ->
+                    if (!resp.isSuccessful) null
+                    else resp.body?.string()?.let {
+                        org.json.JSONObject(it).optString("tag_name")
+                    }
+                }
+            }.getOrNull() ?: return@launch
+            prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
+            val current = "v" + BuildConfig.VERSION_NAME
+            if (latest.isNotBlank() && latest != current) {
+                Log.i(TAG, "update disponibile: $latest (attuale $current)")
+                runOnUiThread { showUpdateChip(latest) }
+            }
+        }
+    }
+
+    private fun showUpdateChip(version: String) {
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        updateChip = TextView(this).apply {
+            text = getString(R.string.update_chip, version)
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 15f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setBackgroundResource(R.drawable.overlay_rounded)
+            val pad = (10 * resources.displayMetrics.density).toInt()
+            setPadding(pad * 2, pad, pad * 2, pad)
+            elevation = 10f * resources.displayMetrics.density
+            isClickable = true
+            isFocusable = true
+            // Apre la pagina della release nel browser (il download lì è
+            // diretto: app-release.apk).
+            setOnClickListener {
+                runCatching {
+                    startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/hackyday/SCViewer/releases/latest")
+                        )
+                    )
+                }
+            }
+        }
+        content.addView(
+            updateChip,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP or android.view.Gravity.START
+            ).apply {
+                topMargin = (24 * resources.displayMetrics.density).toInt()
+                marginStart = (24 * resources.displayMetrics.density).toInt()
+            }
+        )
     }
 
     private fun bindViews() {
@@ -161,7 +241,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         val skipContainer = findViewById<FrameLayout>(R.id.skipIntroContainer)
         val skipButton = findViewById<Button>(R.id.skipIntroButton)
-        skipIntroController = SkipIntroController(skipContainer, skipButton, webView)
+        skipIntroController = SkipIntroController(skipContainer, skipButton) { jsBridge.requestSkipIntro() }
 
         // Virtual mouse cursor, attached to the activity's content root so it
         // floats above the WebView. Elevation keeps it on top even when other
@@ -538,8 +618,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // the season/episode suffix so the list is actually usable.
         val url = webView.url ?: return
         when {
-            info.isWatchPage -> history.add(url, info.displayLabel())
-            info.isTitlePage -> history.add(url, info.name)
+            info.isWatchPage -> history.add(url, info.displayLabel(), info.poster)
+            info.isTitlePage -> history.add(url, info.name, info.poster)
             else -> {} // home / genres / search: not history-worthy
         }
 
@@ -592,9 +672,133 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 durationSec = durSec,
                 // Relativo (path+query): sopravvive ai cambi di dominio del sito.
                 url = SiteUrl.relativeOf(webView.url) ?: "",
+                poster = info.poster,
                 updatedAt = System.currentTimeMillis()
             )
         )
+
+        maybeShowNextEpisodeOrOutro(posSec, durSec)
+    }
+
+    // -- Prossimo episodio / Skip outro ---------------------------------------
+    //
+    // Serie: quando restano < 90 s e la pagina dichiara un prossimo
+    // episodio, chip con countdown 10 s che naviga automaticamente
+    // (tap sul chip = salta subito, ✕ = annulla). Film (nessun prossimo
+    // episodio): chip "Salta finale" che salta ai crediti.
+
+    private var nextEpisodeChip: TextView? = null
+    private var outroChip: TextView? = null
+    private var autoNextTick: Runnable? = null
+    private var autoNextShownFor: Int = 0
+
+    private fun maybeShowNextEpisodeOrOutro(posSec: Int, durSec: Int) {
+        val info = currentPageInfo ?: return
+        if (!info.isWatchPage || durSec < 120) { hideAutoNext(); hideOutro(); return }
+        val remaining = durSec - posSec
+        if (info.nextEpisodeId != null && remaining <= NEXT_EPISODE_WINDOW_SEC) {
+            hideOutro()
+            val key = info.titleId + (info.nextEpisodeId ?: 0)
+            if (autoNextShownFor == key) return
+            autoNextShownFor = key
+            showAutoNextChip(info)
+        } else if (info.nextEpisodeId == null && remaining <= OUTRO_WINDOW_SEC) {
+            hideAutoNext()
+            if (autoNextShownFor == info.titleId) return
+            autoNextShownFor = info.titleId
+            showOutroChip(durSec)
+        } else {
+            hideAutoNext(); hideOutro()
+        }
+    }
+
+    /** Chip generico ancorato in basso a destra sopra l'area player. */
+    private fun makeChip(text: String, bottomDp: Int, onClick: View.OnClickListener): TextView =
+        TextView(this).apply {
+            this.text = text
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setBackgroundResource(R.drawable.overlay_rounded)
+            val pad = (10 * resources.displayMetrics.density).toInt()
+            setPadding(pad * 2, pad, pad * 2, pad)
+            elevation = 10f * resources.displayMetrics.density
+            isClickable = true
+            isFocusable = true
+            setOnClickListener(onClick)
+            findViewById<FrameLayout>(android.R.id.content).addView(
+                this,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.BOTTOM or android.view.Gravity.END
+                ).apply { bottomMargin = (bottomDp * resources.displayMetrics.density).toInt() }
+            )
+        }
+
+    private fun showAutoNextChip(info: PageInfo) {
+        hideAutoNext()
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        val label = getString(R.string.next_episode_chip) +
+            (info.nextEpisodeTag().takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "")
+
+        val goNow = View.OnClickListener { hideAutoNext(); goNextEpisode(info) }
+        val chip = makeChip("", 96, goNow)
+        nextEpisodeChip = chip
+        // ✕ di annullamento, piccolo, sopra il chip principale
+        val cancel = makeChip("✕", 160) { hideAutoNext() }
+        cancel.textSize = 13f
+
+        var seconds = 10
+        val tick = object : Runnable {
+            override fun run() {
+                if (nextEpisodeChip !== chip) return          // annullato/gone
+                if (currentPageInfo?.nextEpisodeId != info.nextEpisodeId) {
+                    hideAutoNext(); return                     // pagina cambiata
+                }
+                if (seconds <= 0) { goNextEpisode(info); return }
+                chip.text = "$label · ${seconds}s"
+                seconds--
+                autoNextTick = this
+                handler.postDelayed(this, 1000)
+            }
+        }
+        autoNextTick = tick
+        handler.post(tick)
+        Log.i(TAG, "auto-next shown for ${info.name} (${info.nextEpisodeTag()})")
+    }
+
+    private fun goNextEpisode(info: PageInfo) {
+        val eid = info.nextEpisodeId ?: return
+        val link = SiteUrl.resolve("/it/watch/${info.titleId}?e=$eid", domainRepo.currentDomain()) ?: return
+        Log.i(TAG, "auto-next -> $link")
+        hideAutoNext()
+        // Segna l'episodio come finito: "Riprendi" non lo ripropone.
+        progress.get(info.titleId)?.let {
+            progress.save(it.copy(positionSec = it.durationSec, updatedAt = System.currentTimeMillis()))
+        }
+        webView.loadUrl(link)
+    }
+
+    private fun hideAutoNext() {
+        autoNextTick?.let { handler.removeCallbacks(it) }
+        autoNextTick = null
+        nextEpisodeChip?.let { (it.parent as? FrameLayout)?.removeView(it) }
+        nextEpisodeChip = null
+    }
+
+    private fun showOutroChip(durSec: Int) {
+        if (outroChip?.visibility == View.VISIBLE) return
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        outroChip = makeChip(getString(R.string.skip_outro_chip), 96, View.OnClickListener {
+            hideOutro()
+            jsBridge.requestSeekTo(durSec - 15)   // salta ai crediti
+        }).also { it.bringToFront() }
+    }
+
+    private fun hideOutro() {
+        outroChip?.let { (it.parent as? FrameLayout)?.removeView(it) }
+        outroChip = null
     }
 
     /** User picked a resume entry: reload its watch URL (RISCRITTO sul
@@ -667,7 +871,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             OverlayItem(
                 title = p.name + (if (tag.isNotEmpty()) " · $tag" else ""),
                 subtitle = "riprendi da ${p.positionLabel()}",
-                tag = p.titleId.toString()
+                tag = p.titleId.toString(),
+                imageUrl = p.poster
             )
         }
         val byId = entries.associateBy { it.titleId.toString() }
@@ -771,8 +976,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun showFavorites() {
         val items = favorites.all().map {
             // No URL in the list — the name is the info the user needs; the
-            // link travels in the tag.
-            OverlayItem(title = it.title, subtitle = "", tag = it.url)
+            // link travels in the tag. Poster se ce l'abbiamo.
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = it.poster)
         }
         val dialog = OverlayDialog(
             context = this,
@@ -802,7 +1007,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showHistory() {
         val items = history.all().map {
-            OverlayItem(title = it.title, subtitle = "", tag = it.url)
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = it.poster)
         }
         val dialog = OverlayDialog(
             context = this,
@@ -1046,6 +1251,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         /** Fling velocity (px/s) for the Rewind / Fast-forward page scroll. */
         private const val PAGE_SCROLL_FLING = 1800
 
+        /** Finestra (secondi rimanenti) per proporre il prossimo episodio. */
+        private const val NEXT_EPISODE_WINDOW_SEC = 90
+        /** Finestra per il chip "Salta finale" (film). */
+        private const val OUTRO_WINDOW_SEC = 120
         /** Max automatic domain-refresh+reload cycles per failed load. */
         private const val MAX_LOAD_RETRIES = 3
         /** Cooldown between automatic retries. */
