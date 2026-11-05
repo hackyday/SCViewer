@@ -23,6 +23,9 @@ class JsInterface(
     private val onVideoState: (Boolean) -> Unit,
     private val onPageInfo: (String) -> Unit,
     private val onProgress: (Int, Int) -> Unit,
+    /** Poster recuperato dal JS per un titolo (dalla sua pagina titolo)
+     *  quando la pagina corrente (watch) non lo espone. */
+    private val onPosterFound: (Int, String) -> Unit,
     /** Called synchronously from the page when the user clicks a "Guarda"
      *  link. Returns "resume" when a playback position exists for the title
      *  (the page must block navigation while the native popup asks), or
@@ -66,6 +69,14 @@ class JsInterface(
     @JavascriptInterface
     fun onProgress(positionSec: Int, durationSec: Int) {
         if (durationSec > 0 && positionSec >= 0) onProgress.invoke(positionSec, durationSec)
+    }
+
+    /** Called by page_inject.js when it recovered the poster of the current
+     *  title from the title page (watch pages often omit it). */
+    @JavascriptInterface
+    fun onPosterFound(titleId: String, posterUrl: String) {
+        val tid = titleId.toIntOrNull() ?: return
+        if (posterUrl.isNotBlank()) onPosterFound.invoke(tid, posterUrl)
     }
 
     /** Called by page_inject.js on every "Guarda" click: the page blocks its

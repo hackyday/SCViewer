@@ -382,6 +382,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } },
                 onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
                 onProgress = { pos, dur -> runOnUiThread { onVideoProgress(pos, dur) } },
+                onPosterFound = { tid, url -> runOnUiThread { PosterCache.put(this@MainActivity, tid, url) } },
                 onPlayClicked = { tid ->
                     // JS bridge thread — synchronous verdict. "resume" makes
                     // the page hold the navigation while the popup asks.
@@ -627,13 +628,19 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // to is stale — drop it (they aborted the resume).
         pendingResume?.let { (tid, _) -> if (tid != info.titleId) pendingResume = null }
 
+        // Poster: title pages carry the full images array — cache it so
+        // watch pages (that often omit it) can reuse it everywhere.
+        info.poster?.takeIf { it.isNotBlank() }
+            ?.let { PosterCache.put(this, info.titleId, it) }
+
         // History: record only meaningful pages, with the REAL show name (the
         // document title alone is just "StreamingCommunity"). Watch pages get
         // the season/episode suffix so the list is actually usable.
         val url = webView.url ?: return
+        val poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, info.titleId)
         when {
-            info.isWatchPage -> history.add(url, info.displayLabel(), info.poster)
-            info.isTitlePage -> history.add(url, info.name, info.poster)
+            info.isWatchPage -> history.add(url, info.displayLabel(), poster)
+            info.isTitlePage -> history.add(url, info.name, poster)
             else -> {} // home / genres / search: not history-worthy
         }
 
@@ -697,7 +704,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 durationSec = durSec,
                 // Relativo (path+query): sopravvive ai cambi di dominio del sito.
                 url = SiteUrl.relativeOf(webView.url) ?: "",
-                poster = info.poster,
+                poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, info.titleId),
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -906,7 +913,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 title = p.name + (if (tag.isNotEmpty()) " · $tag" else ""),
                 subtitle = "riprendi da ${p.positionLabel()}",
                 tag = p.titleId.toString(),
-                imageUrl = p.poster
+                imageUrl = p.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, p.titleId)
             )
         }
         val byId = entries.associateBy { it.titleId.toString() }
@@ -1010,7 +1017,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun showFavorites() {
         val items = favorites.all().map {
             val pid = SiteUrl.titleIdOf(it.url)
-            val poster = it.poster ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
             OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
         }
         val dialog = OverlayDialog(
@@ -1042,7 +1049,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun showHistory() {
         val items = history.all().map {
             val pid = SiteUrl.titleIdOf(it.url)
-            val poster = it.poster ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
             OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
         }
         val dialog = OverlayDialog(

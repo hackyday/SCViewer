@@ -222,6 +222,27 @@
     } catch (e) { return null; }
   }
 
+  // Watch pages spesso non espongono l'array images del titolo: recupera il
+  // poster dalla pagina del titolo (stessa origine, SSR con data-page) e lo
+  // passa al nativo (PosterCache). Una sola fetch per titolo per documento.
+  var posterFetchedFor = null;
+  function maybeFetchTitlePoster(info) {
+    try {
+      if (!info || info.poster || location.pathname.indexOf('/watch/') < 0) return;
+      if (posterFetchedFor === info.titleId) return;
+      posterFetchedFor = info.titleId;
+      fetch('/it/titles/' + info.titleId + '-' + info.slug, { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var t = extractInfo(html);
+          if (t && t.poster) {
+            try { AndroidJs.onPosterFound(String(info.titleId), t.poster); } catch (e) { /* no-op */ }
+          }
+        })
+        .catch(function () { /* no-op */ });
+    } catch (e) { /* no-op */ }
+  }
+
   var infoBusy = false;
   var lastReportedPath = null;
   function reportPageInfo(force) {
@@ -242,6 +263,7 @@
           if (info) {
             lastReportedPath = location.pathname + location.search;
             try { AndroidJs.onPageInfo(JSON.stringify(info)); } catch (e) { /* no-op */ }
+            maybeFetchTitlePoster(info);
           }
         })
         .catch(function () { infoBusy = false; });
