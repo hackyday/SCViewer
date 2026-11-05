@@ -96,6 +96,7 @@ class AdBlocker private constructor(context: Context) {
      */
     fun syncFromGitHub(): Boolean {
         val url = "https://raw.githubusercontent.com/hackyday/SCViewer/main/app/src/main/assets/adblock_hosts.txt"
+        android.util.Log.i("AdBlocker", "syncFromGitHub: inizio fetch")
         return runCatching {
             val client = okhttp3.OkHttpClient.Builder()
                 .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
@@ -111,9 +112,13 @@ class AdBlocker private constructor(context: Context) {
                     val t = line.trim()
                     if (t.isNotEmpty()) merged.add(t)
                 }
-                if (merged.size == current.lines().filter { it.trim().isNotEmpty() }.size) return false
+                if (merged.size == current.lines().filter { it.trim().isNotEmpty() }.size) {
+                    android.util.Log.i("AdBlocker", "syncFromGitHub: nessun cambio (${merged.size} righe)")
+                    return false
+                }
                 hostsFile.writeText(merged.joinToString("\n") + "\n")
                 loadFromDisk()
+                android.util.Log.i("AdBlocker", "syncFromGitHub: aggiornata a ${merged.size} righe")
                 true
             }
         }.getOrDefault(false)

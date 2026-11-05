@@ -158,6 +158,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         // Qualità HLS scelta dall'utente (1080 di default).
         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+        // Blocklist annunci fresca ad ogni avvio (il worker dei 30 minuti
+        // resta come refresher in background).
+        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { AdBlocker.get(this@MainActivity).syncFromGitHub() }
+        }
         // Controllo nuove release GitHub (throttle 12 h).
         checkForUpdates()
     }
