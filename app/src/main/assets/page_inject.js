@@ -214,7 +214,9 @@
             if (imgs[k].type === 'poster' && imgs[k].filename)
               return cdn + '/images/' + imgs[k].filename;
           }
-          return '';
+          // fallback: og:image (cover orizzontale, meglio di niente)
+          var og = html.match(/property="og:image" content="([^"]*)"/);
+          return og ? og[1] : '';
         })()
       };
     } catch (e) { return null; }

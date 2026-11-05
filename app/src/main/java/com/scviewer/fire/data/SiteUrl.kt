@@ -75,4 +75,11 @@ object SiteUrl {
         }
         return "$domain$rel"
     }
+
+    /** Estrae il titleId da un URL del sito (titles o watch). */
+    fun titleIdOf(url: String?): Int? {
+        if (url.isNullOrBlank()) return null
+        val m = Regex("/(?:titles|watch)/(\\d+)").find(url)
+        return m?.groupValues?.get(1)?.toIntOrNull()
+    }
 }

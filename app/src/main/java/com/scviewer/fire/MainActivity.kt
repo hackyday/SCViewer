@@ -24,6 +24,7 @@ import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
+import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
@@ -1008,9 +1009,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showFavorites() {
         val items = favorites.all().map {
-            // No URL in the list — the name is the info the user needs; the
-            // link travels in the tag. Poster se ce l'abbiamo.
-            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = it.poster)
+            val pid = SiteUrl.titleIdOf(it.url)
+            val poster = it.poster ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
         }
         val dialog = OverlayDialog(
             context = this,
@@ -1040,7 +1041,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showHistory() {
         val items = history.all().map {
-            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = it.poster)
+            val pid = SiteUrl.titleIdOf(it.url)
+            val poster = it.poster ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
         }
         val dialog = OverlayDialog(
             context = this,
