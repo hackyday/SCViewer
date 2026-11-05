@@ -59,15 +59,18 @@
   // report when the video pauses (capture phase, any frame).
   // Skip intro: qui il video c'è davvero (il vecchio detection in
   // page_inject.js girava solo nel main frame e non ha MAI visto il video).
-  var introReported = -1;   // ultimo stato riportato (-1 = mai)
+  var introReported = false;   // ultimo stato riportato da QUESTO frame
   function maybeReportIntro() {
     try {
       var v = activeVideo();
-      var on = v && v.duration > 60 && v.currentTime > 0.5 && v.currentTime < 30;
-      var val = on ? 1 : 0;
-      if (val !== introReported) {
-        introReported = val;
-        AndroidJs.onSkipIntroAvailable(on === 1);
+      // SOLO il frame che possiede il video attivo parla: un frame senza
+      // video (es. il main frame) non ha autorità sullo stato intro —
+      // il suo 'false' annullerebbe il 'true' dell'iframe del player.
+      if (!v) return;
+      var on = v.duration > 60 && v.currentTime > 0.5 && v.currentTime < 30;
+      if (on !== introReported) {
+        introReported = on;
+        AndroidJs.onSkipIntroAvailable(on);
       }
     } catch (e) { /* no-op */ }
   }
