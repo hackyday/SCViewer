@@ -33,6 +33,9 @@ class SkipIntroController(
         if (available) show() else hide()
     }
 
+    /** True se il chip "Salta intro" è attualmente visibile. */
+    val isAvailable: Boolean get() = container.visibility == View.VISIBLE
+
     private fun show() {
         if (container.visibility != View.VISIBLE) {
             container.visibility = View.VISIBLE

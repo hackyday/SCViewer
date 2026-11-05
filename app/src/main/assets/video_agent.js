@@ -115,7 +115,10 @@
           if (pp && pp.catch) pp.catch(function () { /* autoplay refusal */ });
         }
       } else if (cmd === 'skip-intro') {
-        try { v.currentTime = Math.min(v.duration || 1e9, 30); } catch (e) { /* no-op */ }
+        // Solo se siamo nei primi 60 s: evita rewind da posizione avanzata.
+        if (v.currentTime < 60) {
+          try { v.currentTime = Math.min(v.duration || 1e9, 30); } catch (e) { /* no-op */ }
+        }
       } else if (cmd.indexOf('seek-to:') === 0) {
         var target = parseFloat(cmd.slice(8));
         if (!isNaN(target)) {

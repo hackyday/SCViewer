@@ -151,7 +151,9 @@ class CursorController(
 
     /** When a native dialog is on screen the host activity supplies its
      *  decor view here, so cursor taps land ON THE DIALOG instead of the
-     *  WebView underneath (invisible behind it and dead to the user). */
+     *  WebView underneath. When null, the tap goes to the content root —
+     *  Android hit-testing instradia automaticamente verso il chip, il
+     *  pulsante o la WebView a seconda di cosa è sotto il puntatore. */
     var overlayTargetProvider: (() -> View?)? = null
 
     /** Dispatches a tap at the pointer position.
@@ -175,7 +177,8 @@ class CursorController(
         if (!active || clickPending) return
 
         val target = overlayTargetProvider?.invoke()
-        if (target == null && webView.parent == null) return   // detached during fullscreen video
+            ?: container   // content root: Android hit-testa e instrada al chip o alla WebView
+        if (target === container && webView.parent == null) return   // detached during fullscreen video
 
         clickPending = true
 
@@ -186,12 +189,12 @@ class CursorController(
         // which made every click land at the top-left corner on some sticks.)
         val lx = (x + TIP_OFFSET_PX * density).coerceIn(0f, max((target?.width ?: webView.width) - 1f, 0f))
         val ly = (y + TIP_OFFSET_PX * density).coerceIn(0f, max((target?.height ?: webView.height) - 1f, 0f))
-        Log.i(TAG, "click at (${"%.0f".format(lx)}, ${"%.0f".format(ly)}) on ${if (target != null) "dialog" else "webview"} ${target?.width ?: webView.width}x${target?.height ?: webView.height}")
+        Log.i(TAG, "click at (${"%.0f".format(lx)}, ${"%.0f".format(ly)}) on ${if (target != null && target !== container) "dialog" else if (target === container) "content" else "webview"} ${target?.width ?: webView.width}x${target?.height ?: webView.height}")
 
         // 1) Primary path: dispatch the touch stream right now.
         val now = SystemClock.uptimeMillis()
         val down = makeTouch(MotionEvent.ACTION_DOWN, now, now, lx, ly)
-        val downOk = (target ?: webView).dispatchTouchEvent(down)
+        val downOk = target.dispatchTouchEvent(down)
         down.recycle()
         Log.i(TAG, "touch DOWN consumed=$downOk")
 
@@ -203,12 +206,13 @@ class CursorController(
         handler.postDelayed({
             val t = SystemClock.uptimeMillis()
             val up = makeTouch(MotionEvent.ACTION_UP, now, t, lx, ly)
-            val upOk = (target ?: webView).dispatchTouchEvent(up)
+            val upOk = target.dispatchTouchEvent(up)
             up.recycle()
             Log.i(TAG, "touch UP consumed=$upOk")
 
-            if (target != null) {
-                // Dialog tap — the page-verification fallback doesn't apply.
+            if (target !== webView) {
+                // Content root o dialog: il touch è già stato instradato
+                // correttamente, il fallback JS non serve.
                 clickPending = false
                 return@postDelayed
             }

@@ -260,7 +260,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         )
         // While a dialog is on screen, cursor taps must land on the dialog's
         // own window (the WebView below is hidden behind it and dead).
-        cursorCtl.overlayTargetProvider = { activeDialog?.window?.decorView }
+        cursorCtl.overlayTargetProvider = {
+            activeDialog?.window?.decorView
+                ?: findViewById<FrameLayout>(android.R.id.content)
+        }
         if (!isTouchDevice) {
             cursorCtl.attach()
             cursorCtl.show()
@@ -369,7 +372,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             // JS bridge — must be added before the first page loads so
             // page_inject.js can find it on first run.
             jsBridge = JsInterface(
-                onSkipIntro = { available -> runOnUiThread { skipIntroController.setAvailable(available) } },
+                onSkipIntro = { available -> runOnUiThread {
+                    // Il chip solo se siamo su una pagina watch.
+                    val isWatch = webView.url?.contains("/watch/") == true
+                    skipIntroController.setAvailable(available && isWatch)
+                } },
                 onAdBlockHit = { host -> adBlocker.addRuntime(host) },
                 onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } },
                 onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
@@ -658,6 +665,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun onVideoProgressInner(posSec: Int, durSec: Int) {
         lastVideoPos = posSec
         lastVideoDur = durSec
+        // Chips solo se il WebView è davvero su una pagina watch.
+        if (webView.url?.contains("/watch/") != true) {
+            hideAutoNext(); hideOutro()
+            return
+        }
 
         // Seek confirmation: once playback is near the requested resume
         // position, the resume is fulfilled.
@@ -1180,7 +1192,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                 if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    webView.flingScroll(0, PAGE_SCROLL_FLING)
+                    // Forward in cinema mode = salta intro (l'agente gestisce il resto)
+                    if (cinemaMode) {
+                        jsBridge.requestSkipIntro()
+                    } else {
+                        webView.flingScroll(0, PAGE_SCROLL_FLING)
+                    }
                 }
                 return true
             }
