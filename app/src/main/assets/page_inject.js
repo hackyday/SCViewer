@@ -213,23 +213,31 @@
   }
 
   var infoBusy = false;
-  function reportPageInfo() {
+  var lastReportedPath = null;
+  function reportPageInfo(force) {
     if (infoBusy) return;
+    // Stesso URL di quello già riportato: niente ri-fetch (i partial reload
+    // di Inertia fanno replaceState a URL invariato e la ri-fetch della
+    // watch URL a volte viene rimandata alla home dal server, corrompendo
+    // lo stato page-info corrente).
+    var path = location.pathname + location.search;
+    if (!force && path === lastReportedPath) return;
     infoBusy = true;
     try {
-      fetch(location.pathname + location.search, { credentials: 'same-origin' })
+      fetch(path, { credentials: 'same-origin' })
         .then(function (r) { return r.text(); })
         .then(function (html) {
           infoBusy = false;
           var info = extractInfo(html);
           if (info) {
+            lastReportedPath = location.pathname + location.search;
             try { AndroidJs.onPageInfo(JSON.stringify(info)); } catch (e) { /* no-op */ }
           }
         })
         .catch(function () { infoBusy = false; });
     } catch (e) { infoBusy = false; }
   }
-  window.__scvReportPageInfo = reportPageInfo;
+  window.__scvReportPageInfo = function(){ reportPageInfo(true); };
 
   // First load: report quickly, then again in case the router settled late.
   setTimeout(reportPageInfo, 500);

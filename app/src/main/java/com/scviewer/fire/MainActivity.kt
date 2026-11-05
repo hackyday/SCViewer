@@ -186,6 +186,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }.getOrNull() ?: return@launch
             prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
             val current = "v" + BuildConfig.VERSION_NAME
+            Log.i(TAG, "update check: latest=$latest current=$current")
             if (latest.isNotBlank() && latest != current) {
                 Log.i(TAG, "update disponibile: $latest (attuale $current)")
                 runOnUiThread { showUpdateChip(latest) }
@@ -645,6 +646,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     /** Called from the JsInterface callback (UI thread) ~every 10 s while a
      *  film plays (and once when it pauses). */
     private fun onVideoProgress(posSec: Int, durSec: Int) {
+        runCatching { onVideoProgressInner(posSec, durSec) }
+            .onFailure { Log.e(TAG, "onVideoProgress failed", it) }
+    }
+
+    private fun onVideoProgressInner(posSec: Int, durSec: Int) {
         lastVideoPos = posSec
         lastVideoDur = durSec
 
@@ -688,6 +694,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     // episodio): chip "Salta finale" che salta ai crediti.
 
     private var nextEpisodeChip: TextView? = null
+    private var nextEpisodeCancel: TextView? = null
     private var outroChip: TextView? = null
     private var autoNextTick: Runnable? = null
     private var autoNextShownFor: Int = 0
@@ -695,6 +702,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun maybeShowNextEpisodeOrOutro(posSec: Int, durSec: Int) {
         val info = currentPageInfo ?: return
         if (!info.isWatchPage || durSec < 120) { hideAutoNext(); hideOutro(); return }
+        // ISTERESI: un chip già visibile non viene mai nascosto dai report
+        // successivi (la posizione reale può rientrare/sfuoriuscire dalla
+        // finestra per buffering/seek — il chip deve restare stabile). La
+        // scomparsa avviene solo per: pagina cambiata, ✕, countdown a 0.
+        if (nextEpisodeChip != null || outroChip != null) return
         val remaining = durSec - posSec
         if (info.nextEpisodeId != null && remaining <= NEXT_EPISODE_WINDOW_SEC) {
             hideOutro()
@@ -712,9 +724,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    /** Chip generico ancorato in basso a destra sopra l'area player. */
-    private fun makeChip(text: String, bottomDp: Int, onClick: View.OnClickListener): TextView =
-        TextView(this).apply {
+    /** Chip generico ancorato in basso a destra sopra l'area player.
+     *  NOTA: il content root va preso FUORI dall'apply — dentro un
+     *  TextView.apply, findViewById si risolverebbe sul TextView e
+     *  android.R.id.content sarebbe null (NPE a chip visibile). */
+    private fun makeChip(text: String, bottomDp: Int, onClick: View.OnClickListener): TextView {
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        return TextView(this).apply {
             this.text = text
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 16f
@@ -726,7 +742,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             isClickable = true
             isFocusable = true
             setOnClickListener(onClick)
-            findViewById<FrameLayout>(android.R.id.content).addView(
+            content.addView(
                 this,
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -735,6 +751,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 ).apply { bottomMargin = (bottomDp * resources.displayMetrics.density).toInt() }
             )
         }
+    }
 
     private fun showAutoNextChip(info: PageInfo) {
         hideAutoNext()
@@ -746,17 +763,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         val chip = makeChip("", 96, goNow)
         nextEpisodeChip = chip
         // ✕ di annullamento, piccolo, sopra il chip principale
-        val cancel = makeChip("✕", 160) { hideAutoNext() }
-        cancel.textSize = 13f
+        nextEpisodeCancel = makeChip("✕", 160) { hideAutoNext() }.apply { textSize = 13f }
 
         var seconds = 10
         val tick = object : Runnable {
             override fun run() {
                 if (nextEpisodeChip !== chip) return          // annullato/gone
-                if (currentPageInfo?.nextEpisodeId != info.nextEpisodeId) {
-                    hideAutoNext(); return                     // pagina cambiata
-                }
-                if (seconds <= 0) { goNextEpisode(info); return }
+                if (seconds <= 0) { hideAutoNext(); goNextEpisode(info); return }
                 chip.text = "$label · ${seconds}s"
                 seconds--
                 autoNextTick = this
@@ -785,6 +798,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         autoNextTick = null
         nextEpisodeChip?.let { (it.parent as? FrameLayout)?.removeView(it) }
         nextEpisodeChip = null
+        nextEpisodeCancel?.let { (it.parent as? FrameLayout)?.removeView(it) }
+        nextEpisodeCancel = null
     }
 
     private fun showOutroChip(durSec: Int) {
