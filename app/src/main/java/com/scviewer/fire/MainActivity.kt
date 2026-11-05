@@ -640,7 +640,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // for, once per page, and not when a resume is already in flight.
         val p = progress.get(info.titleId)
         if (p != null && p.isResumeable() && pendingResume == null &&
-            resumeChipShownFor != info.titleId
+            resumeChipShownFor != info.titleId &&
+            (info.isTitlePage || info.isWatchPage)
         ) {
             resumeChipShownFor = info.titleId
             val tag = p.seasonEpisodeTag()

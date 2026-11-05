@@ -207,7 +207,15 @@
         episodeName: ep ? (ep.name || '') : null,
         nextEpisodeId: (j.props.nextEpisode) ? j.props.nextEpisode.id : null,
         nextEpisodeNumber: (j.props.nextEpisode) ? j.props.nextEpisode.number : null,
-        poster: (html.match(/property="og:image" content="([^"]*)"/) || [])[1] || ''
+        poster: (function() {
+          var cdn = (j.props && j.props.cdn_url) || '';
+          var imgs = (t.images || []);
+          for (var k = 0; k < imgs.length; k++) {
+            if (imgs[k].type === 'poster' && imgs[k].filename)
+              return cdn + '/images/' + imgs[k].filename;
+          }
+          return '';
+        })()
       };
     } catch (e) { return null; }
   }
