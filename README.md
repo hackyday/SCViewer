@@ -138,6 +138,28 @@ The release build is minified + resource-shrunk with the rules in
 `app/proguard-rules.pro` (preserves the JS interface + serialization
 serializers).
 
+## Installazione guidata con la tua AI
+
+> Non sai se SC Viewer funziona sul tuo smart TV? C'è un prompt pronto
+> per qualsiasi assistente AI (ChatGPT, Gemini, Copilot…):
+> **[PROMPT_INSTALLAZIONE.md](PROMPT_INSTALLAZIONE.md)**
+> ([apri il testo grezzo](https://raw.githubusercontent.com/hackyday/SCViewer/main/PROMPT_INSTALLAZIONE.md)).
+
+**Come usarlo:**
+
+1. Apri il file del prompt con il link qui sopra.
+2. Copia tutto il contenuto (il testo dopo la riga "RUOLO:").
+3. Incollalo nella chat della tua AI e invia.
+4. L'AI ti chiede marca, modello e sistema operativo del tuo TV, verifica
+   online le specifiche e l'ultima release, e poi ti genera una guida
+   passo-passo personalizzata — oppure ti propone le alternative (Fire TV
+   Stick, dongle Google TV, mirroring dal telefono) se il tuo TV non può
+   installare app Android.
+
+Il prompt contiene già tutti i dati dell'app (codice Downloader `5157886`,
+requisiti, percorsi dei menu, comandi, problemi noti) e obbliga l'AI a
+cercare online informazioni aggiornate prima di rispondere.
+
 ## Sideload on a Fire TV Stick
 
 > **No computer?** See [TUTORIAL.md](TUTORIAL.md) — install directly on the
