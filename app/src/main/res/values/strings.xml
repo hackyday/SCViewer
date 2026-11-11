@@ -73,5 +73,8 @@
     <string name="next_episode_chip">Prossimo episodio</string>
     <string name="skip_outro_chip">Salta finale ▶</string>
     <string name="update_chip">Aggiorna SC Viewer — %s</string>
+    <string name="update_downloading">Nuova versione trovata (%s): scaricamento in corso…</string>
+    <string name="update_ready">Aggiornamento scaricato: avvio dell\'installazione…</string>
+    <string name="update_download_failed">Scaricamento aggiornamento fallito — riprova dal chip</string>
 
 </resources>

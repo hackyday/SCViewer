@@ -136,6 +136,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
      *  (HTTP error + titolo blocco + JS bridge) per la stessa pagina. */
     private var recovering = false
 
+    /** Auto-aggiornamento: tag rilevato (per il chip) e guard del download. */
+    private var updateTag: String? = null
+    private var autoUpdateRunning = false
+
     /** Fires when the main frame hasn't finished loading within
      *  [LOAD_TIMEOUT_MS] — WebView has no built-in load timeout, and a hung
      *  load otherwise leaves the opaque loading overlay up forever (black
@@ -210,8 +214,91 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             if (latest.isNotBlank() && latest != current) {
                 Log.i(TAG, "update disponibile: $latest (attuale $current)")
                 runOnUiThread { showUpdateChip(latest) }
+                // Scarico e propongo l'installazione SOLO se latest è davvero
+                // più recente (un confronto a stringhe uguale/diversa basta
+                // per il chip, non per avviare il downloader).
+                if (isVersionNewer(latest, current)) {
+                    runOnUiThread { startAutoUpdate(latest) }
+                }
             }
         }
+    }
+
+    /** Confronta due tag "vX.Y.Z": true solo se [latest] è strettamente più
+     *  recente di [current]. */
+    private fun isVersionNewer(latest: String, current: String): Boolean {
+        fun nums(v: String) = v.removePrefix("v").split('.').let {
+            (it.getOrNull(0)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L) * 1_000_000L +
+            (it.getOrNull(1)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L) * 1_000L +
+            (it.getOrNull(2)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L)
+        }
+        return runCatching { nums(latest) > nums(current) }.getOrDefault(false)
+    }
+
+    /** Scarica l'APK della [tag] nel cache dir e lancia il package installer
+     *  di sistema: la conferma finale resta all'utente ("Installa/Annulla").
+     *  Dati e impostazioni sopravvivono all'aggiornamento. Se il film è in
+     *  riproduzione il popup va evitato: lo scaricamento parte comunque dal
+     *  chip, il prompt no. */
+    private fun startAutoUpdate(tag: String) {
+        if (tag.isBlank()) return
+        updateTag = tag
+        if (autoUpdateRunning) return
+        autoUpdateRunning = true
+        val url = "https://github.com/hackyday/SCViewer/releases/download/$tag/app-release.apk"
+        showToast(getString(R.string.update_downloading, tag))
+        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val ok = runCatching {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                    val dst = java.io.File(cacheDir, "update-$tag.apk")
+                    dst.parentFile?.mkdirs()
+                    dst.outputStream().use { out ->
+                        resp.body!!.byteStream().copyTo(out)
+                    }
+                    // Sanity check: un APK valido inizia con "PK".
+                    dst.length() > 100_000L &&
+                        dst.inputStream().use { ins -> ins.read() == 'P'.code && ins.read() == 'K'.code }
+                }
+            }.getOrDefault(false)
+            autoUpdateRunning = false
+            if (!ok) {
+                Log.w(TAG, "auto-update download fallito: $url")
+                runOnUiThread { showToast(getString(R.string.update_download_failed)) }
+                return@launch
+            }
+            Log.i(TAG, "auto-update: APK scaricato per $tag")
+            runOnUiThread {
+                if (cinemaMode) {
+                    Log.i(TAG, "film in riproduzione: installazione rimandata al chip")
+                    showToast(getString(R.string.update_ready))
+                    return@runOnUiThread
+                }
+                showToast(getString(R.string.update_ready))
+                launchInstaller(tag)
+            }
+        }
+    }
+
+    /** Apre il package installer di sistema sull'APK scaricato. */
+    private fun launchInstaller(tag: String) {
+        runCatching {
+            val apk = java.io.File(cacheDir, "update-$tag.apk")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, "$packageName.fileprovider", apk
+            )
+            startActivity(
+                android.content.Intent(android.content.Intent.ACTION_INSTALL_PACKAGE).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+            )
+        }.onFailure { Log.w(TAG, "installer non avviato", it) }
     }
 
     private fun showUpdateChip(version: String) {
@@ -227,18 +314,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             elevation = 10f * resources.displayMetrics.density
             isClickable = true
             isFocusable = true
-            // Apre la pagina della release nel browser (il download lì è
-            // diretto: app-release.apk).
-            setOnClickListener {
-                runCatching {
-                    startActivity(
-                        android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://github.com/hackyday/SCViewer/releases/latest")
-                        )
-                    )
-                }
-            }
+            // Scarica e apre l'installer di sistema (il download dal browser
+            // resta come fallback via menu: qui è tutto in-app).
+            setOnClickListener { startAutoUpdate(updateTag ?: "") }
         }
         content.addView(
             updateChip,
