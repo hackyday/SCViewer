@@ -55,4 +55,22 @@ object SettingsStore {
         QUALITY_480 -> 480
         else -> 1080
     }
+
+    // -- UA alternativo (anti-blocco Cloudflare) ------------------------------
+
+    private const val KEY_ALTERNATE_UA = "alternate_ua"
+
+    /** true = usa lo UA di Chrome su Android invece del desktop Chrome.
+     *  Cambia fingerprint davanti a Cloudflare (issue #1: traffico da TV
+     *  bloccato, da telefono no) a costo del layout mobile del sito. */
+    fun getAlternateUa(context: Context): Boolean =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_ALTERNATE_UA, false)
+
+    fun setAlternateUa(context: Context, value: Boolean) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_ALTERNATE_UA, value).apply()
+    }
 }

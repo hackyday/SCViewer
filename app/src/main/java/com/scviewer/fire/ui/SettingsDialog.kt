@@ -77,11 +77,25 @@ class SettingsDialog(
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
 
+        // UA alternativo (anti-blocco): toggle ON/OFF, salvato con Salva.
+        val uaToggle = findViewById<Button>(R.id.settingsUaToggle)
+        var uaValue = SettingsStore.getAlternateUa(context)
+        uaToggle.text = context.getString(
+            if (uaValue) R.string.settings_ua_on else R.string.settings_ua_off
+        )
+        uaToggle.setOnClickListener {
+            uaValue = !uaValue
+            uaToggle.text = context.getString(
+                if (uaValue) R.string.settings_ua_on else R.string.settings_ua_off
+            )
+        }
+
         findViewById<Button>(R.id.settingsCancel).setOnClickListener { dismiss() }
         findViewById<Button>(R.id.settingsSave).setOnClickListener {
             val v = seek.progress + SettingsStore.MIN_SPEED
             SettingsStore.setCursorSpeed(context, v)
             SettingsStore.setQualityStop(context, qualitySeek.progress)
+            SettingsStore.setAlternateUa(context, uaValue)
             onSaved.invoke(v)
             Toast.makeText(
                 context,

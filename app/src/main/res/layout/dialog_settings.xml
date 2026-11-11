@@ -4,10 +4,17 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
     <LinearLayout
         android:layout_width="560dp"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
+        android:layout_gravity="center_horizontal"
         android:orientation="vertical"
         android:background="@drawable/overlay_rounded"
         android:padding="28dp">
@@ -23,7 +30,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="12dp"
             android:text="@string/settings_speed_label"
             android:textColor="@color/sc_text_primary"
             android:textSize="16sp" />
@@ -34,7 +41,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:textColor="@color/sc_accent"
-            android:textSize="34sp"
+            android:textSize="26sp"
             android:textStyle="bold" />
 
         <SeekBar
@@ -51,7 +58,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="14dp"
             android:text="@string/settings_quality_label"
             android:textColor="@color/sc_text_primary"
             android:textSize="16sp" />
@@ -76,11 +83,36 @@
             android:progressTint="@color/sc_accent"
             android:thumbTint="@color/sc_accent" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings_ua_label"
+                android:textColor="@color/sc_text_primary"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/settingsUaToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:backgroundTint="@color/sc_accent"
+                android:minWidth="120dp"
+                android:text="@string/settings_ua_off"
+                android:textColor="@color/sc_text_primary" />
+        </LinearLayout>
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/settings_hint"
+            android:layout_marginTop="6dp"
+            android:text="@string/settings_ua_hint"
             android:textColor="@color/sc_text_hint"
             android:textSize="13sp" />
 
@@ -109,4 +141,5 @@
                 android:textColor="@color/sc_text_primary" />
         </LinearLayout>
     </LinearLayout>
+    </ScrollView>
 </FrameLayout>

@@ -172,6 +172,23 @@
   killPopunders();
   installScrollGuard();
 
+  // ---- 8. Rilevamento pagina di blocco anti-bot -----------------------------
+  // I blocchi Cloudflare (403/503 + interstitial) renderizzano comunque una
+  // pagina: se il titolo/le prime righe di testo combaciano con le firme dei
+  // blocchi, avvisa il nativo che recupera cambiando mirror (e UA dopo N
+  // blocchi). FIRME SOLO sul titolo per evitare falsi positivi dal body del
+  // sito vero; sul body solo le frasi tipiche del blocco.
+  try {
+    var scvTitle = document.title || '';
+    var scvBody = document.body ? document.body.innerText.slice(0, 3000) : '';
+    var scvBlocked =
+      /just a moment|attention required|access denied|cloudflare|error 1106/i.test(scvTitle) ||
+      /sorry, you have been blocked|checking your browser|enable javascript and cookies/i.test(scvBody);
+    if (scvBlocked) {
+      try { AndroidJs.onCloudflareBlock(); } catch (e) { /* no-op */ }
+    }
+  } catch (eBlock) { /* no-op */ }
+
   // ---- 6. Page info collector -----------------------------------------------
   // The site is Laravel Inertia: the server embeds the page state as JSON in
   // the data-page attribute of the SSR HTML (Vue strips it at hydration, so

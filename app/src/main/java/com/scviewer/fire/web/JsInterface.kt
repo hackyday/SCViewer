@@ -26,6 +26,9 @@ class JsInterface(
     /** Poster recuperato dal JS per un titolo (dalla sua pagina titolo)
      *  quando la pagina corrente (watch) non lo espone. */
     private val onPosterFound: (Int, String) -> Unit,
+    /** La pagina caricata è un blocco anti-bot (Cloudflare): il nativo
+     *  recupera cambiando mirror (e UA dopo N blocchi). */
+    private val onCloudflareBlock: () -> Unit,
     /** Called synchronously from the page when the user clicks a "Guarda"
      *  link. Returns "resume" when a playback position exists for the title
      *  (the page must block navigation while the native popup asks), or
@@ -69,6 +72,13 @@ class JsInterface(
     @JavascriptInterface
     fun onProgress(positionSec: Int, durationSec: Int) {
         if (durationSec > 0 && positionSec >= 0) onProgress.invoke(positionSec, durationSec)
+    }
+
+    /** Called by page_inject.js when the loaded main frame looks like an
+     *  anti-bot block page (title/body fingerprints). */
+    @JavascriptInterface
+    fun onCloudflareBlock() {
+        onCloudflareBlock.invoke()
     }
 
     /** Called by page_inject.js when it recovered the poster of the current

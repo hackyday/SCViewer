@@ -122,6 +122,20 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     /** Guards the single automatic reload after a load timeout. */
     private var autoReloadUsed = false
 
+    /** Recovery rimasti per pagine di blocco Cloudflare (403/503/429 o pagina
+     *  "Attention Required"): ogni recovery consuma un retry, cambia mirror
+     *  e dopo 2 tentativi passa all'UA alternativo. Si azzera su una pagina
+     *  del sito caricata pulita — così un blocco isolato non ammazza il cap. */
+    private var blockRecoveriesLeft = MAX_BLOCK_RECOVERIES
+
+    /** UA alternativo (Chrome Android) attivato automaticamente dopo N blocchi
+     *  o forzato dall'impostazione "UA alternativo". Vale per la sessione. */
+    private var autoUaFallback = false
+
+    /** Una sola recovery alla volta: evita stacked retry su trigger multipli
+     *  (HTTP error + titolo blocco + JS bridge) per la stessa pagina. */
+    private var recovering = false
+
     /** Fires when the main frame hasn't finished loading within
      *  [LOAD_TIMEOUT_MS] — WebView has no built-in load timeout, and a hung
      *  load otherwise leaves the opaque loading overlay up forever (black
@@ -348,9 +362,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 // Disable geolocation, never used by the legit streaming site.
                 setGeolocationEnabled(false)
 
-                // Crucial: this is what tells streamingcommunity we're a desktop.
-                // Win11 Chrome UA — see SCWebViewClient.DESKTOP_UA.
-                userAgentString = SCWebViewClient.DESKTOP_UA
+                // Desktop Chrome di default; UA alternativo (Chrome Android)
+                // se impostato dall'utente o attivato dai recovery di blocco.
+                applyUserAgent()
             }
 
             webViewClient = SCWebViewClient(this@MainActivity, this@MainActivity)
@@ -383,6 +397,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
                 onProgress = { pos, dur -> runOnUiThread { onVideoProgress(pos, dur) } },
                 onPosterFound = { tid, url -> runOnUiThread { PosterCache.put(this@MainActivity, tid, url) } },
+                onCloudflareBlock = { runOnUiThread { recoverFromBlock("JS block page") } },
                 onPlayClicked = { tid ->
                     // JS bridge thread — synchronous verdict. "resume" makes
                     // the page hold the navigation while the popup asks.
@@ -491,9 +506,67 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     private suspend fun loadHome() {
-        val url = withContext(Dispatchers.IO) { domainRepo.currentDomain() }
+        // loadCandidate: primo dominio non segnato fallito — dopo un blocco
+        // "Ricarica"/"Home" dal menu non ritorna sul dominio morto.
+        val url = withContext(Dispatchers.IO) { domainRepo.loadCandidate() }
+        Log.i(TAG, "load home/candidate: $url")
         webView.loadUrl(url)
         updateDomainLabel()
+    }
+
+    /** Applica lo UA scelto: alternativo (Chrome Android) se impostato
+     *  dall'utente o attivato automaticamente dai recovery di blocco,
+     *  desktop Chrome altrimenti. Chiamare PRIMA di un load. */
+    private fun applyUserAgent() {
+        val alt = autoUaFallback || SettingsStore.getAlternateUa(this)
+        webView.settings.userAgentString =
+            if (alt) SCWebViewClient.ALTERNATE_UA else SCWebViewClient.DESKTOP_UA
+        Log.i(TAG, "UA: ${if (alt) "alternate (Android)" else "desktop"}")
+    }
+
+    /** Titolo/text riconducibile a una pagina di blocco anti-bot. */
+    private fun looksLikeBlockPage(text: String?): Boolean {
+        val t = (text ?: "").lowercase()
+        return listOf(
+            "just a moment", "attention required", "access denied",
+            "you have been blocked", "checking your browser",
+            "error 1106", "cloudflare"
+        ).any { t.contains(it) }
+    }
+
+    /** Percorso di recovery condiviso: blocco HTTP o pagina anti-bot.
+     *  Segna il dominio fallito, (dopo 2 blocchi) passa all'UA alternativo,
+     *  prova un refresh dei domini e ricarica sul mirror successivo.
+     *  Il cap [MAX_BLOCK_RECOVERIES] impedisce loop infiniti. */
+    private fun recoverFromBlock(reason: String) {
+        if (recovering || blockRecoveriesLeft <= 0) return
+        recovering = true
+        blockRecoveriesLeft--
+        Log.w(TAG, "recover from block ($reason), recoveries left: $blockRecoveriesLeft")
+        showLoading(true)
+        handler.postDelayed({
+            mainScope.launch {
+                try {
+                    // Dopo 2 blocchi consecutivi lo UA desktop è likely
+                    // fingerprintato: passa a Chrome Android per la sessione.
+                    if (blockRecoveriesLeft <= MAX_BLOCK_RECOVERIES - 2 && !autoUaFallback) {
+                        autoUaFallback = true
+                        applyUserAgent()
+                    }
+                    // webView.url è legale SOLO sul main thread: catturalo qui.
+                    val failedUrl = webView.url ?: domainRepo.currentDomain()
+                    withContext(Dispatchers.IO) {
+                        domainRepo.markDomainFailed(failedUrl)
+                        domainRepo.refreshOnline()   // best effort: anche se GitHub non risponde si va sul mirror
+                    }
+                    loadHome()  // loadCandidate: salta i domini falliti
+                } catch (t: Throwable) {
+                    Log.e(TAG, "block recovery failed", t)
+                } finally {
+                    recovering = false
+                }
+            }
+        }, RETRY_DELAY_MS)
     }
 
     private fun updateDomainLabel() {
@@ -514,9 +587,18 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     override fun onPageLoaded(url: String, title: String) {
-        Log.i(TAG, "page loaded: $url")
+        Log.i(TAG, "page loaded: $url (title: $title)")
         handler.removeCallbacks(loadTimeoutRunnable)
         showLoading(false)
+        // Una pagina di blocco anti-bot arriva QUI (onPageFinished scatta
+        // anche per lei): in quel caso NON azzerare i cap — la recovery
+        // parte subito e il titolo sintetico la smaschera.
+        if (looksLikeBlockPage(title)) {
+            recoverFromBlock("block page title: $title")
+            return
+        }
+        // Pagina vera del sito: il blocco è finito, ripristina i budget.
+        blockRecoveriesLeft = MAX_BLOCK_RECOVERIES
         loadRetriesLeft = MAX_LOAD_RETRIES
         autoReloadUsed = false
         // History is recorded by onPageInfoChanged — it knows the REAL show
@@ -532,10 +614,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             if (loadRetriesLeft > 0) {
                 loadRetriesLeft--
                 showLoading(true)
-                // Single delayed retry — never a tight loop.
+                // Single delayed retry — never a tight loop. Il dominio
+                // fallito viene segnato: il reload passerà al mirror dopo.
                 handler.postDelayed({
                     mainScope.launch {
-                        domainRepo.refreshOnline()
+                        // webView.url solo dal main thread.
+                        val failedUrl = webView.url ?: domainRepo.currentDomain()
+                        withContext(Dispatchers.IO) {
+                            domainRepo.markDomainFailed(failedUrl)
+                            domainRepo.refreshOnline()
+                        }
                         loadHome()
                     }
                 }, RETRY_DELAY_MS)
@@ -553,6 +641,19 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // page); the overlay must go so the user can actually see it.
         Log.i(TAG, "page HTTP error: $statusCode")
         handler.removeCallbacks(loadTimeoutRunnable)
+        // 403/503/429 e i 52x di Cloudflare sono RECUPERABILI: retry con
+        // cambio mirror (e UA alternativo dopo 2 blocchi). Gli altri status
+        // mantengono il comportamento originale (solo overlay via).
+        val recoverable = statusCode == 403 || statusCode == 503 || statusCode == 429 ||
+            statusCode in 520..527
+        if (recoverable && loadRetriesLeft > 0) {
+            loadRetriesLeft--
+            recoverFromBlock("HTTP $statusCode")
+            return
+        }
+        if (recoverable) {
+            showToast(getString(R.string.domain_blocked_hint))
+        }
         showLoading(false)
     }
 
@@ -1307,6 +1408,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         private const val MAX_LOAD_RETRIES = 3
         /** Cooldown between automatic retries. */
         private const val RETRY_DELAY_MS = 3000L
+        /** Recovery per pagine di blocco (Cloudflare 403/503/429 o interstitial). */
+        private const val MAX_BLOCK_RECOVERIES = 4
         /** WebView has no load timeout of its own — this is ours. */
         private const val LOAD_TIMEOUT_MS = 25_000L
 

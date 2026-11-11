@@ -1,6 +1,7 @@
 package com.scviewer.fire.data
 
 import android.content.Context
+import android.util.Log
 import com.scviewer.fire.network.DomainFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,8 +16,8 @@ import java.io.File
  *
  * VibraVid-style behaviour:
  *   1. On startup, try to load cached domains.json from internal storage.
- *      If missing, copy the bundled asset domains.json (which holds the
- *      last-known-good URL https://streamingcommunityz.build/).
+ *      If missing, copy the bundled asset domains.json (last-known-good URL,
+ *      aggiornato a ogni release sull'upstream AstraeLabs).
  *   2. Schedule [DomainFetcher.fetchOnline] to run at startup and every
  *      30 minutes (see [com.scviewer.fire.work.DomainRefreshScheduler]).
  *   3. Result is written to domains.json on disk and exposed via [current].
@@ -49,6 +50,47 @@ class DomainRepository private constructor(
             ?: FALLBACK_DOMAIN
     }
 
+    // -- Mirror / fallback ----------------------------------------------------
+    //
+    // Quando Cloudflare blocca il primario (403/503/429, o pagina di blocco
+    // anti-bot) serve un altro dominio su cui provare, NON lo stesso URL.
+    // I mirror noti sono in ordine dal più recente al più storico; il set
+    // "failed" è volutamente in memoria (un processo nuovo riprova tutto).
+
+    /** Mirror noti del sito, dal più recente al più vecchio. */
+    private val KNOWN_MIRRORS = listOf(
+        "https://streamingcommunityz.nexus/",
+        "https://streamingcommunityz.boo/",
+        "https://streamingcommunityz.day/",
+        "https://streamingcommunityz.build/"
+    )
+
+    private val failedDomains = LinkedHashSet<String>()
+
+    /** Tutti i candidati: primario (upstream/cache) + mirror noti, senza duplicati. */
+    private fun candidates(): List<String> {
+        val out = ArrayList<String>()
+        currentDomain().let { if (it.isNotBlank()) out.add(it) }
+        for (m in KNOWN_MIRRORS) if (out.none { it.equals(m, ignoreCase = true) }) out.add(m)
+        return out
+    }
+
+    /** Segna un dominio come fallito: il prossimo load passerà al mirror dopo. */
+    fun markDomainFailed(url: String?) {
+        val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return
+        for (c in candidates()) {
+            if (runCatching { java.net.URI(c).host }.getOrNull() == host) {
+                failedDomains.add(c)
+                Log.w("DomainRepository", "domain failed -> $c (${failedDomains.size} in fail set)")
+            }
+        }
+    }
+
+    /** Il miglior URL ancora da provare: primo candidato non segnato fallito,
+     *  oppure — se TUTTI sono falliti — comunque il primario (meglio di niente). */
+    fun loadCandidate(): String =
+        candidates().firstOrNull { it !in failedDomains } ?: currentDomain()
+
     /**
      * Triggers an online fetch. Succeeds only when a fresh config was really
      * pulled (and persisted); when GitHub is unreachable the result is a
@@ -59,9 +101,13 @@ class DomainRepository private constructor(
         val fetched = DomainFetcher.fetchOnline()
             ?: return@withContext Result.failure(IllegalStateException("domain fetch unavailable"))
         runCatching {
+            val freshPrimary = fetched.primary() ?: FALLBACK_DOMAIN
+            // Dominio NUOVO dall'upstream: i fallimenti precedenti si riferivano
+            // ad altri host — ripulisci il fail set e riparti dal primario.
+            if (freshPrimary != currentDomain()) failedDomains.clear()
             saveToDisk(fetched)
             _current.value = fetched
-            fetched.primary() ?: FALLBACK_DOMAIN
+            freshPrimary
         }
     }
 
@@ -85,7 +131,7 @@ class DomainRepository private constructor(
     }
 
     companion object {
-        private const val FALLBACK_DOMAIN = "https://streamingcommunityz.build/"
+        private const val FALLBACK_DOMAIN = "https://streamingcommunityz.nexus/"
 
         @Volatile private var INSTANCE: DomainRepository? = null
 

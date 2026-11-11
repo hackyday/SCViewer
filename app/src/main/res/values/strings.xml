@@ -48,6 +48,15 @@
     <string name="settings_quality_720">720p (reti lente)</string>
     <string name="settings_quality_480">480p (risparmio dati)</string>
 
+    <!-- Blocco dominio (Cloudflare) -->
+    <string name="domain_blocked_hint">Dominio bloccato da Cloudflare. Riprova più tardi, cambia rete, oppure attiva "User-Agent alternativo" nelle Impostazioni</string>
+
+    <!-- Settings (UA alternativo) -->
+    <string name="settings_ua_label">User-Agent alternativo (anti-blocco)</string>
+    <string name="settings_ua_hint">Usa lo User-Agent di un telefono Android: se il tuo IP o il profilo desktop vengono bloccati da Cloudflare (schermo nero / "Access denied"), questo spesso sblocca. Il sito passa al layout mobile.</string>
+    <string name="settings_ua_on">ATTIVO</string>
+    <string name="settings_ua_off">disattivo</string>
+
     <!-- Settings (cursor speed) -->
     <string name="settings_title">Impostazioni</string>
     <string name="settings_speed_label">Velocità del cursore</string>
