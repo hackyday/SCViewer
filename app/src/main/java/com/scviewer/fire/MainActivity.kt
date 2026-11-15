@@ -122,6 +122,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     /** Guards the single automatic reload after a load timeout. */
     private var autoReloadUsed = false
 
+    /** Percorso (relativo) da aprire al primo load, passato via intent. */
+    private var pendingOpenUrl: String? = null
+
     /** Recovery rimasti per pagine di blocco Cloudflare (403/503/429 o pagina
      *  "Attention Required"): ogni recovery consuma un retry, cambia mirror
      *  e dopo 2 tentativi passa all'UA alternativo. Si azzera su una pagina
@@ -171,6 +174,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         } catch (t: Throwable) {
             Log.w(TAG, "WorkManager scheduling failed; periodic domain refresh disabled", t)
         }
+
+        // URL da aprire direttamente (es. dall'interfaccia TV prototipo).
+        pendingOpenUrl = intent?.getStringExtra("open_url")
 
         // Initial one-shot domain refresh (VibraVid-style: runs on every app launch).
         mainScope.launch { refreshAndLoad() }
@@ -561,7 +567,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // page the user was on instead of jumping back to home.
         val recovery = rendererRecoveryUrl
         rendererRecoveryUrl = null
-        val loadedUrl = recovery ?: withContext(Dispatchers.IO) { domainRepo.currentDomain() }
+        val loadedUrl = recovery
+            ?: pendingOpenUrl?.also { pendingOpenUrl = null }
+            ?: withContext(Dispatchers.IO) { domainRepo.currentDomain() }
         Log.i(TAG, "initial load: $loadedUrl")
         webView.loadUrl(loadedUrl)
         updateDomainLabel()

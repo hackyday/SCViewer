@@ -44,6 +44,15 @@
              WorkManager configuration. Without this, WorkManagerInitializer
              calls WorkManager.initialize() at app startup, and App.kt's
              onCreate() would then crash on a second initialize() call. -->
+        <!-- Interfaccia TV nativa (prototipo): avvio diretto via adb, non è
+             ancora il launcher principale. -->
+        <activity
+            android:name=".TvBrowseActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:theme="@style/Theme.SCViewer" />
+
         <!-- Condivide l'APK scaricato col package installer di sistema. -->
         <provider
             android:name="androidx.core.content.FileProvider"
