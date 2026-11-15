@@ -43,7 +43,8 @@ class TvBrowseActivity : Activity() {
     @Volatile private var typing = false
 
     private inner class TvBridge {
-        /** Guarda: apre la pagina del titolo nel flusso WebView esistente. */
+        /** Guarda: apre la schermata di streaming SCtv (PlayerActivity) sul
+         *  watch URL reale del titolo. */
         @JavascriptInterface
         fun playTitle(url: String) {
             if (url.isBlank()) return
@@ -51,9 +52,9 @@ class TvBrowseActivity : Activity() {
             val full = if (url.startsWith("http")) url else domain.trimEnd('/') + url
             runOnUiThread {
                 startActivity(
-                    Intent(this@TvBrowseActivity, MainActivity::class.java).apply {
-                        putExtra("open_url", full)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    Intent(this@TvBrowseActivity, PlayerActivity::class.java).apply {
+                        putExtra("url", full)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                 )
             }
@@ -75,6 +76,11 @@ class TvBrowseActivity : Activity() {
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
+            // Lo stick ha viewport 960 CSS px (densità 2.0): il design è
+            // pensato per ~1280 — forza il layout largo e rimpicciolisci.
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            textZoom = 100
         }
         web.addJavascriptInterface(TvBridge(), "AndroidJs")
         web.webChromeClient = WebChromeClient()
@@ -179,7 +185,9 @@ class TvBrowseActivity : Activity() {
         .put("type", t.type)
         .put("posterUrl", t.posterUrl ?: "")
         .put("backdropUrl", t.backgroundUrl ?: t.posterUrl ?: "")
-        .put("url", t.url)
+        // Play → /it/watch/<id>: funziona per film e serie (il sito serve
+        // da solo il primo episodio; il prototipo risolve ?s= nel player).
+        .put("url", "/it/watch/" + t.id)
         .put("match", t.score?.toDoubleOrNull()?.times(10)?.toInt()?.coerceIn(0, 100) ?: 80)
         .put("year", t.year ?: 0)
         .put("maturity", "NR")

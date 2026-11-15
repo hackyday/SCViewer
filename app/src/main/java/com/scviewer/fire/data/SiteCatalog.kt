@@ -55,20 +55,22 @@ object SiteCatalog {
                     .header("Accept", "text/html")
                     .build()
             ).execute().use { resp ->
+                Log.i(TAG, "fetchProps: HTTP ${resp.code} url=${resp.request.url}")
                 if (!resp.isSuccessful) return@use null
                 val html = resp.body?.string() ?: return@use null
                 val m = Regex("data-page=\"([^\"]+)\"").find(html) ?: return@use null
-                val unescaped = m.groupValues[1]
-                    .replace("&quot;", "\"")
-                    .replace("&#0?39;".toRegex(), "'")
-                    .replace("&lt;", "<").replace("&gt;", ">")
-                    .replace("&amp;", "&")
-                // Il data-page è il wrapper Inertia {component, props, url,
-                // version}: a noi serve l'oggetto "props" interno.
-                JSONObject(unescaped).optJSONObject("props")
+                val parsed = JSONObject(htmlUnescaped(m.groupValues[1]))
+                Log.i(TAG, "fetchProps: component=${parsed.optString("component")}")
+                parsed.optJSONObject("props")
             }
         }.onFailure { Log.w(TAG, "fetchProps($path) failed", it) }.getOrNull()
     }
+
+    private fun htmlUnescaped(raw: String): String = raw
+        .replace("&quot;", "\"")
+        .replace("&#0?39;".toRegex(), "'")
+        .replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&amp;", "&")
 
     private fun imagesUrl(props: JSONObject, filename: String?) =
         if (filename.isNullOrBlank()) null
