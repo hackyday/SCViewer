@@ -17,6 +17,7 @@ data class TvTitle(
     val score: String?,
     val plot: String?,
     val seasonsCount: Int?,
+    val year: Int?,
     val posterUrl: String?,
     val backgroundUrl: String?,
     val url: String            // percorso relativo della pagina titolo
@@ -96,6 +97,7 @@ object SiteCatalog {
             }
             null
         }
+        val lastAir = t.optString("last_air_date")
         return TvTitle(
             id = id,
             slug = slug,
@@ -104,6 +106,8 @@ object SiteCatalog {
             score = t.optString("score").takeIf { it.isNotBlank() && it != "null" },
             plot = plot,
             seasonsCount = t.optInt("seasons_count", 0).takeIf { it > 0 },
+            year = lastAir.toIntOrNull()?.takeIf { it > 1900 }
+                ?: lastAir.take(4).toIntOrNull()?.takeIf { it > 1900 },
             posterUrl = imagesUrl(props, images?.let { pickImage(it, "poster") }),
             backgroundUrl = imagesUrl(props, images?.let { pickImage(it, "background") }),
             url = "/it/titles/$id-$slug"
@@ -165,7 +169,7 @@ object SiteCatalog {
             TvTitle(
                 id = p.titleId, slug = p.slug, name = p.name, type = p.type,
                 score = null, plot = p.episodeName?.let { "S${p.season ?: "?"}E${p.episode ?: "?"} · $it" },
-                seasonsCount = null, posterUrl = p.poster, backgroundUrl = null,
+                seasonsCount = null, year = null, posterUrl = p.poster, backgroundUrl = null,
                 url = p.url
             )
         }
