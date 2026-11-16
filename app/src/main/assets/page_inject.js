@@ -287,6 +287,16 @@
         .then(function (html) {
           infoBusy = false;
           var info = extractInfo(html);
+          if (!info) {
+            // Pagina senza titolo (home/archive/generi): riporta comunque il
+            // component Inertia così il nativo aggiorna l'immersività.
+            try {
+              var dm = html.match(/data-page="([^"]+)"/);
+              var dc = dm ? (JSON.parse(unescapeAttr(dm[1])).component || '') : '';
+              if (dc) AndroidJs.onPageInfo(JSON.stringify({ component: dc, titleId: 0 }));
+            } catch (e) {}
+            return;
+          }
           if (info) {
             lastReportedPath = location.pathname + location.search;
             try { AndroidJs.onPageInfo(JSON.stringify(info)); } catch (e) { /* no-op */ }

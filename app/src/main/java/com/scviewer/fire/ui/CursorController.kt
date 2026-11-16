@@ -63,6 +63,12 @@ class CursorController(
     /** Last mousedown counter seen by [verifyAndFallback] — baseline for
      *  deciding whether the next tap actually reached the page. */
     private var lastTouchSeen = 0L
+
+    /** Nuovo documento caricato: il contatore touch del sito riparte da 0 —
+     *  azzera la baseline per evitare il doppio click sul primo tap. */
+    fun resetTouchBaseline() {
+        lastTouchSeen = 0L
+    }
     private var cursorW = 0f
     private var cursorH = 0f
     private var density = 1f

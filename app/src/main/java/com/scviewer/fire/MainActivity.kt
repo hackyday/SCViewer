@@ -377,6 +377,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             onOpenChanged = { open ->
                 if (open) {
                     cursorCtl.hide()
+                } else if (SettingsStore.getSitePointerMode(this) && !cinemaMode) {
+                    cursorCtl.show()
                 }
             }
         )
@@ -544,6 +546,15 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         skipIntroController.setAvailable(false)
         topStrip.visibility = View.VISIBLE
         topStrip.postDelayed({ topStrip.visibility = View.GONE }, 3500)
+        // Reset del latch immersivo su ogni navigazione full-page: il report
+        // Inertia della SPA arriva poi e lo ri-imposta correttamente. Senza
+        // questo, dopo una pagina titolo la sidebar resterebbe morta su home.
+        immersivePage = url != null && (url.contains("/it/watch/") || url.contains("/it/titles/"))
+        applyChrome()
+        hideAutoNext()
+        hideOutro()
+        autoNextShownFor = 0
+        cursorCtl.resetTouchBaseline()
     }
 
     override fun onPageLoaded(url: String, title: String) {
@@ -661,6 +672,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun onPageInfoChanged(json: String) {
         val info = runCatching { pageJson.decodeFromString<PageInfo>(json) }.getOrNull() ?: return
+        // Il component Inertia arriva per OGNI pagina (anche home/archive che
+        // non hanno title): l'immersività non è mai un latch.
+        immersivePage = info.component.startsWith("Titles/")
+        applyChrome()
         if (info.titleId == 0) return
         currentPageInfo = info
 
@@ -693,6 +708,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             resumeChip.bringToFront()
         } else if (p == null || pendingResume != null) {
             resumeChip.visibility = View.GONE
+        }
+        if (!info.isWatchPage) {
+            hideAutoNext()
+            hideOutro()
         }
     }
 
@@ -1082,6 +1101,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         val action = event.action
         val keyCode = event.keyCode
 
+        // Dialoghi aperti: gestiscono tutto da soli (BACK incluso).
+        if (activeDialog != null) return super.dispatchKeyEvent(event)
+
         // Sidebar: la apri solo fuori dalle pagine immersivE.
         val immersiveNow = immersivePage || cinemaMode
         if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN && !isTouchDevice) {
@@ -1114,7 +1136,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             return super.dispatchKeyEvent(event)
         }
 
-        if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && keyCode in DPAD_KEYS) {
+        if (action == KeyEvent.ACTION_DOWN && keyCode in DPAD_KEYS) {
             lastDpadAt = android.os.SystemClock.uptimeMillis()
         }
 
@@ -1217,7 +1239,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                 if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     if (cinemaMode) {
-                        jsBridge.requestSkipIntro()
+                        jsBridge.requestSeekTo((lastVideoPos + 30).coerceAtLeast(0))
                     } else {
                         webView.flingScroll(0, PAGE_SCROLL_FLING)
                     }
