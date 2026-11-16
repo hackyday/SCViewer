@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/tvSidebarRoot"
-    android:layout_width="@dimen/sctv_rail_collapsed_width"
+    android:layout_width="@dimen/sctv_rail_expanded_width"
     android:layout_height="match_parent"
     android:layout_gravity="start"
     android:background="@drawable/bg_sctv_rail"
     android:clipChildren="false"
     android:clipToPadding="false"
-    android:elevation="9dp"
     android:orientation="vertical"
     android:paddingStart="10dp"
     android:paddingTop="18dp"
@@ -74,8 +73,7 @@
             android:text="@string/nav_search"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
@@ -109,8 +107,7 @@
             android:text="@string/nav_home"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
@@ -144,8 +141,7 @@
             android:text="@string/nav_resume"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
@@ -179,8 +175,7 @@
             android:text="@string/nav_favorites"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
@@ -214,8 +209,7 @@
             android:text="@string/nav_history"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <View
@@ -256,8 +250,7 @@
             android:text="@string/nav_reload"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
@@ -291,8 +284,7 @@
             android:text="@string/nav_back"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <Space
@@ -330,8 +322,7 @@
             android:text="@string/nav_settings"
             android:textColor="@color/sctv_text_primary"
             android:textSize="15sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:textStyle="bold" />
     </LinearLayout>
 
     <TextView

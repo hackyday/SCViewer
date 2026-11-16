@@ -282,7 +282,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
         cursorCtl.onLeftEdgeTrigger = {
             if (!isTouchDevice && !cinemaMode) {
-                sidebarCtl.focusSidebar()
+                sidebarCtl.open()
             }
         }
 
@@ -290,7 +290,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             cursorCtl.attach()
         } else {
             // Touch device: full-bleed WebView + floating studio menu trigger
-            (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
             findViewById<View>(R.id.tvSidebarRoot).visibility = View.GONE
 
             val density = resources.displayMetrics.density
@@ -365,8 +364,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     onActiveChange = { d -> activeDialog = d }
                 ).show()
             },
-            onExpandedChanged = { expanded ->
-                if (!isTouchDevice && expanded) {
+            onOpenChanged = { open ->
+                if (open) {
                     cursorCtl.hide()
                 }
             }
@@ -401,8 +400,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     override fun onFullscreenEntered() {
                         fullscreenActive = true
                         topStrip.visibility = View.GONE
-                        sidebarCtl.setCinemaHidden(true)
-                        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
+                        sidebarCtl.setImmersive(true)
                         cursorCtl.hide()
                     }
 
@@ -524,9 +522,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         val url = domainRepo.currentDomain()
         val host = Uri.parse(url).host ?: url
         domainLabel.text = host
-        if (::sidebarCtl.isInitialized) {
-            sidebarCtl.setDomainText(host)
-        }
+
     }
 
     // -- PageListener ---------------------------------------------------------
@@ -599,14 +595,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         recreate()
     }
 
-    /** Rail e margini: nascosti quando il video gira o quando sei dentro
-     *  la pagina di un film/serie (esperienza immersiva). */
+    /** Pagine titolo/watch (o cinema): la sidebar si chiude e non riapre
+     *  finché non torni su home/browse. */
     private fun applyChrome() {
-        if (isTouchDevice || fullscreenActive) return
-        val hideRail = cinemaMode || immersivePage
-        sidebarCtl.setCinemaHidden(hideRail)
-        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
-            if (hideRail) 0 else resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
+        sidebarCtl.setImmersive(immersivePage || cinemaMode)
     }
 
     // -- Cinema Mode ----------------------------------------------------------
@@ -1080,21 +1072,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         val action = event.action
         val keyCode = event.keyCode
 
-        if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN) {
-            if (!isTouchDevice) {
-                if (sidebarCtl.isExpanded) {
-                    sidebarCtl.collapse()
-                    webView.requestFocus()
-                } else {
-                    sidebarCtl.focusSidebar()
-                }
-                return true
-            }
+        // Sidebar: la apri solo fuori dalle pagine immersivE.
+        val immersiveNow = immersivePage || cinemaMode
+        if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN && !isTouchDevice) {
+            if (sidebarCtl.isOpen) sidebarCtl.close() else if (!immersiveNow) sidebarCtl.open()
+            return true
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
-            if (!isTouchDevice && sidebarCtl.isExpanded) {
-                sidebarCtl.collapse()
+            if (!isTouchDevice && sidebarCtl.isOpen) {
+                sidebarCtl.close()
                 webView.requestFocus()
                 return true
             }
@@ -1105,12 +1092,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             return super.dispatchKeyEvent(event)
         }
 
-        // Let Android's native D-pad focus engine handle modal dialogs and the expanded sidebar
-        if (activeDialog != null || (!isTouchDevice && sidebarCtl.isExpanded)) {
-            if (!isTouchDevice && sidebarCtl.isExpanded &&
+        // La sidebar aperta copre il sito: il D-pad è suo, Destra la chiude.
+        if (activeDialog != null || (!isTouchDevice && sidebarCtl.isOpen)) {
+            if (!isTouchDevice && sidebarCtl.isOpen &&
                 keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && action == KeyEvent.ACTION_DOWN
             ) {
-                sidebarCtl.collapse()
+                sidebarCtl.close()
                 webView.requestFocus()
                 return true
             }
@@ -1161,7 +1148,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                         // Bordo sinistro del sito → apre la sidebar.
                         if (dir == "left" && result?.contains("edge") == true) {
                             runOnUiThread {
-                                if (!sidebarCtl.isExpanded) sidebarCtl.focusSidebar()
+                                if (!sidebarCtl.isOpen && !immersivePage) sidebarCtl.open()
                             }
                         }
                     }

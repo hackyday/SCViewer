@@ -111,6 +111,16 @@ class SCWebViewClient(
         super.onPageFinished(view, url)
         Log.i(TAG, "onPageFinished: $url")
         if (view == null || url == null) return
+        // Rotazione dominio: atterraggio su un host diverso da quello in
+        // cache (redirect 301 o navigazione JS) → promuovilo e persistilo.
+        runCatching {
+            val host = android.net.Uri.parse(url).host ?: return@runCatching
+            val origin = "https://$host/"
+            if (host.contains("streamingcommunityz")) {
+                com.scviewer.fire.data.DomainRepository
+                    .get(view.context.applicationContext).promoteRedirect(origin)
+            }
+        }
         injector.injectInto(view)
         // Video agent runs via addDocumentStartJavaScript in every frame;
         // this main-frame evaluation is the fallback path only.
@@ -118,9 +128,27 @@ class SCWebViewClient(
         listener.onPageLoaded(url, view.title ?: url)
     }
 
+    /** Ultimo URL reale caricato + guard anti-loop per il recupero. */
+    private var lastRealUrl: String? = null
+    private var blankRecovered = false
+
     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
         Log.i(TAG, "onPageStarted: $url")
+        // Alcune build del sito rimandano il frame principale su about:blank
+        // (popunder differito ~20s dopo il load): recupera ricaricando
+        // l'ultimo URL reale, una volta sola per caricamento.
+        if (url == null || url == "about:blank") {
+            if (!blankRecovered && lastRealUrl != null && view != null) {
+                blankRecovered = true
+                Log.w(TAG, "frame su about:blank → recupero con $lastRealUrl")
+                view.postDelayed({ view.loadUrl(lastRealUrl ?: return@postDelayed) }, 500)
+            }
+            listener.onPageStarted(url)
+            return
+        }
+        blankRecovered = false
+        lastRealUrl = url
         listener.onPageStarted(url)
     }
 

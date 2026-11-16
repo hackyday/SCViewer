@@ -59,6 +59,7 @@ class DomainRepository private constructor(
 
     /** Mirror noti del sito, dal più recente al più vecchio. */
     private val KNOWN_MIRRORS = listOf(
+        "https://streamingcommunityz.dad/",
         "https://streamingcommunityz.nexus/",
         "https://streamingcommunityz.boo/",
         "https://streamingcommunityz.day/",
@@ -111,6 +112,22 @@ class DomainRepository private constructor(
         }
     }
 
+    /** Il sito ha ruotato: il WebView è atterrato su un'origine diversa da
+     *  quella in cache (redirect 301 o navigazione JS) — promuovila a
+     *  dominio primario e persistila, così il prossimo load entra diretto
+     *  senza passare dal redirect. */
+    fun promoteRedirect(origin: String) {
+        val cur = currentDomain()
+        if (origin == cur || origin.isBlank()) return
+        runCatching {
+            val cfg = (_current.value ?: DomainsConfig()).copy(streamingcommunity = origin)
+            Log.i("DomainRepository", "dominio promosso dal redirect: $origin (era $cur)")
+            failedDomains.clear()
+            saveToDisk(cfg)
+            _current.value = cfg
+        }
+    }
+
     // -- persistence ------------------------------------------------------------
 
     private fun loadFromDisk(): DomainsConfig? = runCatching {
@@ -131,7 +148,7 @@ class DomainRepository private constructor(
     }
 
     companion object {
-        private const val FALLBACK_DOMAIN = "https://streamingcommunityz.nexus/"
+        private const val FALLBACK_DOMAIN = "https://streamingcommunityz.dad/"
 
         @Volatile private var INSTANCE: DomainRepository? = null
 

@@ -82,8 +82,17 @@
   // ---- 2. Anti-redirect / anti-popunder ------------------------------------
   function killPopunders() {
     try {
-      // Block window.open entirely — all clicks should navigate in-place.
-      window.open = function () { return null; };
+      // Block window.open: restituisce uno STUB che ingoia qualsiasi
+      // location/replace degli script popunder (tornare null fa crashare i
+      // loro script o scatena fallback su about:blank).
+      var stub = {
+        document: { write: function () {}, writeln: function () {},
+                    open: function () {}, close: function () {} },
+        location: { href: '', replace: function () {}, assign: function () {} },
+        focus: function () {}, blur: function () {}, close: function () {},
+        opener: null, closed: true, name: ''
+      };
+      window.open = function () { return stub; };
       // Force _self on every link.
       document.addEventListener('click', function (e) {
         var a = e.target && e.target.closest ? e.target.closest('a') : null;
@@ -297,14 +306,36 @@
     if (window.__sctvNav) return;
     var RING = 'sctv-dpad-focus';
     var st = document.createElement('style');
-    st.textContent = '.' + RING + '{outline:none!important;' +
-      'box-shadow:0 0 0 4px #FFFFFF,0 0 0 8px rgba(229,9,20,.45),' +
-      '0 18px 44px rgba(0,0,0,.9)!important;' +
-      'transform:scale(1.14);border-radius:10px;filter:brightness(1.3)}' +
+    st.textContent = '.' + RING + '{outline:none!important;filter:brightness(1.25)}' +
       // Login e ricerca nell'header del sito: inutili nell'app (la ricerca
       // è nella sidebar nativa) — rimossi dalla home e da tutte le pagine.
       '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
     document.head.appendChild(st);
+
+    // Il ring è un frame position:fixed sopra TUTTO (z-index massimo):
+    // le card vicine del sito non possono coprirlo come accadeva col
+    // box-shadow sull'elemento.
+    var frame = document.createElement('div');
+    frame.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
+      'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
+      'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
+      'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+    var framePad = 7;
+    function placeFrame(el) {
+      var r = el.getBoundingClientRect();
+      frame.style.display = 'block';
+      frame.style.left = (r.left - framePad) + 'px';
+      frame.style.top = (r.top - framePad) + 'px';
+      frame.style.width = (r.width + framePad * 2) + 'px';
+      frame.style.height = (r.height + framePad * 2) + 'px';
+    }
+    function hideFrame() { frame.style.display = 'none'; }
+    window.addEventListener('scroll', function () {
+      if (cur) placeFrame(cur);
+    }, true);
+    window.addEventListener('resize', function () {
+      if (cur) placeFrame(cur);
+    });
 
     var cur = null;
     var cache = null, cacheTimer = null;
@@ -314,9 +345,27 @@
     function invalidate() {
       cache = null;
     }
+    // I trailer in autoplay nell'hero del sito: la loro superficie video
+    // (fork Fire TV del WebView) copre la sidebar nativa e mangia CPU su
+    // uno stick da 1 GB — pausa e nasconde i video del frame principale.
+    // Il player watch è in un iframe separato: non viene toccato.
+    function tameVideos() {
+      var vs = document.querySelectorAll('video');
+      for (var i = 0; i < vs.length; i++) {
+        var v = vs[i];
+        if (v.dataset.sctvTamed) continue;
+        v.dataset.sctvTamed = '1';
+        try {
+          v.pause();
+          v.muted = true;
+          v.style.display = 'none';
+        } catch (e) {}
+      }
+    }
+
     var obs = new MutationObserver(function () {
       if (cacheTimer) return;
-      cacheTimer = setTimeout(function () { cacheTimer = null; invalidate(); }, 120);
+      cacheTimer = setTimeout(function () { cacheTimer = null; invalidate(); tameVideos(); }, 120);
     });
     function startObserver() {
       if (document.body && !obs._started) {
@@ -326,6 +375,8 @@
     }
     startObserver();
     setTimeout(startObserver, 800);
+    setTimeout(tameVideos, 400);
+    setTimeout(tameVideos, 1500);
 
     function candidates() {
       if (cache) return cache;
@@ -357,7 +408,7 @@
         try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
       }
       cur = el;
-      if (!el) return;
+      if (!el) { hideFrame(); return; }
       el.classList.add(RING);
       try {
         el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -365,8 +416,9 @@
         el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
         // il popup hover del sito entra nel DOM: invalida e riscansiona presto
         invalidate();
-        setTimeout(invalidate, 260);
+        setTimeout(function () { invalidate(); if (cur === el) placeFrame(el); }, 260);
       } catch (e) {}
+      placeFrame(el);
     }
 
     function firstVisible() {
@@ -383,6 +435,7 @@
       var cands = candidates();
       if (!cands.length) return dir === 'left' ? 'edge' : false;
       if (!cur || !document.contains(cur)) {
+        hideFrame();
         setFocus(firstVisible());
         return true;
       }
