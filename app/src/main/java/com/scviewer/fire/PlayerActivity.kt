@@ -269,6 +269,10 @@ class PlayerActivity : Activity() {
         topBar.visibility = View.VISIBLE
         bottomBar.visibility = View.VISIBLE
         if (skipAvailable) skipBtn.visibility = View.VISIBLE
+        // l'ordine di fuoco cambia con la visibilità: riallinea l'indice
+        val order = focusOrder
+        if (order.isEmpty()) focusIdx = 0
+        else focusIdx = focusIdx.coerceIn(0, order.size - 1)
         handler.removeCallbacks(hideRunnable)
         if (playing) handler.postDelayed(hideRunnable, 4000)
     }
