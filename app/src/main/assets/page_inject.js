@@ -349,7 +349,10 @@
   //                           (sezione 10): ricentra il fuoco dopo ogni
   //                           navigazione SPA.
   (function () {
-    if (window.__sctvNav) return;
+    // Lo stub document-start (coda tasti premuti durante il caricamento)
+    // occupa __sctvNav: installa il modulo reale solo se non c'è già quello
+    // vero (contrassegnato __real).
+    if (window.__sctvNav && window.__sctvNav.__real) return;
 
     // ---- Costanti di design -------------------------------------------------
     // Clustering: sovrapposizione verticale richiesta perché un elemento
@@ -370,24 +373,46 @@
     var SNAP_Y = 70, SNAP_X = 8;
 
     var RING = 'sctv-dpad-focus';
-    var st = document.createElement('style');
-    st.textContent = '.' + RING + '{outline:none!important;filter:brightness(1.25)}' +
-      // Login e ricerca nell'header del sito: inutili nell'app (la ricerca
-      // è nella sidebar nativa) — rimossi dalla home e da tutte le pagine.
-      '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
-    document.head.appendChild(st);
+    // stile+frame attaccati a documentElement (NON head/body): l'hydration
+    // Inertia ricostruisce head e #app cancellando gli elementi iniettati.
+    var host = document.documentElement || document.head || document.body;
+    // riusa gli elementi creati a document start (se sopravvissuti)
+    var st = document.getElementById('sctv-dpad-style');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'sctv-dpad-style';
+      st.textContent = '.' + RING + '{outline:none!important;filter:brightness(1.25)}' +
+        // Login e ricerca nell'header del sito: inutili nell'app (la ricerca
+        // è nella sidebar nativa) — rimossi dalla home e da tutte le pagine.
+        '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
+      host.appendChild(st);
+    }
 
     // ---- Anello -------------------------------------------------------------
     // Il ring è un frame position:fixed sopra TUTTO (z-index massimo): le
     // card vicine del sito non possono coprirlo. (Nella versione precedente
     // il frame non veniva mai appeso al DOM: l'anello visibile era solo il
     // filtro brightness della classe.)
-    var frame = document.createElement('div');
-    frame.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
-      'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
-      'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
-      'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
-    (document.body || document.documentElement).appendChild(frame);
+    var frame = document.getElementById('sctv-dpad-frame');
+    if (!frame) {
+      frame = document.createElement('div');
+      frame.id = 'sctv-dpad-frame';
+      frame.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
+        'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
+        'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
+        'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+      host.appendChild(frame);
+    }
+
+    // Watchdog: se hydration/SPA rimuovono stile o frame, ri-appendi.
+    setInterval(function () {
+      if (!document.getElementById('sctv-dpad-style') && st.parentNode !== host) {
+        try { host.appendChild(st); } catch (e) {}
+      }
+      if (!document.getElementById('sctv-dpad-frame') && frame.parentNode !== host) {
+        try { host.appendChild(frame); } catch (e) {}
+      }
+    }, 1500);
     var framePad = 7;
     var lateTimer = null, scrollFlagTimer = null, spaTimer = null;
 
@@ -480,7 +505,9 @@
         try {
           v.pause();
           v.muted = true;
-          v.style.display = 'none';
+          // NON nascondere: hide su un video in riproduzione può lasciare il
+          // compositor di questo WebView vecchio in nero totale.
+          v.removeAttribute('autoplay');
         } catch (e) {}
       }
     }
@@ -756,6 +783,8 @@
         }
       }
 
+      try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e4) {}
+
       var shift = 0;
       var sy = scrollerFor(el, 'y');
       if (sy) {
@@ -917,8 +946,18 @@
         return false;
       }
       if (dir === 'down') {
-        if (loc.ri < rows.length - 1) {
-          setFocus(pickByX(rows[loc.ri + 1], colX).el);
+        // La riga successiva: la prima SOPRA lo sfondo del fuoco che non
+        // contenga il fuoco stesso (i cluster cambiano tra le scansioni —
+        // senza questo, giù oscilla tra righe sovrapposte).
+        var fy = lastCenter ? lastCenter.y : 0;
+        for (var ri2 = loc.ri + 1; ri2 < rows.length; ri2++) {
+          if (rows[ri2].members.some(function (m) { return m.el === cur; })) continue;
+          var cy2 = 0;
+          for (var mi2 = 0; mi2 < rows[ri2].members.length; mi2++) {
+            cy2 = Math.max(cy2, rows[ri2].members[mi2].r.top);
+          }
+          if (cy2 < fy - 4) continue;
+          setFocus(pickByX(rows[ri2], colX).el);
           return true;
         }
         // Ultima riga: scorri verso fine pagina.
@@ -947,7 +986,10 @@
         try { cur.focus(); } catch (e) {}
         return;
       }
-      try { cur.click(); } catch (e2) {}
+      // Span/div "decorativi" con cursor:pointer dentro un anchor/bottone:
+      // il click reale sta sull'antenato attivabile.
+      var real = cur.closest ? cur.closest('a[href],button,[role="button"]') : null;
+      try { (real || cur).click(); } catch (e2) {}
     }
 
     // Reset esplicito (documentato nell'header del modulo): azzera fuoco e
@@ -973,12 +1015,55 @@
       }, 1200);
     }
 
+    function hide() {
+      if (cur) { cur.classList.remove(RING); cur = null; }
+      hideFrame();
+    }
+
+    // Drena la coda dei comandi D-pad arrivati prima dell'iniezione
+    // (document-start stub installato da MainActivity).
+    function drainQueue() {
+      var q = window.__sctvQueue;
+      if (!q || !q.length) return;
+      window.__sctvQueue = [];
+      var first = null;
+      for (var i = 0; i < q.length; i++) {
+        var cmd = q[i];
+        if (cmd[0] === 'move') {
+          var r = move(cmd[1]);
+          if (first === null && r === true) first = cur;
+        } else if (cmd[0] === 'activate') {
+          activate();
+        }
+      }
+      if (first) { setFocus(first); }
+    }
+    drainQueue();
+
+    // Diagnostica (esposta per i test CDP): stato corrente del navigatore.
+    function debug() {
+      var cands = candidates();
+      var rows = buildRows(cands);
+      var loc = cur ? rowOf(rows, cur) : null;
+      return {
+        cur: cur ? cur.tagName + ' "' + (cur.textContent || '').trim().slice(0, 30) + '"' : null,
+        curRect: cur ? (function () { var r = cur.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })() : null,
+        cand: cands.length,
+        rows: rows.length,
+        loc: loc ? { ri: loc.ri, idx: loc.idx } : null,
+        url: location.href.slice(0, 50)
+      };
+    }
+
     window.__sctvNav = {
       move: move,
       activate: activate,
+      debug: debug,
       reset: reset,
       spaReset: spaReset,
-      isTyping: isTyping
+      isTyping: isTyping,
+      hide: hide,
+      __real: true
     };
   })();
 

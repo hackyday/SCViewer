@@ -348,8 +348,17 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
      *  navigazione spaziale D-pad sul sito (cursore nascosto). */
     private fun applyNavMode() {
         if (isTouchDevice) return
-        if (SettingsStore.getSitePointerMode(this) && !cinemaMode) cursorCtl.show()
-        else cursorCtl.hide()
+        if (SettingsStore.getSitePointerMode(this) && !cinemaMode) {
+            cursorCtl.show()
+            // spegni l'anello spaziale residuo
+            webView.evaluateJavascript(
+                "(function(){document.querySelectorAll('.sctv-dpad-focus')" +
+                ".forEach(function(e){e.classList.remove('sctv-dpad-focus')});" +
+                "if(window.__sctvNav&&__sctvNav.hide)__sctvNav.hide();})()", null
+            )
+        } else {
+            cursorCtl.hide()
+        }
     }
 
     private fun bindSidebar() {
@@ -453,7 +462,48 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
                     val earlyHide = assets.open("early_hide.js").bufferedReader().use { it.readText() }
-                    WebViewCompat.addDocumentStartJavaScript(this, agent + "\n" + earlyHide, setOf("*"))
+                    // Stub __sctvNav a document start: i tasti D-pad premuti
+                    // PRIMA dell'iniezione di page_inject (fine hydration,
+                    // anche 30-60s su stick freddi) vengono accodati e
+                    // drenati dal modulo reale appena arriva.
+                    val queue = """
+(function(){
+  if (window.__sctvNav && window.__sctvNav.move) return;
+  // Stile e frame D-pad a document start: l'hydration Inertia ricostruisce
+  // head/body cancellando gli elementi iniettati a pagina finita — questi
+  // esistono prima dei suoi script e il watchdog di page_inject li
+  // ri-attacca se rimossi.
+  try {
+    if (!document.getElementById('sctv-dpad-style')) {
+      var st = document.createElement('style');
+      st.id = 'sctv-dpad-style';
+      st.textContent = '.sctv-dpad-focus{outline:none!important;filter:brightness(1.25)}' +
+        '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
+      (document.documentElement || document.head).appendChild(st);
+    }
+    if (!document.getElementById('sctv-dpad-frame')) {
+      var fr = document.createElement('div');
+      fr.id = 'sctv-dpad-frame';
+      fr.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
+        'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
+        'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
+        'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+      (document.documentElement || document.body).appendChild(fr);
+    }
+  } catch (e) {}
+  window.__sctvQueue = [];
+  window.__sctvNav = {
+    move: function(d){ window.__sctvQueue.push(['move', d]); return true; },
+    activate: function(){ window.__sctvQueue.push(['activate']); return true; },
+    reset: function(){ window.__sctvQueue = []; return true; },
+    spaReset: function(){ return true; },
+    isTyping: function(){ return false; },
+    hide: function(){ return true; }
+  };
+})();
+"""
+                    WebViewCompat.addDocumentStartJavaScript(
+                        this, agent + "\n" + earlyHide + "\n" + queue, setOf("*"))
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "video agent registration failed", t)
@@ -626,6 +676,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun onVideoStateChanged(active: Boolean) {
         if (active) {
+            // Il trailer hero della home è un video grande e riprodotto: non
+            // deve attivare il cinema mode, altrimenti ruba i D-pad alla nav
+            // spaziale sulle pagine di browse. Solo le pagine immersive.
+            if (!immersivePage) return
             val wasOff = !cinemaMode
             videoOffGeneration++
             if (wasOff) {
@@ -1187,6 +1241,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     webView.evaluateJavascript(
                         "window.__sctvNav?__sctvNav.move('$dir'):'false'"
                     ) { result ->
+                        Log.d("SCTV_NAV", "move($dir) -> $result")
                         // Bordo sinistro del sito → apre la sidebar.
                         if (dir == "left" && result?.contains("edge") == true) {
                             runOnUiThread {
