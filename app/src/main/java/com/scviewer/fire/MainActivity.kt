@@ -65,6 +65,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private lateinit var resumeChip: TextView
 
     @Volatile private var cinemaMode = false
+    @Volatile private var immersivePage = false
+    @Volatile private var fullscreenActive = false
     @Volatile private var currentPageInfo: PageInfo? = null
     @Volatile private var lastVideoPos = 0
     @Volatile private var lastVideoDur = 0
@@ -397,6 +399,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 root = this@MainActivity.findViewById(android.R.id.content),
                 callback = object : SCWebChromeClient.FullscreenCallback {
                     override fun onFullscreenEntered() {
+                        fullscreenActive = true
                         topStrip.visibility = View.GONE
                         sidebarCtl.setCinemaHidden(true)
                         (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
@@ -404,12 +407,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     }
 
                     override fun onFullscreenExited() {
+                        fullscreenActive = false
                         topStrip.visibility = View.GONE
-                        if (!isTouchDevice) {
-                            (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
-                                resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
-                            sidebarCtl.setCinemaHidden(false)
-                        }
+                        applyChrome()
                     }
                 }
             )
@@ -599,6 +599,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         recreate()
     }
 
+    /** Rail e margini: nascosti quando il video gira o quando sei dentro
+     *  la pagina di un film/serie (esperienza immersiva). */
+    private fun applyChrome() {
+        if (isTouchDevice || fullscreenActive) return
+        val hideRail = cinemaMode || immersivePage
+        sidebarCtl.setCinemaHidden(hideRail)
+        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
+            if (hideRail) 0 else resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
+    }
+
     // -- Cinema Mode ----------------------------------------------------------
 
     private fun onVideoStateChanged(active: Boolean) {
@@ -612,8 +622,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 if (isTouchDevice) {
                     phoneMenuButton.visibility = View.GONE
                 } else {
-                    sidebarCtl.setCinemaHidden(true)
-                    (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
+                    applyChrome()
                 }
                 if (pendingResume != null) pushPendingResumeSeek()
             }
@@ -627,9 +636,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     if (isTouchDevice) {
                         phoneMenuButton.visibility = View.VISIBLE
                     } else {
-                        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
-                            resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
-                        sidebarCtl.setCinemaHidden(false)
+                        applyChrome()
                     }
                 }
             }, VIDEO_OFF_CONFIRM_MS)
@@ -666,6 +673,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             info.isWatchPage -> history.add(url, info.displayLabel(), poster)
             info.isTitlePage -> history.add(url, info.name, poster)
         }
+
+        // Dentro un film/serie: via la sidebar (torna su home/browse).
+        immersivePage = info.isTitlePage || info.isWatchPage
+        applyChrome()
 
         val p = progress.get(info.titleId)
         if (p != null && p.isResumeable() && pendingResume == null &&

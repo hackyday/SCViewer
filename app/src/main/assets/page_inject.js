@@ -298,26 +298,51 @@
     var RING = 'sctv-dpad-focus';
     var st = document.createElement('style');
     st.textContent = '.' + RING + '{outline:none!important;' +
-      'box-shadow:0 0 0 3px #FFFFFF,0 14px 34px rgba(0,0,0,.85)!important;' +
-      'transform:scale(1.06);border-radius:10px;filter:brightness(1.18)}';
+      'box-shadow:0 0 0 4px #FFFFFF,0 0 0 8px rgba(229,9,20,.45),' +
+      '0 18px 44px rgba(0,0,0,.9)!important;' +
+      'transform:scale(1.14);border-radius:10px;filter:brightness(1.3)}' +
+      // Login e ricerca nell'header del sito: inutili nell'app (la ricerca
+      // è nella sidebar nativa) — rimossi dalla home e da tutte le pagine.
+      '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
     document.head.appendChild(st);
 
     var cur = null;
+    var cache = null, cacheTimer = null;
+
+    // Il sito è una SPA: ricalcola i candidati solo quando il DOM cambia
+    // (debounce 120 ms), non a ogni movimento del D-pad.
+    function invalidate() {
+      cache = null;
+    }
+    var obs = new MutationObserver(function () {
+      if (cacheTimer) return;
+      cacheTimer = setTimeout(function () { cacheTimer = null; invalidate(); }, 120);
+    });
+    function startObserver() {
+      if (document.body && !obs._started) {
+        obs.observe(document.body, { childList: true, subtree: true, attributes: true });
+        obs._started = true;
+      }
+    }
+    startObserver();
+    setTimeout(startObserver, 800);
 
     function candidates() {
+      if (cache) return cache;
       var out = [];
       var nodes = document.querySelectorAll(
         'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])');
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
+        // veloce: gli elementi nascosti non hanno client rects
+        if (!el.getClientRects().length) continue;
         var r = el.getBoundingClientRect();
         if (r.width < 24 || r.height < 12) continue;
-        var cs = getComputedStyle(el);
-        if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') continue;
         if (r.bottom < -60 || r.top > innerHeight + 60 ||
             r.right < -60 || r.left > innerWidth + 60) continue;
         out.push(el);
       }
+      cache = out;
       return out;
     }
 
@@ -338,6 +363,9 @@
         el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
         el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        // il popup hover del sito entra nel DOM: invalida e riscansiona presto
+        invalidate();
+        setTimeout(invalidate, 260);
       } catch (e) {}
     }
 
