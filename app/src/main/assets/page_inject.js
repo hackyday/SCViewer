@@ -15,9 +15,10 @@
  *      fallback that clicks the DOM element under the pointer if the WebView
  *      ever ignores the synthetic touch.
  *
- * NOTE: D-pad navigation is handled NATIVELY by CursorController
- * (virtual mouse cursor overlay). No key handling happens here anymore —
- * injecting key listeners would only risk fighting the native cursor.
+ * NOTE: in "pointer mode" the D-pad drives the NATIVE CursorController
+ * (virtual mouse cursor overlay). In the default "D-pad mode" the native side
+ * dispatches window.__sctvNav.move(dir) / .activate() — see section 9 for the
+ * full contract (move returns true | 'edge' | 'top' | false).
  *
  * All globals are namespaced under window.__scviewer to avoid collisions
  * with the site.
@@ -297,13 +298,67 @@
   }
   window.__scvReportPageInfo = function(){ reportPageInfo(true); };
 
-  // ---- 9. Navigazione D-pad spaziale (sito senza mouse) ---------------------
-  // Mappa i candidati focalizzabili del sito (link, card, bottoni, popup
-  // hover) e muove un anello di selezione con l'algoritmo spaziale. Il
-  // fuoco simula anche il mouseover per aprire le card popup del sito, le
-  // cui opzioni diventano candidati a loro volta.
+  // ---- 9. Navigazione D-pad a RIGHE (modello Netflix TV) --------------------
+  //
+  // Sostituisce il navigatore puramente geometrico, che sulle griglie di card
+  // del sito saltava tra righe e perdeva l'ordine visivo. Modello:
+  //
+  //  • I candidati focalizzabili vengono raggruppati in RIGHE visive per
+  //    sovrapposizione verticale dei rect (un elemento entra nella riga
+  //    quando copre ≥ 40% della propria altezza con la banda della riga,
+  //    min 8px di rumore). GIÙ/SU cambiano riga con snap alla colonna più
+  //    vicina; SINISTRA/DESTRA si muovono DENTRO la riga.
+  //  • Se la riga scorre orizzontalmente, scrolla SOLO il suo contenitore
+  //    overflow-x (mai la pagina); la pagina scorre solo in verticale.
+  //  • Il fuoco simula mouseover/mouseenter: i popup hover del sito entrano
+  //    come candidati e vengono FUSI nella riga della card (un subtree
+  //    appena aggiunto al DOM è un popup), mai in righe fantasma.
+  //  • Fuoco perso (popup chiuso, nodo rimosso, SPA) → si riprende dal
+  //    candidato visivamente più vicino all'ultima posizione dell'anello.
+  //
+  // API (MainActivity chiama ESATTAMENTE questi nomi via evaluateJavascript
+  // — NON rinominarli):
+  //   __sctvNav.move('up'|'down'|'left'|'right')
+  //       → true   : anello mosso o pagina/riga scorrita
+  //       → 'edge' : SINISTRA dal bordo sinistro assoluto → il nativo apre
+  //                  la sidebar
+  //       → 'top'  : SU dalla prima riga in cima pagina → il nativo può
+  //                  aprire la sidebar
+  //       → false  : nessun movimento possibile
+  //   __sctvNav.activate()  : click sul candidato a fuoco; focus() sui campi.
+  //   __sctvNav.reset()     : azzera fuoco + cache e ricentra sul candidato
+  //                           più vicino al centro viewport. Sicuro da chiamare
+  //                           da PageListener.onPageLoaded (no-op se il modulo
+  //                           è appena stato iniettato su un documento nuovo).
+  //   __sctvNav.isTyping()  : true se il fuoco è in un input/textarea/select
+  //                           ATTIVO — in quello stato SINISTRA/DESTRA non
+  //                           muovono l'anello (servono al cursore testo);
+  //                           il nativo può usarlo per inoltrare le frecce
+  //                           all'input o aprire la tastiera.
+  //   __sctvNav.spaReset()  : interno — hook pushState/popState di Inertia
+  //                           (sezione 10): ricentra il fuoco dopo ogni
+  //                           navigazione SPA.
   (function () {
     if (window.__sctvNav) return;
+
+    // ---- Costanti di design -------------------------------------------------
+    // Clustering: sovrapposizione verticale richiesta perché un elemento
+    // entri in una riga — 40% della sua altezza (spec), con pavimento di 8px
+    // così il rumore di layout non incolla righe di testo vicine.
+    var ROW_OVERLAP_RATIO = 0.4;
+    var ROW_OVERLAP_MIN_PX = 8;
+    // Bordo sinistro assoluto del contenuto: SINISTRA qui ritorna 'edge'.
+    // Le righe partono con un padding pagina ~2-4%: 48px copre il padding
+    // senza inglobare card indentate.
+    var EDGE_X = 48;
+    // Culling dei candidati: finestra attorno al viewport molto più larga
+    // del viewport (le righe sopra/sotto restano navigabili e la messa a
+    // fuoco le centra), abbastanza stretta da tenere la scansione < 100ms.
+    var CULL_Y_FACTOR = 1.2, CULL_X_FACTOR = 0.5, CULL_MIN = 160;
+    var MIN_W = 24, MIN_H = 12;
+    // Margini oltre i quali la messa a fuoco centra l'elemento.
+    var SNAP_Y = 70, SNAP_X = 8;
+
     var RING = 'sctv-dpad-focus';
     var st = document.createElement('style');
     st.textContent = '.' + RING + '{outline:none!important;filter:brightness(1.25)}' +
@@ -312,24 +367,30 @@
       '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
     document.head.appendChild(st);
 
-    // Il ring è un frame position:fixed sopra TUTTO (z-index massimo):
-    // le card vicine del sito non possono coprirlo come accadeva col
-    // box-shadow sull'elemento.
+    // ---- Anello -------------------------------------------------------------
+    // Il ring è un frame position:fixed sopra TUTTO (z-index massimo): le
+    // card vicine del sito non possono coprirlo. (Nella versione precedente
+    // il frame non veniva mai appeso al DOM: l'anello visibile era solo il
+    // filtro brightness della classe.)
     var frame = document.createElement('div');
     frame.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
       'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
       'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
       'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+    (document.body || document.documentElement).appendChild(frame);
     var framePad = 7;
-    function placeFrame(el) {
-      var r = el.getBoundingClientRect();
+    var lateTimer = null, scrollFlagTimer = null, spaTimer = null;
+
+    function placeFrameRect(r) {
       frame.style.display = 'block';
       frame.style.left = (r.left - framePad) + 'px';
       frame.style.top = (r.top - framePad) + 'px';
       frame.style.width = (r.width + framePad * 2) + 'px';
       frame.style.height = (r.height + framePad * 2) + 'px';
     }
+    function placeFrame(el) { if (el) placeFrameRect(el.getBoundingClientRect()); }
     function hideFrame() { frame.style.display = 'none'; }
+
     window.addEventListener('scroll', function () {
       if (cur) placeFrame(cur);
     }, true);
@@ -337,8 +398,59 @@
       if (cur) placeFrame(cur);
     });
 
-    var cur = null;
+    // rAF leggero SOLO durante gli scroll smooth: l'anello segue l'elemento
+    // finché la sua posizione viewport non si stabilizza (2-3 frame dopo
+    // l'arrivo), poi il loop si spegne da solo.
+    var followId = 0, followUntil = 0;
+    function startFollow(ms) {
+      followUntil = Date.now() + (ms || 900);
+      if (followId) return;
+      var stable = 0, lastKey = '';
+      var tick = function () {
+        followId = 0;
+        if (!cur) return;
+        var r = cur.getBoundingClientRect();
+        placeFrameRect(r);
+        var key = Math.round(r.left) + ':' + Math.round(r.top);
+        if (key === lastKey) stable++; else { stable = 0; lastKey = key; }
+        if (stable < 3 && Date.now() < followUntil) {
+          followId = requestAnimationFrame(tick);
+        }
+      };
+      followId = requestAnimationFrame(tick);
+    }
+
+    // Gli scroll generati dalla navigazione (centratura dell'anello) non
+    // devono finire nel guard anti-reset di Inertia (installScrollGuard:
+    // vede gli scroll-to-top come reset del sito se c'è stato uno scroll
+    // recente) — il flag li fa passare sempre.
+    function navScrollStart() {
+      window.__scvNavScrolling = true;
+      clearTimeout(scrollFlagTimer);
+      scrollFlagTimer = setTimeout(function () { window.__scvNavScrolling = false; }, 1200);
+    }
+
+    // ---- Stato --------------------------------------------------------------
+    var cur = null;            // elemento a fuoco
+    var lastCenter = null;     // centro viewport dell'ultimo fuoco (recupero)
     var cache = null, cacheTimer = null;
+    var pendingCenter = false; // ricentro dopo SPA nav (consumato dall'observer)
+    var lastMutAt = 0;
+
+    // Subtree aggiunti di recente al DOM = popup hover aperti (vedi merge
+    // righe-p popup in buildRows). Mappa nodo → timestamp.
+    var recent = new Map();
+    var RECENT_TTL = 4000;
+    function popupish(el) {
+      var n = el, hops = 0;
+      while (n && hops < 6) {
+        if (recent.has(n)) return true;
+        if (n === document.body) break;
+        n = n.parentElement;
+        hops++;
+      }
+      return false;
+    }
 
     // Il sito è una SPA: ricalcola i candidati solo quando il DOM cambia
     // (debounce 120 ms), non a ogni movimento del D-pad.
@@ -363,9 +475,33 @@
       }
     }
 
-    var obs = new MutationObserver(function () {
+    var obs = new MutationObserver(function (muts) {
+      lastMutAt = Date.now();
+      for (var i = 0; i < muts.length; i++) {
+        var added = muts[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var n = added[j];
+          if (n.nodeType === 1) recent.set(n, lastMutAt);
+        }
+      }
+      if (recent.size > 240) {
+        recent.forEach(function (t, el) {
+          if (lastMutAt - t > RECENT_TTL) recent.delete(el);
+        });
+      }
       if (cacheTimer) return;
-      cacheTimer = setTimeout(function () { cacheTimer = null; invalidate(); tameVideos(); }, 120);
+      cacheTimer = setTimeout(function () {
+        cacheTimer = null;
+        invalidate();
+        tameVideos();
+        // Fuoco da ricentrire dopo una navigazione SPA: attendi la quiete
+        // delle mutazioni (il swap di Inertia arriva a batch), poi ricentra.
+        if (pendingCenter && Date.now() - lastMutAt > 250) {
+          pendingCenter = false;
+          clearTimeout(spaTimer);
+          centerFocus();
+        }
+      }, 120);
     });
     function startObserver() {
       if (document.body && !obs._started) {
@@ -378,139 +514,462 @@
     setTimeout(tameVideos, 400);
     setTimeout(tameVideos, 1500);
 
-    function candidates() {
-      if (cache) return cache;
-      var out = [];
-      var kept = [];
+    // ---- Candidati ----------------------------------------------------------
+    function scan() {
+      var out = [], seen = new Set();
+      var vw = innerWidth, vh = innerHeight;
+      var cullY = Math.max(CULL_MIN, vh * CULL_Y_FACTOR);
+      var cullX = Math.max(CULL_MIN, vw * CULL_X_FACTOR);
+      var i, el, r, cs;
 
-      function visible(el) {
-        if (!el.getClientRects().length) return false;
-        var r = el.getBoundingClientRect();
-        if (r.width < 24 || r.height < 12) return false;
-        if (r.bottom < -60 || r.top > innerHeight + 60 ||
-            r.right < -60 || r.left > innerWidth + 60) return false;
+      function ok(rr) {
+        if (rr.width < MIN_W || rr.height < MIN_H) return false;
+        if (rr.bottom < -cullY || rr.top > vh + cullY ||
+            rr.right < -cullX || rr.left > vw + cullX) return false;
         return true;
       }
+      function add(e, rr) { e.__sctvRect = rr; seen.add(e); out.push(e); }
 
-      function add(el) {
-        if (seen.has(el)) return;
-        var r = el.getBoundingClientRect();
-        el.__r = r;
-        seen.add(el);
-        out.push(el);
-      }
-
-      var seen = new Set();
-      // 1. semantica: link, bottoni, campi
+      // 1. semantica: link, bottoni, campi, tabindex
       var nodes = document.querySelectorAll(
         'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])');
-      for (var i = 0; i < nodes.length; i++) {
-        var el = nodes[i];
-        if (visible(el)) add(el);
+      for (i = 0; i < nodes.length; i++) {
+        el = nodes[i];
+        if (el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true')) continue;
+        r = el.getBoundingClientRect();
+        if (!ok(r)) continue;
+        cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+        add(el, r);
       }
-      // 2. euristica Vue: QUALSIASI elemento cliccabile senza semantica
-      //    è riconoscibile dal cursore pointer (card, voci, tab, chip).
-      var all = document.querySelectorAll('body *');
-      for (var j = 0; j < all.length; j++) {
-        var el2 = all[j];
-        if (seen.has(el2)) continue;
-        var cs = getComputedStyle(el2);
+
+      // 2. euristica Vue: QUALSIASI elemento cliccabile senza semantica è
+      //    riconoscibile dal cursore pointer (card, voci, tab, chip).
+      //    Pre-filtro per rect PRIMA di getComputedStyle: il check costoso
+      //    si paga solo sui sopravvissuti (centinaia, non migliaia).
+      var all = document.getElementsByTagName('*');
+      for (i = 0; i < all.length; i++) {
+        el = all[i];
+        if (seen.has(el)) continue;
+        r = el.getBoundingClientRect();
+        if (!ok(r)) continue;
+        cs = getComputedStyle(el);
         if (cs.cursor !== 'pointer' || cs.visibility === 'hidden' ||
-            cs.display === 'none') continue;
-        if (visible(el2)) add(el2);
+            cs.display === 'none' || cs.pointerEvents === 'none') continue;
+        add(el, r);
       }
 
       // 3. dedup per contenimento: fra elementi sovrapposti tiene il più
       //    interno (il target reale del click), scarta il contenitore.
       out.sort(function (a, b) {
-        return a.__r.width * a.__r.height - b.__r.width * b.__r.height;
+        return a.__sctvRect.width * a.__sctvRect.height -
+               b.__sctvRect.width * b.__sctvRect.height;
       });
-      for (var k = 0; k < out.length; k++) {
-        var r2 = out[k].__r;
+      var kept = [];
+      for (i = 0; i < out.length; i++) {
+        var rr = out[i].__sctvRect;
         var inside = false;
         for (var m = 0; m < kept.length; m++) {
-          var kr = kept[m].__r;
-          if (r2.left >= kr.left - 2 && r2.right <= kr.right + 2 &&
-              r2.top >= kr.top - 2 && r2.bottom <= kr.bottom + 2) { inside = true; break; }
+          var kr = kept[m].__sctvRect;
+          if (rr.left >= kr.left - 2 && rr.right <= kr.right + 2 &&
+              rr.top >= kr.top - 2 && rr.bottom <= kr.bottom + 2) { inside = true; break; }
         }
-        if (!inside) kept.push(out[k]);
+        if (!inside) kept.push(out[i]);
       }
-      cache = kept;
+      for (i = 0; i < out.length; i++) delete out[i].__sctvRect;
       return kept;
     }
 
-    function center(el) {
+    function candidates() {
+      if (cache) return cache;
+      cache = scan();
+      return cache;
+    }
+
+    // ---- Righe --------------------------------------------------------------
+    // Righe costruite sui rect LIVE a ogni passo di navigazione (i rect di
+    // scan diventano stidenti dopo lo scroll): n ≈ centinaia, costo ~1-2ms.
+    function buildRows(cands) {
+      var vh = innerHeight, vw = innerWidth;
+      var cullY = Math.max(CULL_MIN, vh * CULL_Y_FACTOR);
+      var cullX = Math.max(CULL_MIN, vw * CULL_X_FACTOR);
+      var items = [];
+      for (var i = 0; i < cands.length; i++) {
+        var el = cands[i];
+        var r = el.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) continue;               // sparito
+        if (r.bottom < -cullY || r.top > vh + cullY ||
+            r.right < -cullX || r.left > vw + cullX) continue;   // fuori finestra live
+        items.push({ el: el, r: r, pop: popupish(el) });
+      }
+      if (!items.length) return [];
+
+      items.sort(function (a, b) {
+        return (a.r.top - b.r.top) || (a.r.left - b.r.left);
+      });
+
+      // Clustering: ogni elemento entra nella riga con cui ha la MASSIMA
+      // sovrapposizione verticale (≥ 40% della sua altezza, min 8px).
+      var rows = [];
+      for (var j = 0; j < items.length; j++) {
+        var it = items[j];
+        var need = Math.max(it.r.height * ROW_OVERLAP_RATIO, ROW_OVERLAP_MIN_PX);
+        var best = null, bestOv = -1;
+        for (var k = 0; k < rows.length; k++) {
+          var rw = rows[k];
+          var ov = Math.min(it.r.bottom, rw.bottom) - Math.max(it.r.top, rw.top);
+          if (ov >= need && ov > bestOv) { bestOv = ov; best = rw; }
+        }
+        if (!best) {
+          best = { top: it.r.top, bottom: it.r.bottom, members: [], allPop: it.pop };
+          rows.push(best);
+        } else {
+          if (it.r.top < best.top) best.top = it.r.top;
+          if (it.r.bottom > best.bottom) best.bottom = it.r.bottom;
+          if (!it.pop) best.allPop = false;
+        }
+        best.members.push(it);
+      }
+
+      // Merge righe-popup: una riga fatta SOLO di nodi appena aggiunti al
+      // DOM è il popup hover di una card. I suoi bottoni entrano nella
+      // STESSA riga della card (quella a fuoco se vicina, altrimenti la
+      // riga con più sovrapposizione) — mai in una riga fantasma.
+      for (var p = rows.length - 1; p >= 0; p--) {
+        var pr = rows[p];
+        if (!pr.allPop || pr.members.length > 10) continue;
+        var target = null;
+        if (cur) {
+          var cloc = rowOf(rows, cur);
+          if (cloc && cloc.row !== pr && !cloc.row.allPop) {
+            var gap = bandGap(pr, cloc.row);
+            if (gap <= Math.max(40, (cloc.row.bottom - cloc.row.top) * 0.5)) target = cloc.row;
+          }
+        }
+        if (!target) {
+          var bestOv2 = -1;
+          for (var q = 0; q < rows.length; q++) {
+            var qr = rows[q];
+            if (qr === pr || qr.allPop) continue;
+            var ov2 = Math.min(pr.bottom, qr.bottom) - Math.max(pr.top, qr.top);
+            if (ov2 >= (pr.bottom - pr.top) * 0.15 && ov2 > bestOv2) {
+              bestOv2 = ov2; target = qr;
+            }
+          }
+        }
+        if (!target) continue;
+        for (var x = 0; x < pr.members.length; x++) target.members.push(pr.members[x]);
+        if (pr.top < target.top) target.top = pr.top;
+        if (pr.bottom > target.bottom) target.bottom = pr.bottom;
+        rows.splice(p, 1);
+      }
+
+      rows.sort(function (a, b) {
+        return (a.top - b.top) || (a.members[0].r.left - b.members[0].r.left);
+      });
+      for (var f = 0; f < rows.length; f++) {
+        rows[f].members.sort(function (a, b) { return a.r.left - b.r.left; });
+      }
+      return rows;
+    }
+
+    function bandGap(a, b) {
+      return Math.max(a.top - b.bottom, b.top - a.bottom, 0);
+    }
+
+    function rowOf(rows, el) {
+      for (var i = 0; i < rows.length; i++) {
+        var ms = rows[i].members;
+        for (var j = 0; j < ms.length; j++) {
+          if (ms[j].el === el) return { row: rows[i], ri: i, idx: j };
+        }
+      }
+      return null;
+    }
+
+    function pickByX(row, x) {
+      var ms = row.members, best = ms[0], bd = Infinity;
+      for (var i = 0; i < ms.length; i++) {
+        var c = ms[i].r.left + ms[i].r.width / 2;
+        var d = Math.abs(c - x);
+        if (d < bd) { bd = d; best = ms[i]; }
+      }
+      return best;
+    }
+
+    // ---- Scroll di messa a fuoco -------------------------------------------
+    function clampN(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    function pageTop() {
+      return window.scrollY || document.documentElement.scrollTop || 0;
+    }
+    function maxPage() {
+      var doc = document.documentElement;
+      var h = Math.max(doc ? doc.scrollHeight : 0,
+                       document.body ? document.body.scrollHeight : 0);
+      return Math.max(0, h - innerHeight);
+    }
+    // Primo antenato con overflow scorrevole sull'asse dato (mai html/body:
+    // la pagina la gestisce il chiamante).
+    function scrollerFor(el, axis) {
+      var n = el.parentElement, hops = 0;
+      while (n && hops < 24) {
+        if (n === document.body || n === document.documentElement) break;
+        var cs;
+        try { cs = getComputedStyle(n); } catch (e) { break; }
+        if (axis === 'x') {
+          var ox = cs.overflowX;
+          if ((ox === 'auto' || ox === 'scroll') && n.scrollWidth > n.clientWidth + 4) return n;
+        } else {
+          var oy = cs.overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 4) return n;
+        }
+        n = n.parentElement;
+        hops++;
+      }
+      return null;
+    }
+
+    // Centratura su tre livelli: contenitore overflow-x della riga (SOLO
+    // quello — la pagina non scrolla in orizzontale, mai), eventuale scroller
+    // verticale interno (liste episodi), quindi la pagina in verticale.
+    function scrollFix(el) {
       var r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+
+      var sx = scrollerFor(el, 'x');
+      if (sx) {
+        var cr = sx.getBoundingClientRect();
+        var tx = sx.scrollLeft + (r.left + r.width / 2 - (cr.left + cr.width / 2));
+        tx = clampN(tx, 0, sx.scrollWidth - sx.clientWidth);
+        if (Math.abs(tx - sx.scrollLeft) > SNAP_X) {
+          try { sx.scrollTo({ left: tx, behavior: 'smooth' }); }
+          catch (e) { sx.scrollLeft = tx; }
+        }
+      }
+
+      var shift = 0;
+      var sy = scrollerFor(el, 'y');
+      if (sy) {
+        var cr2 = sy.getBoundingClientRect();
+        var ty = sy.scrollTop + (r.top + r.height / 2 - (cr2.top + cr2.height / 2));
+        ty = clampN(ty, 0, sy.scrollHeight - sy.clientHeight);
+        if (Math.abs(ty - sy.scrollTop) > 4) {
+          try { sy.scrollTo({ top: ty, behavior: 'smooth' }); }
+          catch (e2) { sy.scrollTop = ty; }
+          shift = ty - sy.scrollTop;
+        }
+      }
+
+      var vTop = r.top - shift, vBot = r.bottom - shift;
+      if (vTop < SNAP_Y || vBot > innerHeight - SNAP_Y) {
+        var pt = pageTop();
+        var want = clampN(pt + (vTop + r.height / 2 - innerHeight / 2), 0, maxPage());
+        if (Math.abs(want - pt) > 4) {
+          try { window.scrollTo({ top: want, behavior: 'smooth' }); }
+          catch (e3) { window.scrollTo(0, want); }
+        }
+      }
+    }
+
+    function pageScroll(sign) {
+      invalidate(); // lo scroll cambia la finestra dei candidati
+      try {
+        window.scrollBy({ top: sign * innerHeight * 0.66, behavior: 'smooth' });
+      } catch (e) {
+        window.scrollBy(0, sign * innerHeight * 0.66);
+      }
+      navScrollStart();
+      startFollow(900);
+    }
+
+    // ---- Fuoco --------------------------------------------------------------
+    function isFieldEl(el) {
+      var t = el && el.tagName;
+      return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT';
+    }
+    function isTyping() {
+      return !!cur && isFieldEl(cur) && document.activeElement === cur;
     }
 
     function setFocus(el) {
       if (cur && cur !== el) {
         cur.classList.remove(RING);
-        try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+        // mouseout solo se il nuovo fuoco NON è dentro il vecchio: muoversi
+        // dalla card a un bottone del suo popup non deve chiudere il popup
+        // (e quindi non deve far perdere il fuoco).
+        if (el && !el.contains(cur)) {
+          try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+        }
+        if (isFieldEl(cur)) { try { cur.blur(); } catch (e2) {} }
       }
-      cur = el;
-      if (!el) { hideFrame(); return; }
-      el.classList.add(RING);
+      cur = el || null;
+      if (!cur) { hideFrame(); return; }
+      var r0 = cur.getBoundingClientRect();
+      lastCenter = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+      cur.classList.add(RING);
+      navScrollStart(); // prima dello scroll: il guard deve lasciarlo passare
+      scrollFix(cur);
       try {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        // il popup hover del sito entra nel DOM: invalida e riscansiona presto
+        cur.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        cur.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e3) {}
+      // il popup hover del sito entra nel DOM: invalida e riscansiona presto
+      invalidate();
+      startFollow(900);
+      clearTimeout(lateTimer);
+      lateTimer = setTimeout(function () {
         invalidate();
-        setTimeout(function () { invalidate(); if (cur === el) placeFrame(el); }, 260);
-      } catch (e) {}
-      placeFrame(el);
+        if (cur) placeFrame(cur);
+      }, 260);
+    }
+
+    function centerFocus() {
+      if (cur) {
+        cur.classList.remove(RING);
+        try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+        cur = null;
+      }
+      hideFrame();
+      cache = null;
+      var f = firstVisible();
+      if (f) setFocus(f);
     }
 
     function firstVisible() {
-      var cands = candidates(), best = null, bd = Infinity;
+      var cands = candidates();
+      var cy = innerHeight / 2, cx = innerWidth / 2;
+      var best = null, bd = Infinity;
       for (var i = 0; i < cands.length; i++) {
-        var c = center(cands[i]);
-        var d = Math.abs(c.y - innerHeight / 2) + Math.abs(c.x - innerWidth / 2) * 0.3;
+        var r = cands[i].getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) continue;
+        var d = Math.abs(r.top + r.height / 2 - cy) +
+                Math.abs(r.left + r.width / 2 - cx) * 0.3;
         if (d < bd) { bd = d; best = cands[i]; }
       }
       return best;
     }
 
-    function move(dir) {
+    function nearestTo(x, y) {
       var cands = candidates();
-      if (!cands.length) return dir === 'left' ? 'edge' : false;
-      if (!cur || !document.contains(cur)) {
-        hideFrame();
-        setFocus(firstVisible());
-        return true;
-      }
-      var from = center(cur), best = null, bs = Infinity;
+      var best = null, bd = Infinity;
       for (var i = 0; i < cands.length; i++) {
-        var el = cands[i];
-        if (el === cur) continue;
-        var c = center(el);
-        var dx = c.x - from.x, dy = c.y - from.y;
-        var ok = false, primary = 0, ortho = 0;
-        if (dir === 'right' && dx > 12) { ok = true; primary = dx; ortho = Math.abs(dy); }
-        else if (dir === 'left' && dx < -12) { ok = true; primary = -dx; ortho = Math.abs(dy); }
-        else if (dir === 'down' && dy > 12) { ok = true; primary = dy; ortho = Math.abs(dx); }
-        else if (dir === 'up' && dy < -12) { ok = true; primary = -dy; ortho = Math.abs(dx); }
-        if (ok) { var sc = primary + ortho * 2.6; if (sc < bs) { bs = sc; best = el; } }
+        var r = cands[i].getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) continue;
+        var d = Math.abs(r.top + r.height / 2 - y) +
+                Math.abs(r.left + r.width / 2 - x) * 0.6;
+        if (d < bd) { bd = d; best = cands[i]; }
       }
-      if (best) { setFocus(best); return true; }
-      // nessun candidato nella direzione: su/giù scorrono la pagina
-      if (dir === 'down' || dir === 'up') {
-        window.scrollBy({ top: (dir === 'down' ? 1 : -1) * innerHeight * 0.66, behavior: 'smooth' });
+      return best;
+    }
+
+    // ---- Navigazione --------------------------------------------------------
+    function move(dir) {
+      // Campi di testo attivi: SINISTRA/DESTRA appartengono al cursore testo,
+      // non all'anello (SU/GIÙ escono dal campo normalmente).
+      if (isTyping() && (dir === 'left' || dir === 'right')) return false;
+
+      var rows = buildRows(candidates());
+
+      if (!rows.length) {
+        if (dir === 'left') return 'edge';
+        if (dir === 'up') {
+          if (pageTop() > 60) { pageScroll(-1); return true; }
+          return 'top';
+        }
+        if (dir === 'down') { pageScroll(1); return true; }
+        return false;
+      }
+
+      var loc = cur ? rowOf(rows, cur) : null;
+      if (!loc) {
+        // Fuoco perso: nodo rimosso (popup chiuso, swap SPA) o fuori dalla
+        // finestra live → riprendi dal candidato più vicino all'ultima
+        // posizione dell'anello, senza mai restare "orfani".
+        var ax = lastCenter ? lastCenter.x : innerWidth / 2;
+        var ay = lastCenter ? lastCenter.y : innerHeight / 2;
+        var near = nearestTo(ax, ay) || firstVisible();
+        if (near) { setFocus(near); return true; }
+        return false;
+      }
+
+      var row = loc.row, idx = loc.idx;
+      var colX = row.members[idx].r.left + row.members[idx].r.width / 2;
+
+      if (dir === 'left') {
+        if (idx > 0) { setFocus(row.members[idx - 1].el); return true; }
+        // Primo elemento della riga: 'edge' solo dal bordo sinistro assoluto.
+        return row.members[0].r.left <= EDGE_X ? 'edge' : false;
+      }
+      if (dir === 'right') {
+        if (idx < row.members.length - 1) {
+          setFocus(row.members[idx + 1].el);
+          return true;
+        }
+        return false;
+      }
+      if (dir === 'down') {
+        if (loc.ri < rows.length - 1) {
+          setFocus(pickByX(rows[loc.ri + 1], colX).el);
+          return true;
+        }
+        // Ultima riga: scorri verso fine pagina.
+        pageScroll(1);
         return true;
       }
-      return dir === 'left' ? 'edge' : false;
+      // up
+      if (loc.ri > 0) {
+        setFocus(pickByX(rows[loc.ri - 1], colX).el);
+        return true;
+      }
+      // Prima riga: se c'è ancora pagina sopra scorri, altrimenti 'top'.
+      if (pageTop() > 60) { pageScroll(-1); return true; }
+      return 'top';
     }
 
     function activate() {
-      if (!cur) { setFocus(firstVisible()); return; }
-      var tag = cur.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { cur.focus(); return; }
-      cur.click();
+      if (!cur) {
+        var f = firstVisible();
+        if (f) setFocus(f);
+        return;
+      }
+      if (isFieldEl(cur)) {
+        // focus() e basta: la tastiera/digitazione è gestita dal nativo
+        // (che può interrogare __sctvNav.isTyping()).
+        try { cur.focus(); } catch (e) {}
+        return;
+      }
+      try { cur.click(); } catch (e2) {}
     }
 
-    window.__sctvNav = { move: move, activate: activate };
+    // Reset esplicito (documentato nell'header del modulo): azzera fuoco e
+    // cache e ricentra sul candidato più vicino al centro viewport.
+    function reset() {
+      pendingCenter = false;
+      clearTimeout(spaTimer);
+      centerFocus();
+    }
+
+    // Navigazione SPA (Inertia pushState/replaceState/popstate — richiamata
+    // dagli hook history in fondo al file): il DOM cambierà a breve.
+    // L'observer consuma pendingCenter alla quiete delle mutazioni; questo
+    // timer è la rete di sicurezza se il swap tarda.
+    function spaReset() {
+      pendingCenter = true;
+      lastMutAt = Date.now();
+      clearTimeout(spaTimer);
+      spaTimer = setTimeout(function () {
+        if (!pendingCenter) return;
+        pendingCenter = false;
+        centerFocus();
+      }, 1200);
+    }
+
+    window.__sctvNav = {
+      move: move,
+      activate: activate,
+      reset: reset,
+      spaReset: spaReset,
+      isTyping: isTyping
+    };
   })();
 
   // First load: report quickly, then again in case the router settled late.
@@ -518,8 +977,12 @@
   setTimeout(reportPageInfo, 2500);
 
   // SPA navigation: Inertia drives history.pushState/replaceState — hook
-  // them (plus popstate) and re-report after the new page settles.
-  var navReport = function () { setTimeout(reportPageInfo, 700); };
+  // them (plus popstate) and re-report after the new page settles. The same
+  // hooks reset the D-pad ring to the center-most candidate (section 9).
+  var navReport = function () {
+    setTimeout(reportPageInfo, 700);
+    try { if (window.__sctvNav) window.__sctvNav.spaReset(); } catch (e) { /* no-op */ }
+  };
   try {
     ['pushState', 'replaceState'].forEach(function (name) {
       var orig = history[name].bind(history);
@@ -530,7 +993,10 @@
       };
     });
   } catch (e) { /* no-op */ }
-  window.addEventListener('popstate', function () { setTimeout(reportPageInfo, 700); });
+  window.addEventListener('popstate', function () {
+    setTimeout(reportPageInfo, 700);
+    try { if (window.__sctvNav) window.__sctvNav.spaReset(); } catch (e) { /* no-op */ }
+  });
 
   // Re-run the cosmetic hide on DOM mutations (the site is a SPA), debounced.
   // hideAds() no longer mutates the DOM on no-op calls (see above), so the
@@ -573,6 +1039,10 @@
     }
 
     function shouldBlock(top) {
+      // Scroll generati dalla navigazione D-pad (centratura dell'anello,
+      // flag della sezione 9): passano sempre, anche se finiscono in cima
+      // pagina durante una sequenza veloce di movimenti.
+      if (window.__scvNavScrolling) return false;
       return top !== undefined && top <= 1 &&
              pageTop() > 200 &&
              (Date.now() - lastUserScroll) < 1000;
