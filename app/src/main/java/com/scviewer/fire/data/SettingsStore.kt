@@ -56,6 +56,24 @@ object SettingsStore {
         else -> 1080
     }
 
+    // -- Navigazione sito: puntatore o D-pad ----------------------------------
+
+    private const val KEY_SITE_POINTER = "site_pointer_mode"
+
+    /** true = il sito si naviga col puntatore (mouse); false = navigazione
+     *  spaziale D-pad iniettata (default). Nel player si usa sempre il
+     *  puntatore (i controlli del sito stanno in un iframe). */
+    fun getSitePointerMode(context: Context): Boolean =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_SITE_POINTER, false)
+
+    fun setSitePointerMode(context: Context, value: Boolean) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_SITE_POINTER, value).apply()
+    }
+
     // -- UA alternativo (anti-blocco Cloudflare) ------------------------------
 
     private const val KEY_ALTERNATE_UA = "alternate_ua"

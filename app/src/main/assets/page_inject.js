@@ -381,20 +381,62 @@
     function candidates() {
       if (cache) return cache;
       var out = [];
+      var kept = [];
+
+      function visible(el) {
+        if (!el.getClientRects().length) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width < 24 || r.height < 12) return false;
+        if (r.bottom < -60 || r.top > innerHeight + 60 ||
+            r.right < -60 || r.left > innerWidth + 60) return false;
+        return true;
+      }
+
+      function add(el) {
+        if (seen.has(el)) return;
+        var r = el.getBoundingClientRect();
+        el.__r = r;
+        seen.add(el);
+        out.push(el);
+      }
+
+      var seen = new Set();
+      // 1. semantica: link, bottoni, campi
       var nodes = document.querySelectorAll(
         'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])');
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
-        // veloce: gli elementi nascosti non hanno client rects
-        if (!el.getClientRects().length) continue;
-        var r = el.getBoundingClientRect();
-        if (r.width < 24 || r.height < 12) continue;
-        if (r.bottom < -60 || r.top > innerHeight + 60 ||
-            r.right < -60 || r.left > innerWidth + 60) continue;
-        out.push(el);
+        if (visible(el)) add(el);
       }
-      cache = out;
-      return out;
+      // 2. euristica Vue: QUALSIASI elemento cliccabile senza semantica
+      //    è riconoscibile dal cursore pointer (card, voci, tab, chip).
+      var all = document.querySelectorAll('body *');
+      for (var j = 0; j < all.length; j++) {
+        var el2 = all[j];
+        if (seen.has(el2)) continue;
+        var cs = getComputedStyle(el2);
+        if (cs.cursor !== 'pointer' || cs.visibility === 'hidden' ||
+            cs.display === 'none') continue;
+        if (visible(el2)) add(el2);
+      }
+
+      // 3. dedup per contenimento: fra elementi sovrapposti tiene il più
+      //    interno (il target reale del click), scarta il contenitore.
+      out.sort(function (a, b) {
+        return a.__r.width * a.__r.height - b.__r.width * b.__r.height;
+      });
+      for (var k = 0; k < out.length; k++) {
+        var r2 = out[k].__r;
+        var inside = false;
+        for (var m = 0; m < kept.length; m++) {
+          var kr = kept[m].__r;
+          if (r2.left >= kr.left - 2 && r2.right <= kr.right + 2 &&
+              r2.top >= kr.top - 2 && r2.bottom <= kr.bottom + 2) { inside = true; break; }
+        }
+        if (!inside) kept.push(out[k]);
+      }
+      cache = kept;
+      return kept;
     }
 
     function center(el) {

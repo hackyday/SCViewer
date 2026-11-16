@@ -77,6 +77,19 @@ class SettingsDialog(
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
 
+        // Navigazione del sito: D-pad spaziale (default) o puntatore.
+        val navToggle = findViewById<Button>(R.id.settingsNavToggle)
+        var navPointer = SettingsStore.getSitePointerMode(context)
+        navToggle.text = context.getString(
+            if (navPointer) R.string.settings_nav_pointer else R.string.settings_nav_dpad
+        )
+        navToggle.setOnClickListener {
+            navPointer = !navPointer
+            navToggle.text = context.getString(
+                if (navPointer) R.string.settings_nav_pointer else R.string.settings_nav_dpad
+            )
+        }
+
         // UA alternativo (anti-blocco): toggle ON/OFF, salvato con Salva.
         val uaToggle = findViewById<Button>(R.id.settingsUaToggle)
         var uaValue = SettingsStore.getAlternateUa(context)
@@ -96,6 +109,7 @@ class SettingsDialog(
             SettingsStore.setCursorSpeed(context, v)
             SettingsStore.setQualityStop(context, qualitySeek.progress)
             SettingsStore.setAlternateUa(context, uaValue)
+            SettingsStore.setSitePointerMode(context, navPointer)
             onSaved.invoke(v)
             Toast.makeText(
                 context,

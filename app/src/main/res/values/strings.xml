@@ -68,6 +68,11 @@
     <string name="domain_blocked_hint">Dominio bloccato da Cloudflare. Attiva User-Agent alternativo nelle Impostazioni oppure cambia rete</string>
 
     <!-- Alternate User-Agent -->
+    <string name="settings_nav_label">Navigazione del sito</string>
+    <string name="settings_nav_hint">D-pad: ti muovi nel catalogo con l\'anello di selezione, senza cursore. Puntatore: il vecchio mouse virtuale — serve per i controlli interni del player del sito.</string>
+    <string name="settings_nav_pointer">PUNTATORE (MOUSE)</string>
+    <string name="settings_nav_dpad">D-PAD</string>
+
     <string name="settings_ua_label">User-Agent alternativo (anti-blocco)</string>
     <string name="settings_ua_hint">Simula Chrome su Android mobile per aggirare eventuali blocchi Cloudflare sul profilo desktop.</string>
     <string name="settings_ua_on">ATTIVO</string>

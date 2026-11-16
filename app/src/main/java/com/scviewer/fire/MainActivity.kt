@@ -288,6 +288,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         if (!isTouchDevice) {
             cursorCtl.attach()
+            if (SettingsStore.getSitePointerMode(this)) cursorCtl.show()
         } else {
             // Touch device: full-bleed WebView + floating studio menu trigger
             findViewById<View>(R.id.tvSidebarRoot).visibility = View.GONE
@@ -343,6 +344,14 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         )
     }
 
+    /** Applica la modalità di navigazione scelta: puntatore visibile o
+     *  navigazione spaziale D-pad sul sito (cursore nascosto). */
+    private fun applyNavMode() {
+        if (isTouchDevice) return
+        if (SettingsStore.getSitePointerMode(this) && !cinemaMode) cursorCtl.show()
+        else cursorCtl.hide()
+    }
+
     private fun bindSidebar() {
         val sidebarRoot = findViewById<LinearLayout>(R.id.tvSidebarRoot)
         sidebarCtl = TvSidebarController(
@@ -360,6 +369,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     onSaved = { _ ->
                         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
                         applyUserAgent()
+                        applyNavMode()
                     },
                     onActiveChange = { d -> activeDialog = d }
                 ).show()
@@ -1130,12 +1140,22 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }
         }
 
+        val pointerMode = SettingsStore.getSitePointerMode(this)
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                if (action == KeyEvent.ACTION_DOWN) {
+                if (pointerMode || cinemaMode) {
+                    // Modalità puntatore (o player del sito): mouse virtuale.
+                    if (action == KeyEvent.ACTION_DOWN) {
+                        cursorCtl.show()
+                        cursorCtl.onDirectionDown(keyCode, event.repeatCount)
+                    } else if (action == KeyEvent.ACTION_UP) {
+                        cursorCtl.onDirectionUp(keyCode)
+                    }
+                } else if (action == KeyEvent.ACTION_DOWN) {
+                    // Navigazione spaziale D-pad sul sito.
                     val dir = when (keyCode) {
                         KeyEvent.KEYCODE_DPAD_UP -> "up"
                         KeyEvent.KEYCODE_DPAD_DOWN -> "down"
@@ -1166,9 +1186,13 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 } else if (action == KeyEvent.ACTION_UP) {
                     handler.removeCallbacks(okLongPressRunnable)
                     if (!okLongPressFired) {
-                        webView.evaluateJavascript(
-                            "window.__sctvNav?__sctvNav.activate():'false'", null
-                        )
+                        if (pointerMode || cinemaMode) {
+                            cursorCtl.click()
+                        } else {
+                            webView.evaluateJavascript(
+                                "window.__sctvNav?__sctvNav.activate():'false'", null
+                            )
+                        }
                     }
                 }
                 return true
