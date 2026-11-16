@@ -1,15 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Netflix-dark palette -->
-    <color name="sc_background">#FF0F0F0F</color>
-    <color name="sc_background_elevated">#FF1B1B1B</color>
-    <color name="sc_background_overlay">#CC000000</color>
-    <color name="sc_accent">#FFE50914</color>
-    <color name="sc_accent_pressed">#FFB20710</color>
-    <color name="sc_text_primary">#FFFFFFFF</color>
-    <color name="sc_text_secondary">#FFB3B3B3</color>
-    <color name="sc_text_hint">#FF7A7A7A</color>
-    <color name="sc_divider">#FF2B2B2B</color>
+    <!-- SCtv Obsidian Studio Palette -->
+    <color name="sctv_bg_obsidian">#FF08090C</color>
+    <color name="sctv_surface_rail">#F00D1017</color>
+    <color name="sctv_surface_card">#FF141821</color>
+    <color name="sctv_surface_card_focused">#FF1E2433</color>
+    <color name="sctv_surface_chip">#E6141821</color>
+    <color name="sctv_border_subtle">#24FFFFFF</color>
+    <color name="sctv_border_focused">#FFE50914</color>
+
+    <color name="sctv_accent">#FFE50914</color>
+    <color name="sctv_accent_pressed">#FFB20710</color>
+    <color name="sctv_accent_glow">#33E50914</color>
+
+    <color name="sctv_text_primary">#FFF5F7FA</color>
+    <color name="sctv_text_secondary">#FF9AA3B2</color>
+    <color name="sctv_text_muted">#FF5C6475</color>
+
+    <!-- Legacy aliases mapped to SCtv palette -->
+    <color name="sc_background">@color/sctv_bg_obsidian</color>
+    <color name="sc_background_elevated">@color/sctv_surface_card</color>
+    <color name="sc_background_overlay">#D9050608</color>
+    <color name="sc_accent">@color/sctv_accent</color>
+    <color name="sc_accent_pressed">@color/sctv_accent_pressed</color>
+    <color name="sc_text_primary">@color/sctv_text_primary</color>
+    <color name="sc_text_secondary">@color/sctv_text_secondary</color>
+    <color name="sc_text_hint">@color/sctv_text_muted</color>
+    <color name="sc_divider">#1FFFFFFF</color>
 
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>

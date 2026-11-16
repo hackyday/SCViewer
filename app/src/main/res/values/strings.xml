@@ -1,80 +1,94 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SC Viewer</string>
-    <string name="app_description">Streaming Community viewer for Fire TV</string>
+    <string name="app_name">SCtv</string>
+    <string name="app_description">SCtv Smart TV interface for StreamingCommunity</string>
+
+    <!-- Sidebar Navigation -->
+    <string name="nav_search">Cerca</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_resume">Riprendi</string>
+    <string name="nav_favorites">Preferiti</string>
+    <string name="nav_history">Cronologia</string>
+    <string name="nav_reload">Ricarica</string>
+    <string name="nav_back">Indietro</string>
+    <string name="nav_settings">Impostazioni</string>
+    <string name="nav_hint_menu">Premi MENU o sinistra per la barra</string>
 
     <!-- Overlays -->
     <string name="favorites_title">Preferiti</string>
     <string name="history_title">Cronologia</string>
-    <string name="search_hint">Cerca titolo…</string>
-    <string name="empty_favorites">Nessun preferito. Tieni premuto OK su una pagina per aggiungerla.</string>
-    <string name="empty_history">Nessuna cronologia.</string>
+    <string name="search_hint">Cerca film o serie TV…</string>
+    <string name="search_action">Cerca</string>
+    <string name="empty_favorites">Nessun preferito salvato. Tieni premuto OK su un titolo o usa Aggiungi.</string>
+    <string name="empty_history">Nessuna pagina visitata di recente.</string>
+    <string name="add_current_favorite">Aggiungi attuale</string>
+    <string name="clear_history">Svuota</string>
+    <string name="close_dialog">Chiudi</string>
     <string name="open_in_browser">Apri nel browser</string>
     <string name="refresh_domain">Aggiorna dominio</string>
-    <string name="current_domain_label">Dominio attuale</string>
+    <string name="current_domain_label">Dominio attivo</string>
 
     <!-- Skip intro -->
     <string name="skip_intro">Salta intro</string>
 
-    <!-- Loading -->
-    <string name="loading">Caricamento…</string>
-    <string name="reconnecting">Riconnessione al sito…</string>
+    <!-- Loading & Domain Status -->
+    <string name="loading">Connessione al catalogo…</string>
+    <string name="reconnecting">Riconnessione al catalogo…</string>
     <string name="domain_refresh_success">Dominio aggiornato</string>
-    <string name="domain_refresh_failed">Aggiornamento dominio fallito, uso cache locale</string>
-    <string name="load_timeout_retry">Caricamento lento, riprovo…</string>
-    <string name="load_failed_hint">Impossibile caricare il sito. Premi Menu e scegli Ricarica</string>
+    <string name="domain_refresh_failed">Aggiornamento dominio non riuscito, uso cache locale</string>
+    <string name="load_timeout_retry">Caricamento lento, nuovo tentativo…</string>
+    <string name="load_failed_hint">Impossibile raggiungere il sito. Apri il menu laterale e scegli Ricarica</string>
 
-    <!-- Menu -->
-    <string name="menu_favorites">Preferiti</string>
-    <string name="menu_history">Cronologia</string>
-    <string name="menu_resume">Riprendi</string>
-    <string name="menu_reload">Ricarica</string>
-    <string name="menu_home">Home</string>
-    <string name="menu_back">Indietro</string>
-    <string name="menu_settings">Impostazioni</string>
+    <!-- Menu aliases -->
+    <string name="menu_favorites">@string/nav_favorites</string>
+    <string name="menu_history">@string/nav_history</string>
+    <string name="menu_resume">@string/nav_resume</string>
+    <string name="menu_reload">@string/nav_reload</string>
+    <string name="menu_home">@string/nav_home</string>
+    <string name="menu_back">@string/nav_back</string>
+    <string name="menu_settings">@string/nav_settings</string>
 
-    <!-- Riprendi (continue watching) -->
+    <!-- Continue Watching -->
     <string name="resume_chip_prefix">Riprendi da</string>
-    <string name="empty_resume">Nessuna visione in corso. Guarda qualcosa e ritroverai qui il punto in cui eri.</string>
+    <string name="empty_resume">Nessuna visione in corso. Avvia un film o un episodio per ritrovarlo qui.</string>
     <string name="resume_unavailable">Impossibile riprendere, link non valido</string>
-    <string name="resume_question_title">Riprendi la visione?</string>
-    <string name="resume_question_msg">Hai lasciato %1$s al minuto %2$s. Riprendere da lì?</string>
+    <string name="resume_question_title">Riprendere la visione?</string>
+    <string name="resume_question_msg">Hai interrotto %1$s a %2$s. Vuoi continuare da quel punto?</string>
     <string name="resume_yes">Riprendi</string>
     <string name="resume_restart">Ricomincia da capo</string>
 
     <!-- Settings -->
-    <string name="settings_quality_label">Qualità massima video</string>
+    <string name="settings_title">Impostazioni SCtv</string>
+    <string name="settings_quality_label">Qualità massima streaming</string>
     <string name="settings_quality_auto">Auto (fino a 1080p)</string>
     <string name="settings_quality_720">720p (reti lente)</string>
     <string name="settings_quality_480">480p (risparmio dati)</string>
 
-    <!-- Blocco dominio (Cloudflare) -->
-    <string name="domain_blocked_hint">Dominio bloccato da Cloudflare. Riprova più tardi, cambia rete, oppure attiva "User-Agent alternativo" nelle Impostazioni</string>
+    <!-- Cloudflare block -->
+    <string name="domain_blocked_hint">Dominio bloccato da Cloudflare. Attiva User-Agent alternativo nelle Impostazioni oppure cambia rete</string>
 
-    <!-- Settings (UA alternativo) -->
+    <!-- Alternate User-Agent -->
     <string name="settings_ua_label">User-Agent alternativo (anti-blocco)</string>
-    <string name="settings_ua_hint">Usa lo User-Agent di un telefono Android: se il tuo IP o il profilo desktop vengono bloccati da Cloudflare (schermo nero / "Access denied"), questo spesso sblocca. Il sito passa al layout mobile.</string>
+    <string name="settings_ua_hint">Simula Chrome su Android mobile per aggirare eventuali blocchi Cloudflare sul profilo desktop.</string>
     <string name="settings_ua_on">ATTIVO</string>
-    <string name="settings_ua_off">disattivo</string>
+    <string name="settings_ua_off">DISATTIVO</string>
 
-    <!-- Settings (cursor speed) -->
-    <string name="settings_title">Impostazioni</string>
-    <string name="settings_speed_label">Velocità del cursore</string>
-    <string name="settings_speed_value">Velocità: %d</string>
-    <string name="settings_hint">Regola con i tasti sinistra/destra del telecomando, poi premi OK su Salva. Tenendo premuta una direzione il cursore accelera; spingendo contro il bordo alto o basso dello schermo la pagina scorre.</string>
+    <!-- Cursor speed -->
+    <string name="settings_speed_label">Velocità puntatore telecomando</string>
+    <string name="settings_speed_value">Livello %d / 10</string>
+    <string name="settings_hint">Usa Sinistra/Destra sul D-pad per regolare i cursori, poi conferma su Salva.</string>
     <string name="settings_save">Salva</string>
     <string name="settings_cancel">Annulla</string>
-    <string name="settings_saved_toast">Velocità cursore: %d</string>
+    <string name="settings_saved_toast">Impostazioni salvate</string>
 
-    <!-- Menu telefono (touch) -->
-    <string name="phone_menu_title">Menu</string>
+    <!-- Touch / Phone menu -->
+    <string name="phone_menu_title">SCtv Menu</string>
     <string name="phone_menu_exit">Esci dall\'app</string>
-    <string name="phone_menu_report">Segnala errore (log crash)</string>
+    <string name="phone_menu_report">Invia log di errore</string>
     <string name="next_episode_chip">Prossimo episodio</string>
-    <string name="skip_outro_chip">Salta finale ▶</string>
-    <string name="update_chip">Aggiorna SC Viewer — %s</string>
-    <string name="update_downloading">Nuova versione trovata (%s): scaricamento in corso…</string>
-    <string name="update_ready">Aggiornamento scaricato: avvio dell\'installazione…</string>
-    <string name="update_download_failed">Scaricamento aggiornamento fallito — riprova dal chip</string>
-
+    <string name="skip_outro_chip">Salta finale</string>
+    <string name="update_chip">Aggiornamento disponibile · %s</string>
+    <string name="update_downloading">Download aggiornamento %s…</string>
+    <string name="update_ready">Aggiornamento pronto, avvio installazione…</string>
+    <string name="update_download_failed">Download non riuscito, riprova dal badge</string>
 </resources>

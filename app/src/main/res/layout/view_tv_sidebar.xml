@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvSidebarRoot"
+    android:layout_width="@dimen/sctv_rail_collapsed_width"
+    android:layout_height="match_parent"
+    android:layout_gravity="start"
+    android:background="@drawable/bg_sctv_rail"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:elevation="9dp"
+    android:orientation="vertical"
+    android:paddingStart="10dp"
+    android:paddingTop="18dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="18dp">
+
+    <!-- Brand Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_sctv_logo" />
+
+        <TextView
+            android:id="@+id/sidebarBrandTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:letterSpacing="0.04"
+            android:singleLine="true"
+            android:text="@string/app_name"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Primary Navigation Items -->
+    <LinearLayout
+        android:id="@+id/navItemSearch"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusDown="@id/navItemHome"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_search"
+            android:src="@drawable/ic_nav_search" />
+
+        <TextView
+            android:id="@+id/navLabelSearch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_search"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navItemHome"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemSearch"
+        android:nextFocusDown="@id/navItemResume"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_home"
+            android:src="@drawable/ic_nav_home" />
+
+        <TextView
+            android:id="@+id/navLabelHome"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_home"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navItemResume"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemHome"
+        android:nextFocusDown="@id/navItemFavorites"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_resume"
+            android:src="@drawable/ic_nav_resume" />
+
+        <TextView
+            android:id="@+id/navLabelResume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_resume"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navItemFavorites"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemResume"
+        android:nextFocusDown="@id/navItemHistory"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_favorites"
+            android:src="@drawable/ic_nav_favorites" />
+
+        <TextView
+            android:id="@+id/navLabelFavorites"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_favorites"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navItemHistory"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemFavorites"
+        android:nextFocusDown="@id/navItemReload"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_history"
+            android:src="@drawable/ic_nav_history" />
+
+        <TextView
+            android:id="@+id/navLabelHistory"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_history"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp"
+        android:background="@color/sctv_border_subtle" />
+
+    <LinearLayout
+        android:id="@+id/navItemReload"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemHistory"
+        android:nextFocusDown="@id/navItemBack"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_reload"
+            android:src="@drawable/ic_nav_reload" />
+
+        <TextView
+            android:id="@+id/navLabelReload"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_reload"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navItemBack"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemReload"
+        android:nextFocusDown="@id/navItemSettings"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_back"
+            android:src="@drawable/ic_nav_back" />
+
+        <TextView
+            android:id="@+id/navLabelBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_back"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Bottom Settings Item -->
+    <LinearLayout
+        android:id="@+id/navItemSettings"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/sctv_nav_item_height"
+        android:background="@drawable/bg_sctv_nav_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:nextFocusUp="@id/navItemBack"
+        android:nextFocusRight="@id/webView"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/nav_settings"
+            android:src="@drawable/ic_nav_settings" />
+
+        <TextView
+            android:id="@+id/navLabelSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:singleLine="true"
+            android:text="@string/nav_settings"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/sidebarDomainStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:ellipsize="middle"
+        android:paddingStart="12dp"
+        android:paddingEnd="8dp"
+        android:singleLine="true"
+        android:textColor="@color/sctv_text_muted"
+        android:textSize="11sp"
+        android:visibility="gone" />
+</LinearLayout>

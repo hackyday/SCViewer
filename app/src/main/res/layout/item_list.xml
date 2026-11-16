@@ -4,24 +4,52 @@
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:padding="8dp">
+    android:padding="10dp">
 
     <ImageView
         android:id="@+id/itemPoster"
-        android:layout_width="56dp"
-        android:layout_height="84dp"
-        android:background="@color/sc_background_elevated"
+        android:layout_width="54dp"
+        android:layout_height="80dp"
+        android:background="@color/sctv_surface_card_focused"
         android:contentDescription="@null"
         android:scaleType="centerCrop" />
 
-    <TextView
-        android:id="@+id/itemText"
-        style="@style/SCListItem"
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="14dp"
         android:layout_weight="1"
-        android:ellipsize="end"
-        android:maxLines="3"
-        android:textSize="16sp" />
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/itemText"
+            style="@style/SCListItem"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/itemSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="@color/sctv_text_secondary"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <ProgressBar
+            android:id="@+id/itemProgressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:layout_marginTop="8dp"
+            android:max="100"
+            android:progressBackgroundTint="#33FFFFFF"
+            android:progressTint="@color/sctv_accent"
+            android:visibility="gone" />
+    </LinearLayout>
 </LinearLayout>

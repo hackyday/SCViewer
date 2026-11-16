@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="@color/sctv_surface_card_focused" />
+                    <corners android:radius="10dp" />
+                    <stroke android:width="1.5dp" android:color="@color/sctv_accent" />
+                </shape>
+            </item>
+            <item android:gravity="start|center_vertical" android:left="4dp">
+                <shape android:shape="rectangle">
+                    <size android:width="3dp" android:height="22dp" />
+                    <solid android:color="@color/sctv_accent" />
+                    <corners android:radius="2dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/sctv_accent_glow" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/transparent" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</selector>

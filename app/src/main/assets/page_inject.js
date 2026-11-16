@@ -288,6 +288,108 @@
   }
   window.__scvReportPageInfo = function(){ reportPageInfo(true); };
 
+  // ---- 9. Navigazione D-pad spaziale (sito senza mouse) ---------------------
+  // Mappa i candidati focalizzabili del sito (link, card, bottoni, popup
+  // hover) e muove un anello di selezione con l'algoritmo spaziale. Il
+  // fuoco simula anche il mouseover per aprire le card popup del sito, le
+  // cui opzioni diventano candidati a loro volta.
+  (function () {
+    if (window.__sctvNav) return;
+    var RING = 'sctv-dpad-focus';
+    var st = document.createElement('style');
+    st.textContent = '.' + RING + '{outline:none!important;' +
+      'box-shadow:0 0 0 3px #FFFFFF,0 14px 34px rgba(0,0,0,.85)!important;' +
+      'transform:scale(1.06);border-radius:10px;filter:brightness(1.18)}';
+    document.head.appendChild(st);
+
+    var cur = null;
+
+    function candidates() {
+      var out = [];
+      var nodes = document.querySelectorAll(
+        'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var r = el.getBoundingClientRect();
+        if (r.width < 24 || r.height < 12) continue;
+        var cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') continue;
+        if (r.bottom < -60 || r.top > innerHeight + 60 ||
+            r.right < -60 || r.left > innerWidth + 60) continue;
+        out.push(el);
+      }
+      return out;
+    }
+
+    function center(el) {
+      var r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+
+    function setFocus(el) {
+      if (cur && cur !== el) {
+        cur.classList.remove(RING);
+        try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+      }
+      cur = el;
+      if (!el) return;
+      el.classList.add(RING);
+      try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e) {}
+    }
+
+    function firstVisible() {
+      var cands = candidates(), best = null, bd = Infinity;
+      for (var i = 0; i < cands.length; i++) {
+        var c = center(cands[i]);
+        var d = Math.abs(c.y - innerHeight / 2) + Math.abs(c.x - innerWidth / 2) * 0.3;
+        if (d < bd) { bd = d; best = cands[i]; }
+      }
+      return best;
+    }
+
+    function move(dir) {
+      var cands = candidates();
+      if (!cands.length) return dir === 'left' ? 'edge' : false;
+      if (!cur || !document.contains(cur)) {
+        setFocus(firstVisible());
+        return true;
+      }
+      var from = center(cur), best = null, bs = Infinity;
+      for (var i = 0; i < cands.length; i++) {
+        var el = cands[i];
+        if (el === cur) continue;
+        var c = center(el);
+        var dx = c.x - from.x, dy = c.y - from.y;
+        var ok = false, primary = 0, ortho = 0;
+        if (dir === 'right' && dx > 12) { ok = true; primary = dx; ortho = Math.abs(dy); }
+        else if (dir === 'left' && dx < -12) { ok = true; primary = -dx; ortho = Math.abs(dy); }
+        else if (dir === 'down' && dy > 12) { ok = true; primary = dy; ortho = Math.abs(dx); }
+        else if (dir === 'up' && dy < -12) { ok = true; primary = -dy; ortho = Math.abs(dx); }
+        if (ok) { var sc = primary + ortho * 2.6; if (sc < bs) { bs = sc; best = el; } }
+      }
+      if (best) { setFocus(best); return true; }
+      // nessun candidato nella direzione: su/giù scorrono la pagina
+      if (dir === 'down' || dir === 'up') {
+        window.scrollBy({ top: (dir === 'down' ? 1 : -1) * innerHeight * 0.66, behavior: 'smooth' });
+        return true;
+      }
+      return dir === 'left' ? 'edge' : false;
+    }
+
+    function activate() {
+      if (!cur) { setFocus(firstVisible()); return; }
+      var tag = cur.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { cur.focus(); return; }
+      cur.click();
+    }
+
+    window.__sctvNav = { move: move, activate: activate };
+  })();
+
   // First load: report quickly, then again in case the router settled late.
   setTimeout(reportPageInfo, 500);
   setTimeout(reportPageInfo, 2500);

@@ -2,163 +2,117 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/sc_background">
+    android:background="@color/sctv_bg_obsidian">
 
+    <!-- Main WebView shifted right by collapsed sidebar width on TV -->
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_marginStart="@dimen/sctv_rail_collapsed_width"
         android:focusable="true"
         android:focusableInTouchMode="true" />
 
-    <!-- Top status strip: domain + menu hint -->
+    <!-- Collapsible D-pad Sidebar Rail (TV) -->
+    <include
+        layout="@layout/view_tv_sidebar" />
+
+    <!-- Floating Top Domain Status Pill -->
     <LinearLayout
         android:id="@+id/topStrip"
-        android:layout_width="match_parent"
-        android:layout_height="36dp"
-        android:layout_gravity="top"
-        android:orientation="horizontal"
-        android:background="#AA000000"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
+        android:layout_width="wrap_content"
+        android:layout_height="34dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="20dp"
+        android:background="@drawable/bg_sctv_chip"
+        android:elevation="9dp"
         android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
         android:visibility="gone">
+
+        <View
+            android:layout_width="7dp"
+            android:layout_height="7dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/ic_sctv_logo" />
 
         <TextView
             android:id="@+id/domainLabel"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="@color/sc_text_secondary"
-            android:textSize="12sp"
-            android:singleLine="true"
-            android:ellipsize="middle" />
-
-        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="@color/sc_text_hint"
-            android:textSize="12sp"
-            android:text="@string/menu_home" />
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textColor="@color/sctv_text_secondary"
+            android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- Loading overlay -->
+    <!-- Studio Loading Overlay -->
     <FrameLayout
         android:id="@+id/loadingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/sc_background"
+        android:background="@color/sctv_bg_obsidian"
+        android:elevation="12dp"
         android:visibility="gone">
 
-        <ProgressBar
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="center"
-            android:indeterminateTint="@color/sc_accent" />
-
-        <TextView
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:layout_marginTop="48dp"
-            android:text="@string/loading"
-            android:textColor="@color/sc_text_secondary"
-            android:textSize="14sp" />
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginBottom="16dp"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/ic_sctv_logo" />
+
+            <ProgressBar
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:indeterminateTint="@color/sctv_accent" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="@string/loading"
+                android:textColor="@color/sctv_text_secondary"
+                android:textSize="14sp" />
+        </LinearLayout>
     </FrameLayout>
 
-    <!-- Skip intro button (bottom-right, focusable). elevation: deve
-         stare SOPRA la custom view del video fullscreen (che viene
-         aggiunta dopo al content root e senza elevation la coprirebbe). -->
+    <!-- Skip Intro Floating Pill -->
     <FrameLayout
         android:id="@+id/skipIntroContainer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_margin="24dp"
-        android:elevation="10dp"
+        android:elevation="11dp"
         android:visibility="gone">
 
         <Button
             android:id="@+id/skipIntroButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/bg_sctv_button_primary"
+            android:clickable="true"
+            android:focusable="true"
             android:minWidth="@dimen/skip_button_width"
             android:minHeight="@dimen/skip_button_height"
-            android:backgroundTint="@color/sc_accent"
-            android:textColor="@color/sc_text_primary"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:text="@string/skip_intro"
-            android:focusable="true"
-            android:clickable="true" />
+            android:textAllCaps="false"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold" />
     </FrameLayout>
-
-    <!-- Bottom menu bar -->
-    <LinearLayout
-        android:id="@+id/menuBar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
-        android:layout_margin="16dp"
-        android:orientation="horizontal"
-        android:background="@drawable/overlay_rounded"
-        android:elevation="10dp"
-        android:padding="4dp"
-        android:visibility="gone">
-
-        <Button
-            android:id="@+id/menuBtnHome"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_home"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnFavorites"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_favorites"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnHistory"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_history"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnResume"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_resume"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnReload"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_reload"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnBack"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_back"
-            android:textColor="@color/sc_text_primary" />
-
-        <Button
-            android:id="@+id/menuBtnSettings"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackground"
-            android:text="@string/menu_settings"
-            android:textColor="@color/sc_text_primary" />
-    </LinearLayout>
 
 </FrameLayout>

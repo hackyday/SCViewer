@@ -3,23 +3,27 @@ package com.scviewer.fire
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.ComponentCallbacks2
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.scviewer.fire.BuildConfig
 import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.HistoryStore
@@ -36,6 +40,7 @@ import com.scviewer.fire.ui.OverlayDialog
 import com.scviewer.fire.ui.OverlayItem
 import com.scviewer.fire.ui.SettingsDialog
 import com.scviewer.fire.ui.SkipIntroController
+import com.scviewer.fire.ui.TvSidebarController
 import com.scviewer.fire.web.JsInterface
 import com.scviewer.fire.web.SCWebChromeClient
 import com.scviewer.fire.web.SCWebViewClient
@@ -53,52 +58,28 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private lateinit var topStrip: LinearLayout
     private lateinit var domainLabel: TextView
     private lateinit var loadingOverlay: View
-    private lateinit var menuBar: LinearLayout
     private lateinit var skipIntroController: SkipIntroController
     private lateinit var cursorCtl: CursorController
+    private lateinit var sidebarCtl: TvSidebarController
     private lateinit var jsBridge: JsInterface
     private lateinit var resumeChip: TextView
 
-    /** True while a film is being watched (reported by the video agent
-     *  running inside the player iframe). While set, D-pad left/right seeks
-     *  and the cursor auto-hides after a few idle seconds. */
     @Volatile private var cinemaMode = false
-
-    /** Page state from the site's Inertia data (reported by page_inject.js on
-     *  every navigation): which show, movie/series, season/episode. */
     @Volatile private var currentPageInfo: PageInfo? = null
-
-    /** Playback position last reported by the video agent (seconds). */
     @Volatile private var lastVideoPos = 0
     @Volatile private var lastVideoDur = 0
-
-    /** Set when the user picks "Riprendi": titleId -> position to seek to
-     *  once the video actually starts (native cannot push into the cross-
-     * origin player iframe; the video agent polls for the seek command). */
     @Volatile private var pendingResume: Pair<Int, Int>? = null
 
-    /** titleId the resume chip was already shown for on the current page. */
     private var resumeChipShownFor = 0
-
-    /** The modal dialog currently on screen (favorites / history / resume /
-     *  settings / resume-question), if any. While one is up, D-pad keys go to
-     *  its native focus and cursor taps are routed to its window. */
     private var activeDialog: Dialog? = null
-
     private var updateChip: TextView? = null
 
-    /** Telefono/tablet (touchscreen presente) vs Fire TV: sul telefono il
-     *  cursore virtuale non esiste e c'è il pulsante menu touch. */
     private val isTouchDevice by lazy {
         packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
     }
-    private lateinit var phoneMenuButton: TextView
+    private lateinit var phoneMenuButton: ImageView
 
-    /** Uptime of the last D-pad interaction — drives cursor auto-hide. */
     private var lastDpadAt = 0L
-
-    /** Generation counter for the delayed "video really stopped" check, so a
-     *  brief buffering stall doesn't flap the cursor back and forth. */
     private var videoOffGeneration = 0
 
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -109,48 +90,19 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private val progress: ProgressStore by lazy { ProgressStore.get(this) }
 
     private val handler = Handler(Looper.getMainLooper())
-
-    /** Lenient parser for the PageInfo JSON coming from the page bridge. */
     private val pageJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** Consecutive failed main-frame loads. Each failure triggers one
-     *  domain refresh + reload until this hits zero; without the cap a dead
-     *  domain produces a loadUrl storm (dozens of navigations per second)
-     *  that hammers the CDN and starves the renderer on a 1 GB stick. */
     private var loadRetriesLeft = MAX_LOAD_RETRIES
-
-    /** Guards the single automatic reload after a load timeout. */
     private var autoReloadUsed = false
-
-    /** Percorso (relativo) da aprire al primo load, passato via intent. */
-    private var pendingOpenUrl: String? = null
-
-    /** Recovery rimasti per pagine di blocco Cloudflare (403/503/429 o pagina
-     *  "Attention Required"): ogni recovery consuma un retry, cambia mirror
-     *  e dopo 2 tentativi passa all'UA alternativo. Si azzera su una pagina
-     *  del sito caricata pulita — così un blocco isolato non ammazza il cap. */
     private var blockRecoveriesLeft = MAX_BLOCK_RECOVERIES
-
-    /** UA alternativo (Chrome Android) attivato automaticamente dopo N blocchi
-     *  o forzato dall'impostazione "UA alternativo". Vale per la sessione. */
     private var autoUaFallback = false
-
-    /** Una sola recovery alla volta: evita stacked retry su trigger multipli
-     *  (HTTP error + titolo blocco + JS bridge) per la stessa pagina. */
     private var recovering = false
 
-    /** Auto-aggiornamento: tag rilevato (per il chip) e guard del download. */
     private var updateTag: String? = null
     private var autoUpdateRunning = false
 
-    /** Fires when the main frame hasn't finished loading within
-     *  [LOAD_TIMEOUT_MS] — WebView has no built-in load timeout, and a hung
-     *  load otherwise leaves the opaque loading overlay up forever (black
-     *  screen, nothing clickable). */
     private val loadTimeoutRunnable = Runnable { onMainLoadTimeout() }
 
-    /** Holding OK longer than the system long-press timeout opens favorites;
-     *  a short press clicks with the virtual mouse cursor instead. */
     private val okLongPressRunnable = Runnable {
         okLongPressFired = true
         showFavorites()
@@ -163,39 +115,27 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         bindViews()
         configureWebView()
-        bindMenuButtons()
+        bindSidebar()
 
-        // Schedule the 30-min periodic domain refresh here (rather than in
-        // App.onCreate) so WorkManager's Configuration.Provider has a chance
-        // to wire up first. Safe to call multiple times — enqueueUniquePeriodic
-        // work uses ExistingPeriodicWorkPolicy.KEEP.
         try {
             DomainRefreshScheduler.schedule(this)
         } catch (t: Throwable) {
-            Log.w(TAG, "WorkManager scheduling failed; periodic domain refresh disabled", t)
+            Log.w(TAG, "WorkManager scheduling failed", t)
         }
 
-        // URL da aprire direttamente (es. dall'interfaccia TV prototipo).
-        pendingOpenUrl = intent?.getStringExtra("open_url")
-
-        // Initial one-shot domain refresh (VibraVid-style: runs on every app launch).
         mainScope.launch { refreshAndLoad() }
 
-        // Qualità HLS scelta dall'utente (1080 di default).
         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
-        // Blocklist annunci fresca ad ogni avvio (il worker dei 30 minuti
-        // resta come refresher in background).
-        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        mainScope.launch(Dispatchers.IO) {
             runCatching { AdBlocker.get(this@MainActivity).syncFromGitHub() }
         }
-        // Controllo nuove release GitHub (throttle 12 h).
         checkForUpdates()
     }
 
-    // -- Controllo aggiornamenti ----------------------------------------------
+    // -- Updates --------------------------------------------------------------
 
     private fun checkForUpdates() {
-        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        mainScope.launch(Dispatchers.IO) {
             val prefs = getSharedPreferences("scviewer_updates", MODE_PRIVATE)
             val last = prefs.getLong("last_check", 0L)
             if (System.currentTimeMillis() - last < 12 * 3600_000L) return@launch
@@ -216,13 +156,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }.getOrNull() ?: return@launch
             prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
             val current = "v" + BuildConfig.VERSION_NAME
-            Log.i(TAG, "update check: latest=$latest current=$current")
             if (latest.isNotBlank() && latest != current) {
-                Log.i(TAG, "update disponibile: $latest (attuale $current)")
                 runOnUiThread { showUpdateChip(latest) }
-                // Scarico e propongo l'installazione SOLO se latest è davvero
-                // più recente (un confronto a stringhe uguale/diversa basta
-                // per il chip, non per avviare il downloader).
                 if (isVersionNewer(latest, current)) {
                     runOnUiThread { startAutoUpdate(latest) }
                 }
@@ -230,8 +165,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    /** Confronta due tag "vX.Y.Z": true solo se [latest] è strettamente più
-     *  recente di [current]. */
     private fun isVersionNewer(latest: String, current: String): Boolean {
         fun nums(v: String) = v.removePrefix("v").split('.').let {
             (it.getOrNull(0)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L) * 1_000_000L +
@@ -241,11 +174,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         return runCatching { nums(latest) > nums(current) }.getOrDefault(false)
     }
 
-    /** Scarica l'APK della [tag] nel cache dir e lancia il package installer
-     *  di sistema: la conferma finale resta all'utente ("Installa/Annulla").
-     *  Dati e impostazioni sopravvivono all'aggiornamento. Se il film è in
-     *  riproduzione il popup va evitato: lo scaricamento parte comunque dal
-     *  chip, il prompt no. */
     private fun startAutoUpdate(tag: String) {
         if (tag.isBlank()) return
         updateTag = tag
@@ -253,7 +181,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         autoUpdateRunning = true
         val url = "https://github.com/hackyday/SCViewer/releases/download/$tag/app-release.apk"
         showToast(getString(R.string.update_downloading, tag))
-        mainScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        mainScope.launch(Dispatchers.IO) {
             val ok = runCatching {
                 val client = okhttp3.OkHttpClient.Builder()
                     .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
@@ -261,24 +189,18 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     if (!resp.isSuccessful) error("HTTP ${resp.code}")
                     val dst = java.io.File(cacheDir, "update-$tag.apk")
                     dst.parentFile?.mkdirs()
-                    dst.outputStream().use { out ->
-                        resp.body!!.byteStream().copyTo(out)
-                    }
-                    // Sanity check: un APK valido inizia con "PK".
+                    dst.outputStream().use { out -> resp.body!!.byteStream().copyTo(out) }
                     dst.length() > 100_000L &&
                         dst.inputStream().use { ins -> ins.read() == 'P'.code && ins.read() == 'K'.code }
                 }
             }.getOrDefault(false)
             autoUpdateRunning = false
             if (!ok) {
-                Log.w(TAG, "auto-update download fallito: $url")
                 runOnUiThread { showToast(getString(R.string.update_download_failed)) }
                 return@launch
             }
-            Log.i(TAG, "auto-update: APK scaricato per $tag")
             runOnUiThread {
                 if (cinemaMode) {
-                    Log.i(TAG, "film in riproduzione: installazione rimandata al chip")
                     showToast(getString(R.string.update_ready))
                     return@runOnUiThread
                 }
@@ -288,7 +210,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    /** Apre il package installer di sistema sull'APK scaricato. */
     private fun launchInstaller(tag: String) {
         runCatching {
             val apk = java.io.File(cacheDir, "update-$tag.apk")
@@ -304,24 +225,24 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     )
                 }
             )
-        }.onFailure { Log.w(TAG, "installer non avviato", it) }
+        }.onFailure { Log.w(TAG, "installer failed", it) }
     }
 
     private fun showUpdateChip(version: String) {
         val content = findViewById<FrameLayout>(android.R.id.content)
+        val density = resources.displayMetrics.density
         updateChip = TextView(this).apply {
             text = getString(R.string.update_chip, version)
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 15f
+            setTextColor(0xFFF5F7FA.toInt())
+            textSize = 14f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setBackgroundResource(R.drawable.overlay_rounded)
-            val pad = (10 * resources.displayMetrics.density).toInt()
-            setPadding(pad * 2, pad, pad * 2, pad)
-            elevation = 10f * resources.displayMetrics.density
+            setBackgroundResource(R.drawable.bg_sctv_chip)
+            val padH = (16 * density).toInt()
+            val padV = (9 * density).toInt()
+            setPadding(padH, padV, padH, padV)
+            elevation = 10f * density
             isClickable = true
             isFocusable = true
-            // Scarica e apre l'installer di sistema (il download dal browser
-            // resta come fallback via menu: qui è tutto in-app).
             setOnClickListener { startAutoUpdate(updateTag ?: "") }
         }
         content.addView(
@@ -331,56 +252,51 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP or android.view.Gravity.START
             ).apply {
-                topMargin = (24 * resources.displayMetrics.density).toInt()
-                marginStart = (24 * resources.displayMetrics.density).toInt()
+                topMargin = (20 * density).toInt()
+                marginStart = (88 * density).toInt()
             }
         )
     }
+
+    // -- View Binding & Sidebar -----------------------------------------------
 
     private fun bindViews() {
         webView = findViewById(R.id.webView)
         topStrip = findViewById(R.id.topStrip)
         domainLabel = findViewById(R.id.domainLabel)
         loadingOverlay = findViewById(R.id.loadingOverlay)
-        menuBar = findViewById(R.id.menuBar)
 
         val skipContainer = findViewById<FrameLayout>(R.id.skipIntroContainer)
         val skipButton = findViewById<Button>(R.id.skipIntroButton)
         skipIntroController = SkipIntroController(skipContainer, skipButton) { jsBridge.requestSkipIntro() }
 
-        // Virtual mouse cursor, attached to the activity's content root so it
-        // floats above the WebView. Elevation keeps it on top even when other
-        // views (fullscreen video, overlays) are re-added at runtime.
-        // NOT attached on phones/tablets: there the site is used with direct
-        // touch and the pointer would just get in the way (no D-pad exists).
         cursorCtl = CursorController(
             this, webView,
             findViewById<FrameLayout>(android.R.id.content)
         )
-        // While a dialog is on screen, cursor taps must land on the dialog's
-        // own window (the WebView below is hidden behind it and dead).
         cursorCtl.overlayTargetProvider = {
             activeDialog?.window?.decorView
                 ?: findViewById<FrameLayout>(android.R.id.content)
         }
-        if (!isTouchDevice) {
-            cursorCtl.attach()
-            cursorCtl.show()
+        cursorCtl.onLeftEdgeTrigger = {
+            if (!isTouchDevice && !cinemaMode) {
+                sidebarCtl.focusSidebar()
+            }
         }
 
-        // Telefono/tablet: pulsante menu flottante (Touch) — da qui si
-        // apre il menu touch (Home, Preferiti, Cronologia, Riprendi…).
-        if (isTouchDevice) {
+        if (!isTouchDevice) {
+            cursorCtl.attach()
+        } else {
+            // Touch device: full-bleed WebView + floating studio menu trigger
+            (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
+            findViewById<View>(R.id.tvSidebarRoot).visibility = View.GONE
+
             val density = resources.displayMetrics.density
-            phoneMenuButton = TextView(this).apply {
-                text = "☰"
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = 22f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setBackgroundResource(R.drawable.overlay_rounded)
-                gravity = android.view.Gravity.CENTER
+            phoneMenuButton = ImageView(this).apply {
+                setImageResource(R.drawable.ic_menu)
+                scaleType = ImageView.ScaleType.CENTER
+                setBackgroundResource(R.drawable.bg_sctv_chip)
                 elevation = 10f * density
-                val side = (48 * density).toInt()
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { showPhoneMenu() }
@@ -397,18 +313,17 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             )
         }
 
-        // "Riprendi" chip (top-right): offered when the user lands on a page
-        // of a show whose playback position we remember.
         val density = resources.displayMetrics.density
         resumeChip = TextView(this).apply {
             visibility = View.GONE
             text = getString(R.string.resume_chip_prefix)
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 16f
+            setTextColor(0xFFF5F7FA.toInt())
+            textSize = 15f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setBackgroundResource(R.drawable.overlay_rounded)
-            val pad = (10 * density).toInt()
-            setPadding(pad * 2, pad, pad * 2, pad)
+            setBackgroundResource(R.drawable.bg_sctv_chip)
+            val padH = (18 * density).toInt()
+            val padV = (10 * density).toInt()
+            setPadding(padH, padV, padH, padV)
             elevation = 10f * density
             isClickable = true
             isFocusable = true
@@ -420,14 +335,44 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP or android.view.Gravity.END
-            ).apply { topMargin = (24 * density).toInt(); marginEnd = (24 * density).toInt() }
+            ).apply {
+                topMargin = (20 * density).toInt()
+                marginEnd = (24 * density).toInt()
+            }
+        )
+    }
+
+    private fun bindSidebar() {
+        val sidebarRoot = findViewById<LinearLayout>(R.id.tvSidebarRoot)
+        sidebarCtl = TvSidebarController(
+            root = sidebarRoot,
+            onSearch = { showSearchDialog() },
+            onHome = { mainScope.launch { loadHome() } },
+            onResume = { showResumeDialog() },
+            onFavorites = { showFavorites() },
+            onHistory = { showHistory() },
+            onReload = { webView.reload() },
+            onBack = { if (webView.canGoBack()) webView.goBack() },
+            onSettings = {
+                SettingsDialog(
+                    this,
+                    onSaved = { _ ->
+                        HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+                        applyUserAgent()
+                    },
+                    onActiveChange = { d -> activeDialog = d }
+                ).show()
+            },
+            onExpandedChanged = { expanded ->
+                if (!isTouchDevice && expanded) {
+                    cursorCtl.hide()
+                }
+            }
         )
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
-        // Chrome DevTools over ADB (chrome://inspect / adb forward) for
-        // debugging the live page on the stick.
         if (BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
@@ -438,16 +383,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 databaseEnabled = true
                 allowFileAccess = false
                 allowContentAccess = false
-                mediaPlaybackRequiresUserGesture = false  // autoplay allowed
+                mediaPlaybackRequiresUserGesture = false
                 loadWithOverviewMode = true
                 useWideViewPort = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-
-                // Disable geolocation, never used by the legit streaming site.
                 setGeolocationEnabled(false)
-
-                // Desktop Chrome di default; UA alternativo (Chrome Android)
-                // se impostato dall'utente o attivato dai recovery di blocco.
                 applyUserAgent()
             }
 
@@ -458,24 +398,29 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 callback = object : SCWebChromeClient.FullscreenCallback {
                     override fun onFullscreenEntered() {
                         topStrip.visibility = View.GONE
+                        sidebarCtl.setCinemaHidden(true)
+                        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
                         cursorCtl.hide()
                     }
 
                     override fun onFullscreenExited() {
                         topStrip.visibility = View.GONE
-                        cursorCtl.show()
+                        if (!isTouchDevice) {
+                            (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
+                                resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
+                            sidebarCtl.setCinemaHidden(false)
+                        }
                     }
                 }
             )
 
-            // JS bridge — must be added before the first page loads so
-            // page_inject.js can find it on first run.
             jsBridge = JsInterface(
-                onSkipIntro = { available -> runOnUiThread {
-                    // Il chip solo se siamo su una pagina watch.
-                    val isWatch = webView.url?.contains("/watch/") == true
-                    skipIntroController.setAvailable(available && isWatch)
-                } },
+                onSkipIntro = { available ->
+                    runOnUiThread {
+                        val isWatch = webView.url?.contains("/watch/") == true
+                        skipIntroController.setAvailable(available && isWatch)
+                    }
+                },
                 onAdBlockHit = { host -> adBlocker.addRuntime(host) },
                 onVideoState = { active -> runOnUiThread { onVideoStateChanged(active) } },
                 onPageInfo = { json -> runOnUiThread { onPageInfoChanged(json) } },
@@ -483,10 +428,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 onPosterFound = { tid, url -> runOnUiThread { PosterCache.put(this@MainActivity, tid, url) } },
                 onCloudflareBlock = { runOnUiThread { recoverFromBlock("JS block page") } },
                 onPlayClicked = { tid ->
-                    // JS bridge thread — synchronous verdict. "resume" makes
-                    // the page hold the navigation while the popup asks.
-                    // NOTE: this@MainActivity — inside webView.apply the
-                    // unqualified `progress` is WebView.getProgress()!
                     val p = if (tid != 0) this@MainActivity.progress.get(tid) else null
                     if (p != null && p.isResumeable() && activeDialog == null) {
                         runOnUiThread { showResumeQuestion(p) }
@@ -498,23 +439,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             )
             addJavascriptInterface(jsBridge, "AndroidJs")
 
-            // The streaming player lives inside the vixcloud IFRAME, which
-            // evaluateJavascript (main frame only) cannot reach. Register the
-            // video agent to run at document start in EVERY frame so it can
-            // watch the player's <video> and apply play/pause commands from
-            // the remote. Fallback for unsupported WebViews: the agent is
-            // also evaluated in the main frame on every onPageFinished
-            // (see SCWebViewClient).
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    // Video agent (every frame) + early banner hide, so the
-                    // Telegram bar never paints at all.
                     val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
                     val earlyHide = assets.open("early_hide.js").bufferedReader().use { it.readText() }
                     WebViewCompat.addDocumentStartJavaScript(this, agent + "\n" + earlyHide, setOf("*"))
-                    Log.i(TAG, "video agent + early-hide registered for all frames")
-                } else {
-                    Log.w(TAG, "DOCUMENT_START_SCRIPT unsupported — agent limited to main frame")
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "video agent registration failed", t)
@@ -522,66 +451,20 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    private fun bindMenuButtons() {
-        findViewById<Button>(R.id.menuBtnHome).setOnClickListener {
-            closeMenu()
-            mainScope.launch { loadHome() }
-        }
-        findViewById<Button>(R.id.menuBtnFavorites).setOnClickListener {
-            closeMenu()
-            showFavorites()
-        }
-        findViewById<Button>(R.id.menuBtnHistory).setOnClickListener {
-            closeMenu()
-            showHistory()
-        }
-        findViewById<Button>(R.id.menuBtnResume).setOnClickListener {
-            closeMenu()
-            showResumeDialog()
-        }
-        findViewById<Button>(R.id.menuBtnReload).setOnClickListener {
-            closeMenu()
-            webView.reload()
-        }
-        findViewById<Button>(R.id.menuBtnBack).setOnClickListener {
-            closeMenu()
-            if (webView.canGoBack()) webView.goBack()
-        }
-        findViewById<Button>(R.id.menuBtnSettings).setOnClickListener {
-            closeMenu()
-            SettingsDialog(this, onSaved = { _ -> }, onActiveChange = { d -> activeDialog = d }).show()
-        }
-    }
-
-    // -- Domain + initial load -----------------------------------------------
-    //
-    // Load order matters on a TV: the site must appear ASAP. The cached
-    // domain is loaded IMMEDIATELY; the online refresh (up to ~12 s when
-    // GitHub is slow) runs in parallel and only matters when the cached
-    // domain turns out to be dead — that case is handled by the capped
-    // retry in [onPageError].
+    // -- Domain & Navigation --------------------------------------------------
 
     private suspend fun refreshAndLoad() {
         showLoading(true)
-        // After a renderer crash the activity is recreated — restore the
-        // page the user was on instead of jumping back to home.
         val recovery = rendererRecoveryUrl
         rendererRecoveryUrl = null
-        val loadedUrl = recovery
-            ?: pendingOpenUrl?.also { pendingOpenUrl = null }
-            ?: withContext(Dispatchers.IO) { domainRepo.currentDomain() }
-        Log.i(TAG, "initial load: $loadedUrl")
+        val loadedUrl = recovery ?: withContext(Dispatchers.IO) { domainRepo.currentDomain() }
         webView.loadUrl(loadedUrl)
         updateDomainLabel()
 
         val result = domainRepo.refreshOnline()
         result.onSuccess { fresh ->
             showToast(getString(R.string.domain_refresh_success))
-            // If the fresh domain differs and the initial load already died
-            // (retries exhausted or timed out), give the new domain a chance.
-            val current = withContext(Dispatchers.IO) { domainRepo.currentDomain() }
             if (fresh != loadedUrl && loadRetriesLeft <= 0) {
-                Log.i(TAG, "fresh domain after failed load: $fresh")
                 loadRetriesLeft = 1
                 webView.loadUrl(fresh)
                 updateDomainLabel()
@@ -592,25 +475,17 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     private suspend fun loadHome() {
-        // loadCandidate: primo dominio non segnato fallito — dopo un blocco
-        // "Ricarica"/"Home" dal menu non ritorna sul dominio morto.
         val url = withContext(Dispatchers.IO) { domainRepo.loadCandidate() }
-        Log.i(TAG, "load home/candidate: $url")
         webView.loadUrl(url)
         updateDomainLabel()
     }
 
-    /** Applica lo UA scelto: alternativo (Chrome Android) se impostato
-     *  dall'utente o attivato automaticamente dai recovery di blocco,
-     *  desktop Chrome altrimenti. Chiamare PRIMA di un load. */
     private fun applyUserAgent() {
         val alt = autoUaFallback || SettingsStore.getAlternateUa(this)
         webView.settings.userAgentString =
             if (alt) SCWebViewClient.ALTERNATE_UA else SCWebViewClient.DESKTOP_UA
-        Log.i(TAG, "UA: ${if (alt) "alternate (Android)" else "desktop"}")
     }
 
-    /** Titolo/text riconducibile a una pagina di blocco anti-bot. */
     private fun looksLikeBlockPage(text: String?): Boolean {
         val t = (text ?: "").lowercase()
         return listOf(
@@ -620,34 +495,24 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         ).any { t.contains(it) }
     }
 
-    /** Percorso di recovery condiviso: blocco HTTP o pagina anti-bot.
-     *  Segna il dominio fallito, (dopo 2 blocchi) passa all'UA alternativo,
-     *  prova un refresh dei domini e ricarica sul mirror successivo.
-     *  Il cap [MAX_BLOCK_RECOVERIES] impedisce loop infiniti. */
     private fun recoverFromBlock(reason: String) {
         if (recovering || blockRecoveriesLeft <= 0) return
         recovering = true
         blockRecoveriesLeft--
-        Log.w(TAG, "recover from block ($reason), recoveries left: $blockRecoveriesLeft")
         showLoading(true)
         handler.postDelayed({
             mainScope.launch {
                 try {
-                    // Dopo 2 blocchi consecutivi lo UA desktop è likely
-                    // fingerprintato: passa a Chrome Android per la sessione.
                     if (blockRecoveriesLeft <= MAX_BLOCK_RECOVERIES - 2 && !autoUaFallback) {
                         autoUaFallback = true
                         applyUserAgent()
                     }
-                    // webView.url è legale SOLO sul main thread: catturalo qui.
                     val failedUrl = webView.url ?: domainRepo.currentDomain()
                     withContext(Dispatchers.IO) {
                         domainRepo.markDomainFailed(failedUrl)
-                        domainRepo.refreshOnline()   // best effort: anche se GitHub non risponde si va sul mirror
+                        domainRepo.refreshOnline()
                     }
-                    loadHome()  // loadCandidate: salta i domini falliti
-                } catch (t: Throwable) {
-                    Log.e(TAG, "block recovery failed", t)
+                    loadHome()
                 } finally {
                     recovering = false
                 }
@@ -657,11 +522,14 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun updateDomainLabel() {
         val url = domainRepo.currentDomain()
-        val host = android.net.Uri.parse(url).host ?: url
-        domainLabel.text = "› $host"
+        val host = Uri.parse(url).host ?: url
+        domainLabel.text = host
+        if (::sidebarCtl.isInitialized) {
+            sidebarCtl.setDomainText(host)
+        }
     }
 
-    // -- PageListener --------------------------------------------------------
+    // -- PageListener ---------------------------------------------------------
 
     override fun onPageStarted(url: String?) {
         showLoading(true)
@@ -673,38 +541,26 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     override fun onPageLoaded(url: String, title: String) {
-        Log.i(TAG, "page loaded: $url (title: $title)")
         handler.removeCallbacks(loadTimeoutRunnable)
         showLoading(false)
-        // Una pagina di blocco anti-bot arriva QUI (onPageFinished scatta
-        // anche per lei): in quel caso NON azzerare i cap — la recovery
-        // parte subito e il titolo sintetico la smaschera.
         if (looksLikeBlockPage(title)) {
             recoverFromBlock("block page title: $title")
             return
         }
-        // Pagina vera del sito: il blocco è finito, ripristina i budget.
         blockRecoveriesLeft = MAX_BLOCK_RECOVERIES
         loadRetriesLeft = MAX_LOAD_RETRIES
         autoReloadUsed = false
-        // History is recorded by onPageInfoChanged — it knows the REAL show
-        // name and which pages are worth remembering (document.title here is
-        // just "StreamingCommunity" for every page).
         resumeChip.visibility = View.GONE
     }
 
     override fun onPageError(errorCode: Int, description: String) {
-        Log.i(TAG, "page error $errorCode ($description), retries left: $loadRetriesLeft")
         handler.removeCallbacks(loadTimeoutRunnable)
         if (errorCode == ERROR_NAME_NOT_RESOLVED || errorCode == ERROR_CONNECT_FAILED) {
             if (loadRetriesLeft > 0) {
                 loadRetriesLeft--
                 showLoading(true)
-                // Single delayed retry — never a tight loop. Il dominio
-                // fallito viene segnato: il reload passerà al mirror dopo.
                 handler.postDelayed({
                     mainScope.launch {
-                        // webView.url solo dal main thread.
                         val failedUrl = webView.url ?: domainRepo.currentDomain()
                         withContext(Dispatchers.IO) {
                             domainRepo.markDomainFailed(failedUrl)
@@ -723,13 +579,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     override fun onHttpError(statusCode: Int) {
-        // The WebView renders the error body itself (e.g. a Cloudflare block
-        // page); the overlay must go so the user can actually see it.
-        Log.i(TAG, "page HTTP error: $statusCode")
         handler.removeCallbacks(loadTimeoutRunnable)
-        // 403/503/429 e i 52x di Cloudflare sono RECUPERABILI: retry con
-        // cambio mirror (e UA alternativo dopo 2 blocchi). Gli altri status
-        // mantengono il comportamento originale (solo overlay via).
         val recoverable = statusCode == 403 || statusCode == 503 || statusCode == 429 ||
             statusCode in 520..527
         if (recoverable && loadRetriesLeft > 0) {
@@ -744,51 +594,48 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     override fun onRenderGone() {
-        // See SCWebViewClient.onRenderProcessGone — recreate the activity,
-        // which rebuilds the WebView, cursor and controllers from scratch.
-        Log.e(TAG, "renderer gone -> recreating activity")
         rendererRecoveryUrl = webView.url
         cinemaMode = false
         recreate()
     }
 
-    // -- Cinema mode (film watching) ------------------------------------------
+    // -- Cinema Mode ----------------------------------------------------------
 
-    /** Called from the JsInterface callback (already hopped to the UI thread). */
     private fun onVideoStateChanged(active: Boolean) {
         if (active) {
             val wasOff = !cinemaMode
-            videoOffGeneration++                       // cancel any pending off-check
+            videoOffGeneration++
             if (wasOff) {
                 cinemaMode = true
-                Log.i(TAG, "cinema mode ON (cursor auto-hides when idle)")
                 handler.removeCallbacks(cursorAutoHideRunnable)
                 handler.postDelayed(cursorAutoHideRunnable, CURSOR_HIDE_AFTER_MS)
-                // Sul telefono il pulsante ☰ sparisce durante il film
-                // (come i player: schermo pulito) e torna a video fermo.
-                if (isTouchDevice) phoneMenuButton.visibility = View.GONE
-                // "Riprendi" in flight? Jump to the saved position now that
-                // the video is actually running.
+                if (isTouchDevice) {
+                    phoneMenuButton.visibility = View.GONE
+                } else {
+                    sidebarCtl.setCinemaHidden(true)
+                    (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart = 0
+                }
                 if (pendingResume != null) pushPendingResumeSeek()
             }
         } else {
-            // Debounce: buffering stalls flap the state; only leave cinema
-            // mode after the video has been gone for a moment.
             val gen = ++videoOffGeneration
             handler.postDelayed({
                 if (gen == videoOffGeneration && cinemaMode) {
                     cinemaMode = false
-                    Log.i(TAG, "cinema mode OFF (cursor back)")
                     handler.removeCallbacks(cursorAutoHideRunnable)
-                    cursorCtl.show()
-                    if (isTouchDevice) phoneMenuButton.visibility = View.VISIBLE
+                    cursorCtl.hide()
+                    if (isTouchDevice) {
+                        phoneMenuButton.visibility = View.VISIBLE
+                    } else {
+                        (webView.layoutParams as? FrameLayout.LayoutParams)?.marginStart =
+                            resources.getDimensionPixelSize(R.dimen.sctv_rail_collapsed_width)
+                        sidebarCtl.setCinemaHidden(false)
+                    }
                 }
             }, VIDEO_OFF_CONFIRM_MS)
         }
     }
 
-    /** While in cinema mode, hides the cursor a few seconds after the last
-     *  D-pad interaction. */
     private val cursorAutoHideRunnable = object : Runnable {
         override fun run() {
             if (!cinemaMode) return
@@ -801,38 +648,25 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    // -- Riprendi (continue watching) -----------------------------------------
+    // -- Progress & Page Info -------------------------------------------------
 
-    /** Called from the JsInterface callback (UI thread): the Inertia page
-     *  state changed — the user navigated to a new page of the site. */
     private fun onPageInfoChanged(json: String) {
         val info = runCatching { pageJson.decodeFromString<PageInfo>(json) }.getOrNull() ?: return
         if (info.titleId == 0) return
-        val prev = currentPageInfo
         currentPageInfo = info
 
-        // A pending resume that doesn't match the page the user actually went
-        // to is stale — drop it (they aborted the resume).
         pendingResume?.let { (tid, _) -> if (tid != info.titleId) pendingResume = null }
 
-        // Poster: title pages carry the full images array — cache it so
-        // watch pages (that often omit it) can reuse it everywhere.
         info.poster?.takeIf { it.isNotBlank() }
             ?.let { PosterCache.put(this, info.titleId, it) }
 
-        // History: record only meaningful pages, with the REAL show name (the
-        // document title alone is just "StreamingCommunity"). Watch pages get
-        // the season/episode suffix so the list is actually usable.
         val url = webView.url ?: return
         val poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, info.titleId)
         when {
             info.isWatchPage -> history.add(url, info.displayLabel(), poster)
             info.isTitlePage -> history.add(url, info.name, poster)
-            else -> {} // home / genres / search: not history-worthy
         }
 
-        // Resume chip: only on title/watch pages of a show we have progress
-        // for, once per page, and not when a resume is already in flight.
         val p = progress.get(info.titleId)
         if (p != null && p.isResumeable() && pendingResume == null &&
             resumeChipShownFor != info.titleId &&
@@ -844,34 +678,22 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 p.positionLabel() + (if (tag.isNotEmpty()) " ($tag)" else "")
             resumeChip.visibility = View.VISIBLE
             resumeChip.bringToFront()
-            Log.i(TAG, "resume chip shown for ${info.name} at ${p.positionLabel()}")
         } else if (p == null || pendingResume != null) {
             resumeChip.visibility = View.GONE
         }
-        if (prev?.titleId != info.titleId) Log.i(TAG, "page info: $info")
     }
 
-    /** Called from the JsInterface callback (UI thread) ~every 10 s while a
-     *  film plays (and once when it pauses). */
     private fun onVideoProgress(posSec: Int, durSec: Int) {
-        runCatching { onVideoProgressInner(posSec, durSec) }
-            .onFailure { Log.e(TAG, "onVideoProgress failed", it) }
-    }
-
-    private fun onVideoProgressInner(posSec: Int, durSec: Int) {
         lastVideoPos = posSec
         lastVideoDur = durSec
-        // Chips solo se il WebView è davvero su una pagina watch.
         if (webView.url?.contains("/watch/") != true) {
-            hideAutoNext(); hideOutro()
+            hideAutoNext()
+            hideOutro()
             return
         }
 
-        // Seek confirmation: once playback is near the requested resume
-        // position, the resume is fulfilled.
         pendingResume?.let { (tid, target) ->
             if (tid == currentPageInfo?.titleId && kotlin.math.abs(posSec - target) < 20) {
-                Log.i(TAG, "resume seek confirmed at $posSec")
                 pendingResume = null
             }
         }
@@ -889,7 +711,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 episodeName = info.episodeName,
                 positionSec = posSec,
                 durationSec = durSec,
-                // Relativo (path+query): sopravvive ai cambi di dominio del sito.
                 url = SiteUrl.relativeOf(webView.url) ?: "",
                 poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, info.titleId),
                 updatedAt = System.currentTimeMillis()
@@ -899,26 +720,21 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         maybeShowNextEpisodeOrOutro(posSec, durSec)
     }
 
-    // -- Prossimo episodio / Skip outro ---------------------------------------
-    //
-    // Serie: quando restano < 90 s e la pagina dichiara un prossimo
-    // episodio, chip con countdown 10 s che naviga automaticamente
-    // (tap sul chip = salta subito, ✕ = annulla). Film (nessun prossimo
-    // episodio): chip "Salta finale" che salta ai crediti.
+    // -- Next Episode & Outro Chips -------------------------------------------
 
     private var nextEpisodeChip: TextView? = null
-    private var nextEpisodeCancel: TextView? = null
+    private var nextEpisodeCancel: ImageView? = null
     private var outroChip: TextView? = null
     private var autoNextTick: Runnable? = null
     private var autoNextShownFor: Int = 0
 
     private fun maybeShowNextEpisodeOrOutro(posSec: Int, durSec: Int) {
         val info = currentPageInfo ?: return
-        if (!info.isWatchPage || durSec < 120) { hideAutoNext(); hideOutro(); return }
-        // ISTERESI: un chip già visibile non viene mai nascosto dai report
-        // successivi (la posizione reale può rientrare/sfuoriuscire dalla
-        // finestra per buffering/seek — il chip deve restare stabile). La
-        // scomparsa avviene solo per: pagina cambiata, ✕, countdown a 0.
+        if (!info.isWatchPage || durSec < 120) {
+            hideAutoNext()
+            hideOutro()
+            return
+        }
         if (nextEpisodeChip != null || outroChip != null) return
         val remaining = durSec - posSec
         if (info.nextEpisodeId != null && remaining <= NEXT_EPISODE_WINDOW_SEC) {
@@ -933,25 +749,24 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             autoNextShownFor = info.titleId
             showOutroChip(durSec)
         } else {
-            hideAutoNext(); hideOutro()
+            hideAutoNext()
+            hideOutro()
         }
     }
 
-    /** Chip generico ancorato in basso a destra sopra l'area player.
-     *  NOTA: il content root va preso FUORI dall'apply — dentro un
-     *  TextView.apply, findViewById si risolverebbe sul TextView e
-     *  android.R.id.content sarebbe null (NPE a chip visibile). */
     private fun makeChip(text: String, bottomDp: Int, onClick: View.OnClickListener): TextView {
         val content = findViewById<FrameLayout>(android.R.id.content)
+        val density = resources.displayMetrics.density
         return TextView(this).apply {
             this.text = text
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 16f
+            setTextColor(0xFFF5F7FA.toInt())
+            textSize = 15f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setBackgroundResource(R.drawable.overlay_rounded)
-            val pad = (10 * resources.displayMetrics.density).toInt()
-            setPadding(pad * 2, pad, pad * 2, pad)
-            elevation = 10f * resources.displayMetrics.density
+            setBackgroundResource(R.drawable.bg_sctv_chip)
+            val padH = (18 * density).toInt()
+            val padV = (10 * density).toInt()
+            setPadding(padH, padV, padH, padV)
+            elevation = 10f * density
             isClickable = true
             isFocusable = true
             setOnClickListener(onClick)
@@ -961,7 +776,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     android.view.Gravity.BOTTOM or android.view.Gravity.END
-                ).apply { bottomMargin = (bottomDp * resources.displayMetrics.density).toInt() }
+                ).apply {
+                    bottomMargin = (bottomDp * density).toInt()
+                    marginEnd = (24 * density).toInt()
+                }
             )
         }
     }
@@ -969,20 +787,43 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private fun showAutoNextChip(info: PageInfo) {
         hideAutoNext()
         val content = findViewById<FrameLayout>(android.R.id.content)
+        val density = resources.displayMetrics.density
         val label = getString(R.string.next_episode_chip) +
             (info.nextEpisodeTag().takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "")
 
-        val goNow = View.OnClickListener { hideAutoNext(); goNextEpisode(info) }
-        val chip = makeChip("", 96, goNow)
+        val chip = makeChip("", 96) { hideAutoNext(); goNextEpisode(info) }
         nextEpisodeChip = chip
-        // ✕ di annullamento, piccolo, sopra il chip principale
-        nextEpisodeCancel = makeChip("✕", 160) { hideAutoNext() }.apply { textSize = 13f }
+
+        val cancelBtn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_close)
+            scaleType = ImageView.ScaleType.CENTER
+            setBackgroundResource(R.drawable.bg_sctv_chip)
+            elevation = 10f * density
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { hideAutoNext() }
+        }
+        content.addView(
+            cancelBtn,
+            FrameLayout.LayoutParams(
+                (38 * density).toInt(), (38 * density).toInt(),
+                android.view.Gravity.BOTTOM or android.view.Gravity.END
+            ).apply {
+                bottomMargin = (148 * density).toInt()
+                marginEnd = (24 * density).toInt()
+            }
+        )
+        nextEpisodeCancel = cancelBtn
 
         var seconds = 10
         val tick = object : Runnable {
             override fun run() {
-                if (nextEpisodeChip !== chip) return          // annullato/gone
-                if (seconds <= 0) { hideAutoNext(); goNextEpisode(info); return }
+                if (nextEpisodeChip !== chip) return
+                if (seconds <= 0) {
+                    hideAutoNext()
+                    goNextEpisode(info)
+                    return
+                }
                 chip.text = "$label · ${seconds}s"
                 seconds--
                 autoNextTick = this
@@ -991,15 +832,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
         autoNextTick = tick
         handler.post(tick)
-        Log.i(TAG, "auto-next shown for ${info.name} (${info.nextEpisodeTag()})")
     }
 
     private fun goNextEpisode(info: PageInfo) {
         val eid = info.nextEpisodeId ?: return
         val link = SiteUrl.resolve("/it/watch/${info.titleId}?e=$eid", domainRepo.currentDomain()) ?: return
-        Log.i(TAG, "auto-next -> $link")
         hideAutoNext()
-        // Segna l'episodio come finito: "Riprendi" non lo ripropone.
         progress.get(info.titleId)?.let {
             progress.save(it.copy(positionSec = it.durationSec, updatedAt = System.currentTimeMillis()))
         }
@@ -1017,11 +855,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun showOutroChip(durSec: Int) {
         if (outroChip?.visibility == View.VISIBLE) return
-        val content = findViewById<FrameLayout>(android.R.id.content)
-        outroChip = makeChip(getString(R.string.skip_outro_chip), 96, View.OnClickListener {
+        outroChip = makeChip(getString(R.string.skip_outro_chip), 96) {
             hideOutro()
-            jsBridge.requestSeekTo(durSec - 15)   // salta ai crediti
-        }).also { it.bringToFront() }
+            jsBridge.requestSeekTo(durSec - 15)
+        }.also { it.bringToFront() }
     }
 
     private fun hideOutro() {
@@ -1029,17 +866,49 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         outroChip = null
     }
 
-    /** User picked a resume entry: reload its watch URL (RISCRITTO sul
-     *  dominio corrente — i record legacy puntavano al vecchio dominio) and
-     *  remember where to seek once the video is running. */
+    // -- Dialogs: Search, Resume, Favorites, History --------------------------
+
+    private fun showSearchDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_search, null)
+        val dlg = android.app.AlertDialog.Builder(this, R.style.SCOverlay)
+            .setView(view)
+            .create()
+        val input = view.findViewById<EditText>(R.id.searchInput)
+
+        fun executeSearch() {
+            val query = input.text?.toString()?.trim().orEmpty()
+            dlg.dismiss()
+            if (query.isNotBlank()) {
+                val base = domainRepo.currentDomain().trimEnd('/')
+                val encoded = Uri.encode(query)
+                webView.loadUrl("$base/it/archive?search=$encoded")
+            }
+        }
+
+        view.findViewById<Button>(R.id.searchCancel).setOnClickListener { dlg.dismiss() }
+        view.findViewById<Button>(R.id.searchSubmit).setOnClickListener { executeSearch() }
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                executeSearch()
+                true
+            } else {
+                false
+            }
+        }
+
+        activeDialog = dlg
+        dlg.setOnDismissListener { activeDialog = null }
+        dlg.show()
+        dlg.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+        input.requestFocus()
+    }
+
     private fun startResume(p: WatchProgress) {
-        Log.i(TAG, "resume -> ${p.name} ${p.seasonEpisodeTag()} at ${p.positionLabel()}")
         val link = p.resolveUrl(domainRepo.currentDomain())
         if (link != null) {
             pendingResume = p.titleId to p.positionSec
             resumeChip.visibility = View.GONE
-            resumeChipShownFor = p.titleId   // don't re-offer what we just started
-            Log.i(TAG, "resume url: $link (saved: ${p.url})")
+            resumeChipShownFor = p.titleId
             webView.loadUrl(link)
         } else {
             showToast(getString(R.string.resume_unavailable))
@@ -1052,8 +921,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         startResume(p)
     }
 
-    /** "Guarda" clicked on a title we have progress for: ask whether to
-     *  continue from the saved minute or start over. */
     private fun showResumeQuestion(p: WatchProgress) {
         val tag = p.seasonEpisodeTag()
         val name = p.name + (if (tag.isNotEmpty()) " · $tag" else "")
@@ -1064,25 +931,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             .setNeutralButton(R.string.resume_restart) { _, _ ->
                 progress.remove(p.titleId)
                 resumeChip.visibility = View.GONE
-                // Let the original navigation proceed to the play page.
-                webView.evaluateJavascript(
-                    "(window.__scvContinuePlay&&window.__scvContinuePlay());", null
-                )
+                webView.evaluateJavascript("(window.__scvContinuePlay&&window.__scvContinuePlay());", null)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
         activeDialog = dlg
         dlg.setOnDismissListener { activeDialog = null }
         dlg.show()
-        // Default focus on "Riprendi" — the safe choice. (AlertDialog would
-        // otherwise land on a different button, and accidentally confirming
-        // "Ricomincia da capo" would throw the saved position away.)
         dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.requestFocus()
     }
 
-    /** Fires after the video started playing following a "Riprendi": push the
-     *  seek a few times (the player may still be buffering when the first
-     *  command lands) until a progress report confirms it. */
     private fun pushPendingResumeSeek() {
         val (tid, target) = pendingResume ?: return
         if (tid != currentPageInfo?.titleId) return
@@ -1091,16 +949,17 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         handler.postDelayed({ if (pendingResume != null) jsBridge.requestSeekTo(target) }, 8000)
     }
 
-    /** "Riprendi" dialog: everything in progress, most recent first. */
     private fun showResumeDialog() {
         val entries = progress.resumeable()
         val items = entries.map { p ->
             val tag = p.seasonEpisodeTag()
+            val pct = if (p.durationSec > 0) ((p.positionSec * 100) / p.durationSec).coerceIn(1, 99) else 0
             OverlayItem(
                 title = p.name + (if (tag.isNotEmpty()) " · $tag" else ""),
-                subtitle = "riprendi da ${p.positionLabel()}",
+                subtitle = "Riprendi da ${p.positionLabel()}",
                 tag = p.titleId.toString(),
-                imageUrl = p.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, p.titleId)
+                imageUrl = p.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, p.titleId),
+                progressPercent = pct
             )
         }
         val byId = entries.associateBy { it.titleId.toString() }
@@ -1115,19 +974,56 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         ).show()
     }
 
-    /** Menu touch per telefoni/tablet (cursore virtuale assente lì). */
+    private fun showFavorites() {
+        val items = favorites.all().map {
+            val pid = SiteUrl.titleIdOf(it.url)
+            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
+        }
+        OverlayDialog(
+            context = this,
+            title = getString(R.string.favorites_title),
+            items = items,
+            emptyMessage = getString(R.string.empty_favorites),
+            onItemClick = { item ->
+                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let { webView.loadUrl(it) }
+            },
+            onAddCurrent = {
+                val url = webView.url ?: return@OverlayDialog
+                val title = currentPageInfo?.takeIf { it.titleId != 0 }?.displayLabel()
+                    ?: (webView.title ?: url)
+                val poster = currentPageInfo?.poster ?: currentPageInfo?.titleId?.let { PosterCache.get(this, it) }
+                favorites.add(url, title, poster)
+                showToast("Aggiunto ai preferiti")
+            },
+            onActiveChange = { d -> activeDialog = d }
+        ).show()
+    }
+
+    private fun showHistory() {
+        val items = history.all().map {
+            val pid = SiteUrl.titleIdOf(it.url)
+            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
+            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
+        }
+        OverlayDialog(
+            context = this,
+            title = getString(R.string.history_title),
+            items = items,
+            emptyMessage = getString(R.string.empty_history),
+            onItemClick = { item ->
+                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let { webView.loadUrl(it) }
+            },
+            onAddCurrent = null,
+            onActiveChange = { d -> activeDialog = d }
+        ).show()
+    }
+
     private fun showPhoneMenu() {
         val view = layoutInflater.inflate(R.layout.dialog_phone_menu, null)
         val dlg = android.app.AlertDialog.Builder(this, R.style.SCOverlay)
             .setView(view)
             .create()
-        // AlertDialog con setView collassa al minimo: larghezza esplicita.
-        dlg.setOnShowListener {
-            dlg.window?.setLayout(
-                (resources.displayMetrics.widthPixels * 0.82).toInt(),
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT
-            )
-        }
         activeDialog = dlg
         dlg.setOnDismissListener { activeDialog = null }
 
@@ -1149,46 +1045,14 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         view.findViewById<View>(R.id.phoneMenuExit).setOnClickListener {
             dlg.dismiss(); finishAffinity()
         }
-        // Diagnostica: se l'app è crashata, consenti di condividere lo stack
-        // salvato (i telefoni non hanno ADB come gli stick).
-        val crashFile = filesDir.resolve("last_crash.txt")
-        if (crashFile.exists()) {
-            val reportBtn = TextView(this).apply {
-                text = getString(R.string.phone_menu_report)
-                setTextColor(0xFFFF9800.toInt())
-                textSize = 15f
-                val pad = (12 * resources.displayMetrics.density).toInt()
-                setPadding(pad, pad / 2, pad, pad / 2)
-                gravity = android.view.Gravity.CENTER
-                setOnClickListener {
-                    dlg.dismiss()
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, crashFile.readText())
-                        putExtra(android.content.Intent.EXTRA_SUBJECT, "SC Viewer crash log")
-                    }
-                    runCatching {
-                        startActivity(android.content.Intent.createChooser(send, "Segnala errore"))
-                    }
-                }
-            }
-            (view as? android.view.ViewGroup)?.addView(
-                reportBtn,
-                android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            )
-        }
         dlg.show()
         dlg.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.82).toInt(),
-            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            WindowManager.LayoutParams.WRAP_CONTENT
         )
     }
 
     private fun onMainLoadTimeout() {
-        Log.i(TAG, "main-frame load timed out after ${LOAD_TIMEOUT_MS}ms")
         showLoading(false)
         if (!autoReloadUsed) {
             autoReloadUsed = true
@@ -1199,120 +1063,59 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
     }
 
-    // -- Overlays ------------------------------------------------------------
-
-    private fun showFavorites() {
-        val items = favorites.all().map {
-            val pid = SiteUrl.titleIdOf(it.url)
-            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
-            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
-        }
-        val dialog = OverlayDialog(
-            context = this,
-            title = getString(R.string.favorites_title),
-            items = items,
-            emptyMessage = getString(R.string.empty_favorites),
-            onItemClick = { item ->
-                // Rimonta il path salvato sul dominio CORRENTE: i link
-                // salvati con un vecchio dominio continuano a funzionare.
-                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let {
-                    webView.loadUrl(it)
-                }
-            },
-            onAddCurrent = {
-                val url = webView.url ?: return@OverlayDialog
-                // Prefer the real show name from the page bridge; the
-                // document title is just "StreamingCommunity".
-                val title = currentPageInfo?.takeIf { it.titleId != 0 }?.displayLabel()
-                    ?: (webView.title ?: url)
-                favorites.add(url, title)
-                Toast.makeText(this, "Aggiunto ai preferiti", Toast.LENGTH_SHORT).show()
-            },
-            onActiveChange = { d -> activeDialog = d }
-        )
-        dialog.show()
-    }
-
-    private fun showHistory() {
-        val items = history.all().map {
-            val pid = SiteUrl.titleIdOf(it.url)
-            val poster = it.poster?.takeIf { it.isNotBlank() } ?: pid?.let { tid -> PosterCache.get(this, tid) }
-            OverlayItem(title = it.title, subtitle = "", tag = it.url, imageUrl = poster)
-        }
-        val dialog = OverlayDialog(
-            context = this,
-            title = getString(R.string.history_title),
-            items = items,
-            emptyMessage = getString(R.string.empty_history),
-            onItemClick = { item ->
-                // Rimonta il path salvato sul dominio CORRENTE.
-                SiteUrl.resolve(item.tag, domainRepo.currentDomain())?.let {
-                    webView.loadUrl(it)
-                }
-            },
-            onAddCurrent = null,
-            onActiveChange = { d -> activeDialog = d }
-        )
-        dialog.show()
-    }
-
-    // -- Fire TV remote key handling -----------------------------------------
-    //
-    // The D-pad now drives a virtual mouse cursor (CursorController):
-    //   arrows          → move the pointer (smooth acceleration while held)
-    //   OK / Enter      → click at the pointer; held → open favorites
-    //   MENU (hamburger)→ toggle the bottom menu bar (native focus inside it)
-    //   BACK            → close menu / web history back / exit
-    //   Rewind/Fwd keys → scroll the page (handy for long catalogues)
-    //
-    // We intercept in dispatchKeyEvent because it sees every event of the
-    // activity window before any view, and because Android drops D-pad events
-    // entirely whenever no view has focus (which happens after menu/dialog
-    // close) — the cursor must never depend on view focus.
+    // -- D-Pad & Remote Key Handling ------------------------------------------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val action = event.action
         val keyCode = event.keyCode
 
         if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN) {
-            if (isMenuOpen()) closeMenu() else openMenu()
-            return true
+            if (!isTouchDevice) {
+                if (sidebarCtl.isExpanded) {
+                    sidebarCtl.collapse()
+                    webView.requestFocus()
+                } else {
+                    sidebarCtl.focusSidebar()
+                }
+                return true
+            }
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
-            if (isMenuOpen()) {
-                closeMenu()
+            if (!isTouchDevice && sidebarCtl.isExpanded) {
+                sidebarCtl.collapse()
+                webView.requestFocus()
                 return true
             }
             if (webView.canGoBack()) {
                 webView.goBack()
                 return true
             }
-            return super.dispatchKeyEvent(event)   // default: leave the app
+            return super.dispatchKeyEvent(event)
         }
 
-        // While the menu bar or a modal dialog is open, the native focus
-        // system walks it (menu buttons / list rows / dialog buttons) — the
-        // virtual cursor must not steal the keys.
-        if (activeDialog != null || isMenuOpen()) return super.dispatchKeyEvent(event)
+        // Let Android's native D-pad focus engine handle modal dialogs and the expanded sidebar
+        if (activeDialog != null || (!isTouchDevice && sidebarCtl.isExpanded)) {
+            if (!isTouchDevice && sidebarCtl.isExpanded &&
+                keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && action == KeyEvent.ACTION_DOWN
+            ) {
+                sidebarCtl.collapse()
+                webView.requestFocus()
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
 
-        // Any D-pad touch counts as "user is interacting" for cursor auto-hide.
-        if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
-            keyCode in DPAD_KEYS
-        ) {
+        if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && keyCode in DPAD_KEYS) {
             lastDpadAt = android.os.SystemClock.uptimeMillis()
         }
 
-        // -- Cinema mode: a film is playing and the cursor is hidden ----------
-        // Any D-pad press brings the cursor back so the player's options can
-        // be reached with the pointer (it re-hides after a few idle seconds).
         if (cinemaMode && !cursorCtl.isActive()) {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP,
                 KeyEvent.KEYCODE_DPAD_DOWN,
                 KeyEvent.KEYCODE_DPAD_LEFT,
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    // Reveal the cursor AND process the press as a move.
                     cursorCtl.show()
                     if (action == KeyEvent.ACTION_DOWN) {
                         cursorCtl.onDirectionDown(keyCode, event.repeatCount)
@@ -1323,8 +1126,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 }
 
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    // First OK only reveals the cursor — no blind click at an
-                    // unknown position. Subsequent OKs click normally.
                     if (action == KeyEvent.ACTION_DOWN) cursorCtl.show()
                     return true
                 }
@@ -1337,9 +1138,22 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (action == KeyEvent.ACTION_DOWN) {
-                    cursorCtl.onDirectionDown(keyCode, event.repeatCount)
-                } else if (action == KeyEvent.ACTION_UP) {
-                    cursorCtl.onDirectionUp(keyCode)
+                    val dir = when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_UP -> "up"
+                        KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                        KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                        else -> "right"
+                    }
+                    webView.evaluateJavascript(
+                        "window.__sctvNav?__sctvNav.move('$dir'):'false'"
+                    ) { result ->
+                        // Bordo sinistro del sito → apre la sidebar.
+                        if (dir == "left" && result?.contains("edge") == true) {
+                            runOnUiThread {
+                                if (!sidebarCtl.isExpanded) sidebarCtl.focusSidebar()
+                            }
+                        }
+                    }
                 }
                 return true
             }
@@ -1349,27 +1163,19 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 if (action == KeyEvent.ACTION_DOWN) {
                     if (event.repeatCount == 0) {
                         okLongPressFired = false
-                        // 600 ms: comfortably above a natural OK tap (so
-                        // every normal press clicks) but still a snappy
-                        // long-press for the favorites overlay.
                         handler.postDelayed(okLongPressRunnable, FAVORITES_HOLD_MS)
                     }
                 } else if (action == KeyEvent.ACTION_UP) {
                     handler.removeCallbacks(okLongPressRunnable)
-                    Log.i(TAG, "OK up -> cursor click (longPressFired=$okLongPressFired)")
-                    // NOTE: no visibility gating here — a stuck overlay must
-                    // never silently eat OK presses. If something is genuinely
-                    // covering the screen the tap is harmless anyway.
                     if (!okLongPressFired) {
-                        cursorCtl.click()
+                        webView.evaluateJavascript(
+                            "window.__sctvNav?__sctvNav.activate():'false'", null
+                        )
                     }
                 }
                 return true
             }
 
-            // Remote play/pause key toggles the film's <video> (via the JS
-            // bridge — the player lives inside the vixcloud iframe). Harmless
-            // on catalogue pages: with no active video the request expires.
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
@@ -1379,18 +1185,15 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                 return true
             }
 
-            // Optional playback keys (present on some Fire TV remotes):
-            // fling the page up/down like a swipe (flingScroll is a public
-            // WebView API — View.smoothScrollBy is hidden and NOT callable).
             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                 if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     webView.flingScroll(0, -PAGE_SCROLL_FLING)
                 }
                 return true
             }
+
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                 if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    // Forward in cinema mode = salta intro (l'agente gestisce il resto)
                     if (cinemaMode) {
                         jsBridge.requestSkipIntro()
                     } else {
@@ -1403,29 +1206,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         return super.dispatchKeyEvent(event)
     }
 
-    // -- Menu bar ------------------------------------------------------------
-
-    private fun isMenuOpen(): Boolean = menuBar.visibility == View.VISIBLE
-
-    private fun openMenu() {
-        menuBar.visibility = View.VISIBLE
-        cursorCtl.hide()
-        // Keep D-pad traversal inside the bar: without this the focus could
-        // wander into the WebView where nothing is reachable.
-        webView.isFocusable = false
-        findViewById<Button>(R.id.menuBtnHome).requestFocus()
-        menuBar.postDelayed({
-            if (isMenuOpen() && !menuBar.hasFocus()) closeMenu()
-        }, MENU_AUTO_HIDE_MS)
-    }
-
-    private fun closeMenu() {
-        menuBar.visibility = View.GONE
-        webView.isFocusable = true
-        cursorCtl.show()
-    }
-
-    // -- Lifecycle -----------------------------------------------------------
+    // -- Lifecycle ------------------------------------------------------------
 
     override fun onPause() {
         super.onPause()
@@ -1436,8 +1217,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     override fun onResume() {
         super.onResume()
         webView.onResume()
-        // VibraVid-style: refresh domain every time we come back to foreground
-        // in case the WorkManager cycle hasn't fired in a while.
         mainScope.launch { domainRepo.refreshOnline() }
         updateDomainLabel()
     }
@@ -1455,15 +1234,10 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // The stick has ~900 MB total; the system LMK kills us without any
-        // crash log when memory runs dry. Free what we can when asked.
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            Log.i(TAG, "onTrimMemory($level) -> clearing WebView RAM cache")
             webView.clearCache(false)
         }
     }
-
-    // -- Helpers -------------------------------------------------------------
 
     private fun showLoading(show: Boolean) {
         loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
@@ -1475,37 +1249,18 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     companion object {
         private const val TAG = "MainActivity"
-        /** Page to restore after a renderer crash (survives recreate()). */
         @Volatile private var rendererRecoveryUrl: String? = null
-        private const val MENU_AUTO_HIDE_MS = 4500L
-        /** OK hold time that opens favorites (short press = cursor click).
-         *  750 ms: a deliberately slow OK press (~400-600 ms on Fire TV
-         *  remotes) still counts as a click; only a true hold opens
-         *  favorites. */
         private const val FAVORITES_HOLD_MS = 750L
-        /** Fling velocity (px/s) for the Rewind / Fast-forward page scroll. */
         private const val PAGE_SCROLL_FLING = 1800
-
-        /** Finestra (secondi rimanenti) per proporre il prossimo episodio. */
         private const val NEXT_EPISODE_WINDOW_SEC = 90
-        /** Finestra per il chip "Salta finale" (film). */
         private const val OUTRO_WINDOW_SEC = 120
-        /** Max automatic domain-refresh+reload cycles per failed load. */
         private const val MAX_LOAD_RETRIES = 3
-        /** Cooldown between automatic retries. */
         private const val RETRY_DELAY_MS = 3000L
-        /** Recovery per pagine di blocco (Cloudflare 403/503/429 o interstitial). */
         private const val MAX_BLOCK_RECOVERIES = 4
-        /** WebView has no load timeout of its own — this is ours. */
         private const val LOAD_TIMEOUT_MS = 25_000L
-
-        /** android.webkit.WebViewClient legacy error codes. */
         private const val ERROR_NAME_NOT_RESOLVED = -2
         private const val ERROR_CONNECT_FAILED = -6
-
-        /** Hide the cursor this long after the last D-pad press in cinema mode. */
         private const val CURSOR_HIDE_AFTER_MS = 4000L
-        /** Video must be gone this long before cinema mode actually ends. */
         private const val VIDEO_OFF_CONFIRM_MS = 2500L
 
         private val DPAD_KEYS = setOf(

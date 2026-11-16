@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/sc_background_overlay">
+
+    <LinearLayout
+        android:layout_width="520dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_sctv_card"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            style="@style/SCTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            android:text="@string/nav_search" />
+
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_sctv_button_ghost"
+            android:hint="@string/search_hint"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:singleLine="true"
+            android:textColor="@color/sctv_text_primary"
+            android:textColorHint="@color/sctv_text_muted"
+            android:textSize="16sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/searchCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/bg_sctv_button_ghost"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="@string/settings_cancel"
+                android:textAllCaps="false"
+                android:textColor="@color/sctv_text_secondary" />
+
+            <Button
+                android:id="@+id/searchSubmit"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_sctv_button_primary"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:text="@string/search_action"
+                android:textAllCaps="false"
+                android:textColor="@color/sctv_text_primary" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

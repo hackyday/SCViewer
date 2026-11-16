@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <dimen name="overlay_width">480dp</dimen>
-    <dimen name="overlay_corner">12dp</dimen>
-    <dimen name="overlay_padding">16dp</dimen>
-    <dimen name="list_item_height">56dp</dimen>
-    <dimen name="skip_button_width">160dp</dimen>
-    <dimen name="skip_button_height">48dp</dimen>
+    <dimen name="sctv_rail_collapsed_width">68dp</dimen>
+    <dimen name="sctv_rail_expanded_width">228dp</dimen>
+    <dimen name="sctv_nav_item_height">46dp</dimen>
+
+    <dimen name="overlay_width">560dp</dimen>
+    <dimen name="overlay_corner">14dp</dimen>
+    <dimen name="overlay_padding">22dp</dimen>
+    <dimen name="list_item_height">72dp</dimen>
+    <dimen name="skip_button_width">168dp</dimen>
+    <dimen name="skip_button_height">46dp</dimen>
     <dimen name="banner_width">320dp</dimen>
     <dimen name="banner_height">180dp</dimen>
 </resources>

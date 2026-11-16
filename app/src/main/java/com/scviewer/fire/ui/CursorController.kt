@@ -44,6 +44,9 @@ class CursorController(
     private val container: FrameLayout
 ) {
 
+    /** Invoked when the user pushes DPAD_LEFT while already at the left screen edge. */
+    var onLeftEdgeTrigger: (() -> Unit)? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private var cursor: ImageView? = null
 
@@ -343,6 +346,11 @@ class CursorController(
             val maxX = max(container.width - cursorW, 0f)
             val maxY = max(container.height - cursorH, 0f)
             x = x.coerceIn(0f, maxX)
+            if (dir == KeyEvent.KEYCODE_DPAD_LEFT && x <= 1f && heldMs > 180L) {
+                stopLoop()
+                onLeftEdgeTrigger?.invoke()
+                return
+            }
             y = y.coerceIn(0f, maxY)
             applyPosition()
 
