@@ -477,7 +477,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     if (!document.getElementById('sctv-dpad-style')) {
       var st = document.createElement('style');
       st.id = 'sctv-dpad-style';
-      st.textContent = '.sctv-dpad-focus{outline:none!important;filter:brightness(1.25)}' +
+      st.textContent = '.sctv-dpad-focus{outline:none!important}' +
         '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
       (document.documentElement || document.head).appendChild(st);
     }
@@ -486,8 +486,7 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
       fr.id = 'sctv-dpad-frame';
       fr.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
         'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
-        'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
-        'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+        'box-shadow:0 0 0 5px rgba(229,9,20,.55)';
       (document.documentElement || document.body).appendChild(fr);
     }
   } catch (e) {}
@@ -707,6 +706,38 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     }
                 }
             }, VIDEO_OFF_CONFIRM_MS)
+        }
+    }
+
+    // -- Nav spaziale: coda a un posto ---------------------------------------
+    // Ogni evaluateJavascript su un WebView occupato può mettersi in coda:
+    // con i repeat del telecomando la coda cresce e l'anello arriva in
+    // ritardo di secondi. Qui al massimo una move è in volo e una in coda.
+    private var navMoveInFlight = false
+    private var navMoveQueued: String? = null
+
+    private fun sendNavMove(dir: String) {
+        if (navMoveInFlight) {
+            navMoveQueued = dir
+            return
+        }
+        navMoveInFlight = true
+        webView.evaluateJavascript(
+            "window.__sctvNav?__sctvNav.move('$dir'):'false'"
+        ) { result ->
+            navMoveInFlight = false
+            Log.d("SCTV_NAV", "move($dir) -> $result")
+            // Bordo sinistro del sito → apre la sidebar.
+            if (dir == "left" && result?.contains("edge") == true) {
+                runOnUiThread {
+                    if (!sidebarCtl.isOpen && !immersivePage) sidebarCtl.open()
+                }
+            }
+            val q = navMoveQueued
+            if (q != null) {
+                navMoveQueued = null
+                sendNavMove(q)
+            }
         }
     }
 
@@ -1231,24 +1262,17 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                         cursorCtl.onDirectionUp(keyCode)
                     }
                 } else if (action == KeyEvent.ACTION_DOWN) {
-                    // Navigazione spaziale D-pad sul sito.
-                    val dir = when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_UP -> "up"
-                        KeyEvent.KEYCODE_DPAD_DOWN -> "down"
-                        KeyEvent.KEYCODE_DPAD_LEFT -> "left"
-                        else -> "right"
-                    }
-                    webView.evaluateJavascript(
-                        "window.__sctvNav?__sctvNav.move('$dir'):'false'"
-                    ) { result ->
-                        Log.d("SCTV_NAV", "move($dir) -> $result")
-                        // Bordo sinistro del sito → apre la sidebar.
-                        if (dir == "left" && result?.contains("edge") == true) {
-                            runOnUiThread {
-                                if (!sidebarCtl.isOpen && !immersivePage) sidebarCtl.open()
-                            }
+                    // Navigazione spaziale D-pad sul sito (serializzata: una
+                    // move per volta, l'ultima direzione premuta viene
+                    // ri-applicata — niente coda che accumula lag).
+                    sendNavMove(
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> "up"
+                            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                            else -> "right"
                         }
-                    }
+                    )
                 }
                 return true
             }

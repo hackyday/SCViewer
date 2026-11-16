@@ -381,7 +381,7 @@
     if (!st) {
       st = document.createElement('style');
       st.id = 'sctv-dpad-style';
-      st.textContent = '.' + RING + '{outline:none!important;filter:brightness(1.25)}' +
+      st.textContent = '.' + RING + '{outline:none!important}' +
         // Login e ricerca nell'header del sito: inutili nell'app (la ricerca
         // è nella sidebar nativa) — rimossi dalla home e da tutte le pagine.
         '.nav-item.btn-login,.nav-item.search-bar-item{display:none!important}';
@@ -390,17 +390,16 @@
 
     // ---- Anello -------------------------------------------------------------
     // Il ring è un frame position:fixed sopra TUTTO (z-index massimo): le
-    // card vicine del sito non possono coprirlo. (Nella versione precedente
-    // il frame non veniva mai appeso al DOM: l'anello visibile era solo il
-    // filtro brightness della classe.)
+    // card vicine del sito non possono coprirlo. Stile minimale: niente
+    // transizioni né ombre larghe — su Mali-450 (stick 1 GB) repaint storm
+    // a ogni movimento = input lag percepito.
     var frame = document.getElementById('sctv-dpad-frame');
     if (!frame) {
       frame = document.createElement('div');
       frame.id = 'sctv-dpad-frame';
       frame.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
         'z-index:2147483000;border:4px solid #FFFFFF;border-radius:14px;' +
-        'box-shadow:0 0 0 7px rgba(229,9,20,.5),0 22px 60px rgba(0,0,0,.92);' +
-        'transition:left .14s ease,top .14s ease,width .14s ease,height .14s ease';
+        'box-shadow:0 0 0 5px rgba(229,9,20,.55)';
       host.appendChild(frame);
     }
 
@@ -468,7 +467,13 @@
     // ---- Stato --------------------------------------------------------------
     var cur = null;            // elemento a fuoco
     var lastCenter = null;     // centro viewport dell'ultimo fuoco (recupero)
-    var cache = null, cacheTimer = null;
+    var cache = null, cacheTimer = null, cacheAt = 0;
+    // La scansione completa (getComputedStyle su migliaia di nodi) costa
+    // 100-300 ms su uno stick: le tempeste di mutazioni del sito NON devono
+    // invalidarla per ogni tasto. TTL morbido: la lista resta valida 2,5 s
+    // (i rect sono riletti live in buildRows, quindi scroll e nodi rimossi
+    // si filtrano da soli); rescan forzato solo su swap SPA.
+    var CACHE_TTL = 2500;
     var pendingCenter = false; // ricentro dopo SPA nav (consumato dall'observer)
     var lastMutAt = 0;
 
@@ -487,10 +492,18 @@
       return false;
     }
 
-    // Il sito è una SPA: ricalcola i candidati solo quando il DOM cambia
-    // (debounce 120 ms), non a ogni movimento del D-pad.
-    function invalidate() {
-      cache = null;
+    // Il sito è una SPA: la lista candidati si ricalcola SEMPRE fuori dal
+    // percorso dei tasti (background rescan), mai bloccando un movimento.
+    // centerFocus/reset fanno lo scan sincrono (nuova pagina).
+    var scanPending = false;
+    function rescanSoon(delay) {
+      if (scanPending) return;
+      scanPending = true;
+      setTimeout(function () {
+        scanPending = false;
+        cache = scan();
+        cacheAt = Date.now();
+      }, delay || 180);
     }
     // I trailer in autoplay nell'hero del sito: la loro superficie video
     // (fork Fire TV del WebView) copre la sidebar nativa e mangia CPU su
@@ -499,18 +512,18 @@
     function tameVideos() {
       var vs = document.querySelectorAll('video');
       for (var i = 0; i < vs.length; i++) {
-        var v = vs[i];
-        if (v.dataset.sctvTamed) continue;
-        v.dataset.sctvTamed = '1';
-        try {
-          v.pause();
-          v.muted = true;
-          // NON nascondere: hide su un video in riproduzione può lasciare il
-          // compositor di questo WebView vecchio in nero totale.
-          v.removeAttribute('autoplay');
-        } catch (e) {}
+        try { vs[i].pause(); vs[i].muted = true; } catch (e) {}
       }
     }
+    // Il sito rimette in play i trailer a loop dai suoi timer: intercetta
+    // l'evento 'play' (capture, frame principale) e rimetti in pausa subito.
+    // Senza questo la CPU resta alta e la nav risulta laggosa.
+    document.addEventListener('play', function (e) {
+      var v = e.target;
+      if (v && v.tagName === 'VIDEO') {
+        try { v.pause(); v.muted = true; } catch (e2) {}
+      }
+    }, true);
 
     var obs = new MutationObserver(function (muts) {
       lastMutAt = Date.now();
@@ -529,7 +542,6 @@
       if (cacheTimer) return;
       cacheTimer = setTimeout(function () {
         cacheTimer = null;
-        invalidate();
         tameVideos();
         // Fuoco da ricentrire dopo una navigazione SPA: attendi la quiete
         // delle mutazioni (il swap di Inertia arriva a batch), poi ricentra.
@@ -617,9 +629,12 @@
       return kept;
     }
 
-    function candidates() {
-      if (cache) return cache;
-      cache = scan();
+    function candidates(force) {
+      var now = Date.now();
+      if (!cache || force || now - cacheAt > CACHE_TTL) {
+        cache = scan();
+        cacheAt = now;
+      }
       return cache;
     }
 
@@ -778,8 +793,7 @@
         var tx = sx.scrollLeft + (r.left + r.width / 2 - (cr.left + cr.width / 2));
         tx = clampN(tx, 0, sx.scrollWidth - sx.clientWidth);
         if (Math.abs(tx - sx.scrollLeft) > SNAP_X) {
-          try { sx.scrollTo({ left: tx, behavior: 'smooth' }); }
-          catch (e) { sx.scrollLeft = tx; }
+          sx.scrollLeft = tx; // istantaneo: lo smooth su Mali-450 è lag
         }
       }
 
@@ -792,8 +806,7 @@
         var ty = sy.scrollTop + (r.top + r.height / 2 - (cr2.top + cr2.height / 2));
         ty = clampN(ty, 0, sy.scrollHeight - sy.clientHeight);
         if (Math.abs(ty - sy.scrollTop) > 4) {
-          try { sy.scrollTo({ top: ty, behavior: 'smooth' }); }
-          catch (e2) { sy.scrollTop = ty; }
+          sy.scrollTop = ty;
           shift = ty - sy.scrollTop;
         }
       }
@@ -803,21 +816,16 @@
         var pt = pageTop();
         var want = clampN(pt + (vTop + r.height / 2 - innerHeight / 2), 0, maxPage());
         if (Math.abs(want - pt) > 4) {
-          try { window.scrollTo({ top: want, behavior: 'smooth' }); }
-          catch (e3) { window.scrollTo(0, want); }
+          window.scrollTo(0, want);
         }
       }
     }
 
     function pageScroll(sign) {
-      invalidate(); // lo scroll cambia la finestra dei candidati
-      try {
-        window.scrollBy({ top: sign * innerHeight * 0.66, behavior: 'smooth' });
-      } catch (e) {
-        window.scrollBy(0, sign * innerHeight * 0.66);
-      }
+      // Scroll istantaneo: lo smooth su Mali-450 (stick 1 GB) è scatti e lag.
+      window.scrollBy(0, sign * innerHeight * 0.66);
       navScrollStart();
-      startFollow(900);
+      startFollow(700);
     }
 
     // ---- Fuoco --------------------------------------------------------------
@@ -851,12 +859,12 @@
         cur.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
         cur.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       } catch (e3) {}
-      // il popup hover del sito entra nel DOM: invalida e riscansiona presto
-      invalidate();
+      // il popup hover del sito entra nel DOM: riscansiona presto, ma in
+      // background — il prossimo tasto non deve mai aspettare uno scan
+      rescanSoon(200);
       startFollow(900);
       clearTimeout(lateTimer);
       lateTimer = setTimeout(function () {
-        invalidate();
         if (cur) placeFrame(cur);
       }, 260);
     }
