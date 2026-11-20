@@ -178,6 +178,43 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Indicatore SCRUB MODE (solo direct): mostra la posizione TARGET mentre
+         il video è in pausa durante lo scrub dei tasti media (REW/FFWD tenuti).
+         OK conferma il seek al target, BACK annulla. Centrato e grande, stile
+         pillola degli altri controlli nativi. -->
+    <LinearLayout
+        android:id="@+id/playerScrubBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/player_pill"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="30dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="30dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/playerScrubTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="▶▶ 00:00"
+            android:textColor="@color/white"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/playerScrubHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="OK conferma · BACK annulla"
+            android:textColor="@color/sc_text_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
     <!-- Controlli inferiori -->
     <LinearLayout
         android:id="@+id/playerBottomBar"

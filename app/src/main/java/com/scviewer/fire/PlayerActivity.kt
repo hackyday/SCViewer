@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -65,6 +66,11 @@ import java.util.concurrent.TimeUnit
  *    player_bridge.js (document start): eventi → [onPlayerEvent], comandi →
  *    window.__sctvPlayer (API diretta, bypass della coda JsInterface). La
  *    copertura nera si toglie solo all'evento 'ready' del bridge.
+ *    Tasti media del telecomando (solo direct): PLAY/PAUSE = play/pausa;
+ *    REWIND/FAST_FORWARD singoli = seek ±10s, TENUTI = SCRUB MODE (video in
+ *    pausa, preview del target: OK = seek+play, BACK = annulla). I D-pad
+ *    muovono SEMPRE il fuoco tra i controlli: la timeline si comanda SOLO
+ *    coi tasti media e lo scrubber non è fuocabile (fuoco intrappolato).
  *  - LEGACY (modalità sito, extra "url" soltanto): two-stage home→watch con
  *    video_agent.js + page_inject.js, coda comandi di JsInterface e fallback
  *    embed M4b — flusso invariato.
@@ -91,6 +97,10 @@ class PlayerActivity : Activity() {
     private lateinit var scrubber: ProgressBar
     private lateinit var timeCur: TextView
     private lateinit var timeTot: TextView
+    /** Indicatore SCRUB MODE: box centrato con il tempo target grande e
+     *  leggibile ("▶▶ 12:45") + hint dei tasti (OK conferma · BACK annulla). */
+    private lateinit var scrubBox: View
+    private lateinit var scrubTime: TextView
     /** Copertura nera sopra la WebView: copre lo stage1 (home del sito per i
      *  cookie) e qualunque pagina intermedia finché il contenuto vero non
      *  inizia a caricarsi — elimina il flash dell'interfaccia del sito. */
@@ -109,13 +119,17 @@ class PlayerActivity : Activity() {
      *  Inertia della watch page non espone il titleId. */
     private var titleId = 0
 
-    /** Ordine di fuoco tra i controlli visibili. Direct mode: lo scrubber è
-     *  fuocabile e con LEFT/RIGHT fa da seek rapido (see dispatchKeyEvent). */
+    /** Ordine di fuoco tra i controlli visibili. Lo scrubber NON fa parte
+     *  dell'anello (né direct né legacy): fuocarlo intrappolava il D-pad —
+     *  LEFT/RIGHT sullo scrubber cercavano il seek invece di muovere il fuoco
+     *  e OK non aveva effetto. FIX: la timeline si comanda SOLO coi tasti
+     *  media (REW/FFWD singoli ±10s, tenuti = scrub mode); l'anello resta
+     *  backBtn → play/rew/ffw/lang (adiacenti: pausa, ±10 e lingua sono
+     *  sempre a max 1-2 passi con il wrap dell'anello). */
     private val focusOrder: List<View>
         get() = listOfNotNull(
             backBtn,
             playBtn, rewBtn, ffwBtn, langBtn,
-            scrubber.takeIf { directEmbed },
             skipBtn.takeIf { it.visibility == View.VISIBLE },
             nextPlay.takeIf { nextCard.visibility == View.VISIBLE },
             nextCancel.takeIf { nextCard.visibility == View.VISIBLE }
@@ -172,6 +186,32 @@ class PlayerActivity : Activity() {
     /** HistoryStore: una sola voce per riproduzione (al primo ready). */
     private var historyLogged = false
 
+    // -- SCRUB MODE (direct): scrub della timeline coi tasti media -------------
+    /** TRUE mentre l'utente sta sistemando la posizione sulla timeline (REW/
+     *  FFWD tenuti): video in pausa, preview del target senza seek HLS. In
+     *  questo stato i D-pad NON muovono il fuoco (tutta l'attenzione è la
+     *  timeline), OK committa il seek, BACK annulla. */
+    private var scrubActive = false
+    /** Posizione target della preview (secondi), sempre dentro [0, dur]. */
+    private var scrubTargetSec = 0
+    /** Posizione al PRIMO DOWN del gesto che ha aperto lo scrub (base per il
+     *  BACK: cancel ripristina questa, così hold+BACK = net-zero movement). */
+    private var scrubBaseSec = -1
+    /** Incrementi applicati nel gesto di hold corrente: guida l'accelerazione
+     *  (10s → 30s → 60s). Si azzera a ogni nuova pressione (repeatCount==0). */
+    private var scrubSteps = 0
+    /** Direzione dell'ultimo aggiustamento: simbolo dell'indicatore (▶▶/◀◀). */
+    private var scrubDir = 1
+    /** Stato play/pause CHE L'UTENTE VEDEVA all'attivazione dello scrub: BACK
+     *  lo ripristina (play se era in play — enterScrub l'aveva messo in pausa;
+     *  resta in pausa se era già in pausa). */
+    private var scrubWasPlaying = false
+    /** elapsedRealtime del primo ACTION_DOWN (repeatCount==0) di REW/FFWD:
+     *  base per la soglia temporale dell'hold (≥ SCRUB_HOLD_MS). */
+    private var mediaHoldStartAt = 0L
+    /** Filtro temporale per i repeat del D-pad in scrub mode (120ms min). */
+    private var lastDpadScrubAt = 0L
+
     // -- Resume seek (M3) -------------------------------------------------------
     /** Posizione di ripresa (extra startPositionSec, SECONDI — piano V2:
      *  il parametro minute dell'embed non si usa, i secondi sono più
@@ -186,7 +226,9 @@ class PlayerActivity : Activity() {
     private var pageInfo: PageInfo? = null
 
     private val resumeSeekRetry = Runnable {
-        if (pendingSeek > 0 && resumeSeekArmed) playerSeekTo(pendingSeek)
+        // In scrub mode il video è in pausa con preview: un seek di resume
+        // qui sposterebbe il video sotto la preview (review finding 6).
+        if (pendingSeek > 0 && resumeSeekArmed && !scrubActive) playerSeekTo(pendingSeek)
     }
 
     private val adBlocker by lazy { AdBlocker.get(this) }
@@ -216,6 +258,8 @@ class PlayerActivity : Activity() {
         scrubber = findViewById(R.id.playerScrubber)
         timeCur = findViewById(R.id.playerTimeCur)
         timeTot = findViewById(R.id.playerTimeTot)
+        scrubBox = findViewById(R.id.playerScrubBox)
+        scrubTime = findViewById(R.id.playerScrubTime)
 
         titleText = intent.getStringExtra("title") ?: ""
         watchUrl = intent.getStringExtra("url") ?: ""
@@ -456,11 +500,10 @@ class PlayerActivity : Activity() {
                     }
                 }
             }
-            // Direct mode: lo scrubber è fuocabile (seek col D-pad).
-            if (directEmbed) {
-                scrubber.isFocusable = true
-                scrubber.isFocusableInTouchMode = true
-            }
+            // FIX fuoco: lo scrubber NON è fuocabile in nessuna modalità —
+            // la timeline si comanda solo coi tasti media (REW/FFWD), così
+            // LEFT/RIGHT muovono sempre il fuoco e il D-pad non resta mai
+            // intrappolato sulla barra.
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     if (directEmbed) {
@@ -953,7 +996,13 @@ class PlayerActivity : Activity() {
         "%d:%02d".format(sec / 60, sec % 60)
 
     private fun seekBy(delta: Int) {
-        playerSeekTo((posSec + delta).coerceIn(0, (durSec - 1).coerceAtLeast(0)))
+        // Durata ignota (tra 'ready' e il primo 'time' la dur può essere 0):
+        // seek(0) riavvierebbe il video da capo — no-op finché non la sapiamo
+        // (review finding 4). posSec aggiornato ottimisticamente così un
+        // doppio tap veloce somma (finding 5).
+        if (durSec <= 0) return
+        posSec = (posSec + delta).coerceIn(0, (durSec - 1).coerceAtLeast(0))
+        playerSeekTo(posSec)
     }
 
     // -- Comandi player: routing direct ↔ legacy --------------------------------
@@ -1017,9 +1066,13 @@ class PlayerActivity : Activity() {
             "state" -> {
                 playing = ev.optString("state") == "playing"
                 updatePlayIcon()
-                scheduleHide()
+                // In scrub mode i controlli restano visibili (preview attiva).
+                if (!scrubActive) scheduleHide()
             }
             "complete" -> {
+                // Uscita FORZATA dallo scrub: il video è finito (es. commit
+                // del target su dur) — niente indicatore appeso a schermo.
+                if (scrubActive) exitScrub()
                 playing = false
                 updatePlayIcon()
                 // A video finito gli eventi 'time' cessano: se c'è un prossimo
@@ -1030,6 +1083,8 @@ class PlayerActivity : Activity() {
                 }
             }
             "error" -> {
+                // Player morto: esci da un'eventuale scrub mode pendente.
+                if (scrubActive) exitScrub()
                 Log.w("Player", "bridge JW: errore: ${ev.optString("msg")}")
                 // L'embed mostra la sua schermata di errore: scopri e segnala
                 // (una volta sola per riproduzione).
@@ -1058,6 +1113,11 @@ class PlayerActivity : Activity() {
      *  video_agent). */
     private fun onDirectTime(pos: Int, dur: Int) {
         posSec = pos; durSec = dur
+        // SCRUB MODE: la barra e i tempi mostrano il TARGET della preview —
+        // gli eventi 'time' residui (il video è in pausa) non devono
+        // sovrascriverli. posSec/durSec restano aggiornati come posizione
+        // reale per commit/annullamento.
+        if (scrubActive) return
         val now = System.currentTimeMillis()
         if (now - lastTimeUiAt < 1000) return
         lastTimeUiAt = now
@@ -1117,13 +1177,196 @@ class PlayerActivity : Activity() {
         )
     }
 
-    /** Seek da scrubber (direct, fuocabile): passo = 10% della durata (min
-     *  30s), seek immediato — il prossimo evento 'time' riposiziona la barra. */
-    private fun scrubSeek(dir: Int) {
-        if (durSec <= 0) return
-        val step = (durSec / 10).coerceAtLeast(30)
-        playerSeekTo((posSec + dir * step).coerceIn(0, durSec - 1))
+    // -- Tasti media del telecomando (solo direct; legacy invariato) -----------
+
+    /** PLAY/PAUSE (85/126/127): toggle play/pausa via __sctvPlayer. Aggiorna
+     *  l'ultimo stato noto per l'icona playBtn — la VERITÀ resta negli eventi
+     *  'state' del bridge, che correggono eventuali difformità. Durante lo
+     *  scrub: annulla lo scrub SENZA seek e applica il comando allo stato che
+     *  l'utente vedeva prima (niente seek a sorpresa, niente doppio toggle). */
+    private fun handleMediaPlayPause(event: KeyEvent, code: Int): Boolean {
+        // Solo il primo ACTION_DOWN comanda; UP e repeat si consumano qui.
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return true
+        if (scrubActive) {
+            val wasPlaying = scrubWasPlaying
+            exitScrub()
+            when (code) {
+                KeyEvent.KEYCODE_MEDIA_PLAY -> { directCall("play()"); playing = true }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> { directCall("pause()"); playing = false }
+                else -> {
+                    directCall(if (wasPlaying) "pause()" else "play()")
+                    playing = !wasPlaying
+                }
+            }
+        } else {
+            when (code) {
+                KeyEvent.KEYCODE_MEDIA_PLAY ->
+                    if (!playing) { directCall("play()"); playing = true }
+                KeyEvent.KEYCODE_MEDIA_PAUSE ->
+                    if (playing) { directCall("pause()"); playing = false }
+                else -> {
+                    directCall(if (playing) "pause()" else "play()")
+                    playing = !playing
+                }
+            }
+        }
+        updatePlayIcon()
         showControls()
+        scheduleHide()
+        return true
+    }
+
+    /** REWIND/FAST_FORWARD (89/90):
+     *  - pressione SINGOLA (repeatCount==0) → seek immediato ±10s (come i
+     *    bottoni ⟲10 / 10⟳); se siamo già in scrub mode il singolo aggiusta
+     *    invece il TARGET (il commit resta su OK);
+     *  - TENUTO (repeat > 0 oltre soglia) → entra/continua SCRUB MODE.
+     *  Soglia hold: il primo repeat con repeatCount ≥ 3 OPPURE ≥200ms dal
+     *  primo DOWN — con i periodi di repeat del Fire TV (~50ms, delay iniziale
+     *  del framework) scatta al primo repeat utile in ogni caso, e la
+     *  condizione temporale copre remoti con timing diverso. */
+    private fun handleMediaSeek(event: KeyEvent, code: Int): Boolean {
+        if (event.action == KeyEvent.ACTION_UP) {
+            // Rilascio: resta in SCRUB MODE con l'indicatore visibile — il
+            // commit avviene SOLO con OK, l'annullamento con BACK.
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return true
+        val dir = if (code == KeyEvent.KEYCODE_MEDIA_REWIND) -1 else 1
+        if (event.repeatCount == 0) {
+            // Nuova pressione: azzera l'accelerazione del gesto corrente.
+            mediaHoldStartAt = SystemClock.elapsedRealtime()
+            scrubSteps = 0
+            if (scrubActive) {
+                scrubAdjust(dir, accelerated = false)
+            } else {
+                // Base per il cancel dello scrub che potrebbe aprire il gesto
+                // (hold): BACK deve riprendere dalla posizione PRE-gesto.
+                scrubBaseSec = posSec.coerceIn(0, (durSec - 1).coerceAtLeast(0))
+                seekBy(dir * SCRUB_STEP_NEAR)
+            }
+            showControls()
+            return true
+        }
+        // Repeat (tasto tenuto): al primo oltre soglia attiva lo scrub mode.
+        if (!scrubActive) {
+            val holdMs = SystemClock.elapsedRealtime() - mediaHoldStartAt
+            if (event.repeatCount >= SCRUB_HOLD_REPEATS || holdMs >= SCRUB_HOLD_MS) {
+                enterScrub(dir)
+            }
+        }
+        if (scrubActive) scrubAdjust(dir, accelerated = true)
+        return true
+    }
+
+    // -- SCRUB MODE -------------------------------------------------------------
+
+    /** Attiva la SCRUB MODE: pausa il video (SOLO preview — il seek HLS
+     *  ripetuto è costoso e avviene una volta sola all'OK), salva lo stato
+     *  play/pause percepito dall'utente e mostra l'indicatore del target.
+     *  Senza durata nota lo scrub non si attiva (i repeat restano no-op). */
+    private fun enterScrub(dir: Int) {
+        if (durSec <= 0) return
+        scrubActive = true
+        scrubWasPlaying = playing
+        scrubSteps = 0
+        scrubDir = dir
+        // Il target parte dalla base PRE-salto (captata al primo DOWN del
+        // gesto): hold+OK senza adjust = net-zero movement (review finding 3).
+        scrubTargetSec = (if (scrubBaseSec >= 0) scrubBaseSec else posSec)
+            .coerceIn(0, durSec)
+        if (playing) directCall("pause()")
+        playing = false
+        updatePlayIcon()
+        updateScrubUi()
+        showControls()
+    }
+
+    /** Aggiusta il target di [dir] passi. Accelerazione SOLO sul percorso
+     *  "tenuto premuto" (repeat dei tasti media): gli incrementi del gesto
+     *  corrente crescono 10s → 30s → 60s; singoli e D-pad restano a 10s.
+     *  Ai bordi passo ridotto a 5s e target sempre dentro [0, dur] (dur
+     *  compreso: OK lì equivale a saltare alla fine → 'complete'). Nessun
+     *  seek reale: solo indicatore + barra/tempi sul target. Un eval JS per
+     *  repeat va bene (i repeat arrivano ogni ~50ms, comandi leggeri). */
+    private fun scrubAdjust(dir: Int, accelerated: Boolean) {
+        if (!scrubActive || durSec <= 0) return
+        val step = when {
+            !accelerated -> SCRUB_STEP_NEAR
+            scrubSteps >= SCRUB_REPEATS_FAST -> SCRUB_STEP_FAR
+            scrubSteps >= SCRUB_REPEATS_MED -> SCRUB_STEP_MED
+            else -> SCRUB_STEP_NEAR
+        }
+        if (accelerated) scrubSteps++
+        scrubDir = dir
+        var next = scrubTargetSec + dir * step
+        if (next < 0 || next > durSec) {
+            // Bordo: passo fine prima di agganciare il limite, mai oltre 0/dur.
+            next = scrubTargetSec + dir * minOf(step, SCRUB_STEP_EDGE)
+        }
+        scrubTargetSec = next.coerceIn(0, durSec)
+        updateScrubUi()
+    }
+
+    /** DPAD LEFT/RIGHT in scrub mode: aggiusta il target a passo fisso con un
+     *  minimo di 120ms tra gli incrementi (i repeat del D-pad arrivano ogni
+     *  ~50ms — senza filtro lo scorrimento sarebbe troppo veloce). */
+    private fun scrubAdjustThrottled(dir: Int) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDpadScrubAt < SCRUB_DPAD_MIN_MS) return
+        lastDpadScrubAt = now
+        scrubAdjust(dir, accelerated = false)
+    }
+
+    /** Preview dello scrub: indicatore grande centrato (▶▶/◀◀ + target) e
+     *  posizione TARGET su barra e tempo corrente. Nessun seek reale. */
+    private fun updateScrubUi() {
+        if (!scrubActive) return
+        scrubBox.visibility = View.VISIBLE
+        scrubTime.text = (if (scrubDir < 0) "◀◀ " else "▶▶ ") + fmt(scrubTargetSec)
+        scrubber.progress = scrubTargetSec.coerceAtMost(scrubber.max)
+        timeCur.text = fmt(scrubTargetSec)
+    }
+
+    /** OK in scrub mode: seek al target + play — il film riparte da lì. */
+    private fun commitScrub() {
+        if (!scrubActive) return
+        val target = scrubTargetSec
+        exitScrub()
+        posSec = target
+        directCall("seek($target)")
+        directCall("play()")
+        playing = true
+        updatePlayIcon()
+        showControls()
+        scheduleHide()
+    }
+
+    /** BACK in scrub mode: annulla — NESSUN seek; il video resta dove era
+     *  quando lo scrub è partito: se era in play (enterScrub l'aveva messo in
+     *  pausa) riprende da lì, se era già in pausa resta in pausa. */
+    private fun cancelScrub() {
+        if (!scrubActive) return
+        val wasPlaying = scrubWasPlaying
+        val base = scrubBaseSec
+        exitScrub()
+        // Net-zero: BACK ripristina la posizione PRE-gesto (review finding 3).
+        if (base >= 0) directCall("seek(${base.coerceIn(0, (durSec - 1).coerceAtLeast(0))})")
+        if (wasPlaying) {
+            directCall("play()")
+            playing = true
+            updatePlayIcon()
+        }
+        showControls()
+    }
+
+    /** Esce dalla scrub mode e nasconde l'indicatore, senza toccare il video. */
+    private fun exitScrub() {
+        scrubActive = false
+        scrubTargetSec = 0
+        scrubSteps = 0
+        scrubBaseSec = -1
+        scrubBox.visibility = View.GONE
     }
 
     private fun scheduleHide() {
@@ -1159,27 +1402,56 @@ class PlayerActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        val code = event.keyCode
 
-        // INDIETRO: controlli visibili → nascondi; nascosti → esci.
-        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (controlsVisible) hideControls() else finish()
-            return true
+        // INDIETRO: in scrub mode ANNULLA (nessun seek, play ripristinato);
+        // controlli visibili → nascondi; nascosti → esci.
+        if (code == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (scrubActive) cancelScrub()
+                else if (controlsVisible) hideControls() else finish()
+                return true
+            }
+            return super.dispatchKeyEvent(event)
         }
+
+        // Tasti MEDIA (85/126/127/89/90) SOLO in direct mode: play/pausa e
+        // seek/scrub della timeline. In legacy restano come oggi — nessun
+        // ramo toccato, cadono al super come prima.
+        if (directEmbed) {
+            when (code) {
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                KeyEvent.KEYCODE_MEDIA_PLAY,
+                KeyEvent.KEYCODE_MEDIA_PAUSE ->
+                    return handleMediaPlayPause(event, code)
+                KeyEvent.KEYCODE_MEDIA_REWIND,
+                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ->
+                    return handleMediaSeek(event, code)
+            }
+        }
+
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
 
         // Qualsiasi altro D-pad: mostra i controlli e muovi il fuoco.
         showControls()
-        when (event.keyCode) {
-            // Direct mode: fuoco sullo scrubber → LEFT/RIGHT = seek rapido
-            // (10% della durata) invece di spostare il fuoco.
+        when (code) {
+            // FIX fuoco: LEFT/RIGHT muovono SEMPRE il fuoco tra i controlli —
+            // il ramo seek-±10%-sullo-scrubber è rimosso (intrappolava il
+            // D-pad). In scrub mode aggiustano il TARGET della timeline e il
+            // fuoco resta fermo (tutta l'attenzione è lì).
             KeyEvent.KEYCODE_DPAD_LEFT ->
-                if (directEmbed && focusOrder.getOrNull(focusIdx) === scrubber) scrubSeek(-1)
-                else moveFocus(-1)
+                if (scrubActive) scrubAdjustThrottled(-1) else moveFocus(-1)
             KeyEvent.KEYCODE_DPAD_RIGHT ->
-                if (directEmbed && focusOrder.getOrNull(focusIdx) === scrubber) scrubSeek(1)
-                else moveFocus(1)
+                if (scrubActive) scrubAdjustThrottled(1) else moveFocus(1)
+            // In scrub mode anche UP/DOWN non muovono il fuoco (no-op).
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN ->
+                if (!scrubActive) return super.dispatchKeyEvent(event)
+            // OK: in scrub mode CONFERMA il target (seek + play); fuori dal
+            // scrub attiva il controllo fuocato. Lo scrubber non è mai
+            // fuocabile → OK non può più fare seek per sbaglio.
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER ->
-                focusOrder.getOrNull(focusIdx)?.performClick()
+                if (scrubActive) commitScrub()
+                else focusOrder.getOrNull(focusIdx)?.performClick()
             else -> return super.dispatchKeyEvent(event)
         }
         return true
@@ -1202,6 +1474,28 @@ class PlayerActivity : Activity() {
         private const val RESUME_SEEK_DESIST_MS = 15_000L
         /** Massimo tempo coperto dalla schermata nera anti-flash. */
         private const val BLACKOUT_MAX_MS = 25_000L
+
+        // -- SCRUB MODE (soglie e passi) ---------------------------------------
+        /** Repeat oltre i quali l'hold dei tasti media attiva lo scrub. */
+        private const val SCRUB_HOLD_REPEATS = 3
+        /** Hold minimo (ms dal primo ACTION_DOWN) per attivare lo scrub:
+         *  il primo repeat che soddisfa UNA delle due soglie fa partire la
+         *  preview (copre remoti con periodi di repeat diversi). */
+        private const val SCRUB_HOLD_MS = 200L
+        /** Passo base: pressione singola e primi incrementi dello scrub. */
+        private const val SCRUB_STEP_NEAR = 10
+        /** Passo medio dell'accelerazione (dopo 6 incrementi del gesto). */
+        private const val SCRUB_STEP_MED = 30
+        /** Passo massimo dell'accelerazione (dopo 12 incrementi del gesto). */
+        private const val SCRUB_STEP_FAR = 60
+        /** Passo fine ai bordi della timeline (mai oltre 0/dur). */
+        private const val SCRUB_STEP_EDGE = 5
+        /** Incrementi del gesto prima di passare al passo medio (30s). */
+        private const val SCRUB_REPEATS_MED = 6
+        /** Incrementi del gesto prima di passare al passo massimo (60s). */
+        private const val SCRUB_REPEATS_FAST = 12
+        /** Minimo intervallo (ms) tra aggiustamenti col D-pad in scrub mode. */
+        private const val SCRUB_DPAD_MIN_MS = 120L
 
         /** Pulizia difensiva della watch page (legacy, piano §5.2 — RE
          *  schermata watch): nasconde la modal premium (body>.modal) e i
