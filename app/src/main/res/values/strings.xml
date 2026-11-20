@@ -59,6 +59,9 @@
 
     <!-- Settings -->
     <string name="settings_title">Impostazioni SCtv</string>
+    <string name="settings_ui_label">Interfaccia primaria</string>
+    <string name="settings_ui_sctv">SCtv (nuova)</string>
+    <string name="settings_ui_site">Sito (classico)</string>
     <string name="settings_quality_label">Qualità massima streaming</string>
     <string name="settings_quality_auto">Auto (fino a 1080p)</string>
     <string name="settings_quality_720">720p (reti lente)</string>

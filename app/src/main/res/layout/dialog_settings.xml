@@ -40,34 +40,49 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
+            <!-- Interfaccia primaria: SCtv nativa o sito classico. Il cambio
+                 di modalità salva SOLO con Salva e (se cambia) fa da trigger
+                 al routing via onSaved(modeChanged). -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
-                android:text="@string/settings_speed_label"
+                android:layout_marginTop="16dp"
+                android:text="@string/settings_ui_label"
                 android:textColor="@color/sctv_text_secondary"
                 android:textSize="14sp" />
 
-            <TextView
-                android:id="@+id/settingsSpeedValue"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:textColor="@color/sctv_accent"
-                android:textSize="20sp"
-                android:textStyle="bold" />
-
-            <SeekBar
-                android:id="@+id/settingsSpeedSeek"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:progressBackgroundTint="#33FFFFFF"
-                android:progressTint="@color/sctv_accent"
-                android:thumbTint="@color/sctv_accent" />
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
 
+                <Button
+                    android:id="@+id/settingsModeSctv"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_sctv_button_primary"
+                    android:text="@string/settings_ui_sctv"
+                    android:textAllCaps="false"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/settingsModeSite"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:text="@string/settings_ui_site"
+                    android:textAllCaps="false"
+                    android:textColor="@color/sctv_text_secondary" />
+            </LinearLayout>
+
+            <!-- Qualità massima: ha senso in ENTRAMBE le modalità (il cap
+                 vive in HlsRewriter usato dal player del sito e dal nativo). -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -96,74 +111,120 @@
                 android:progressTint="@color/sctv_accent"
                 android:thumbTint="@color/sctv_accent" />
 
+            <!-- Sezione puntatore (velocità + nav sito): ha senso SOLO in
+                 modalità sito — in SCtv non esiste cursore né pagina web. -->
             <LinearLayout
+                android:id="@+id/settingsPointerSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:orientation="vertical">
 
                 <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_nav_label"
-                    android:textColor="@color/sctv_text_primary"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
-
-                <Button
-                    android:id="@+id/settingsNavToggle"
                     android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:background="@drawable/bg_sctv_button_ghost"
-                    android:minWidth="180dp"
-                    android:text="@string/settings_nav_dpad"
-                    android:textAllCaps="false"
-                    android:textColor="@color/sctv_text_primary" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="@string/settings_nav_hint"
-                android:textColor="@color/sctv_text_muted"
-                android:textSize="13sp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/settings_speed_label"
+                    android:textColor="@color/sctv_text_secondary"
+                    android:textSize="14sp" />
 
                 <TextView
-                    android:layout_width="0dp"
+                    android:id="@+id/settingsSpeedValue"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_ua_label"
-                    android:textColor="@color/sctv_text_primary"
-                    android:textSize="15sp"
+                    android:layout_marginTop="2dp"
+                    android:textColor="@color/sctv_accent"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/settingsUaToggle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:background="@drawable/bg_sctv_button_ghost"
-                    android:minWidth="124dp"
-                    android:text="@string/settings_ua_off"
-                    android:textColor="@color/sctv_text_primary" />
+                <SeekBar
+                    android:id="@+id/settingsSpeedSeek"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:progressBackgroundTint="#33FFFFFF"
+                    android:progressTint="@color/sctv_accent"
+                    android:thumbTint="@color/sctv_accent" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_nav_label"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/settingsNavToggle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_sctv_button_ghost"
+                        android:minWidth="180dp"
+                        android:text="@string/settings_nav_dpad"
+                        android:textAllCaps="false"
+                        android:textColor="@color/sctv_text_primary" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/settings_nav_hint"
+                    android:textColor="@color/sctv_text_muted"
+                    android:textSize="13sp" />
             </LinearLayout>
 
-            <TextView
+            <!-- Sezione UA alternativo: rilevante solo per il sito. -->
+            <LinearLayout
+                android:id="@+id/settingsUaSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="@string/settings_ua_hint"
-                android:textColor="@color/sctv_text_muted"
-                android:textSize="13sp" />
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_ua_label"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/settingsUaToggle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_sctv_button_ghost"
+                        android:minWidth="124dp"
+                        android:text="@string/settings_ua_off"
+                        android:textAllCaps="false"
+                        android:textColor="@color/sctv_text_primary" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/settings_ua_hint"
+                    android:textColor="@color/sctv_text_muted"
+                    android:textSize="13sp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="wrap_content"

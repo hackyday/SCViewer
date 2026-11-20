@@ -14,6 +14,30 @@ object SettingsStore {
     private const val PREFS = "sc_settings"
     private const val KEY_CURSOR_SPEED = "cursor_speed"
 
+    // -- Modalità interfaccia primaria (M1) -----------------------------------
+
+    private const val KEY_UI_MODE = "ui_mode"
+
+    /** "sctv" = nuova interfaccia nativa SCtv (default); "site" = il sito in
+     *  WebView gestito da MainActivity. Decide il launcher (router) e le
+     *  sezioni visibili nel SettingsDialog. */
+    const val UI_MODE_SCTV = "sctv"
+    const val UI_MODE_SITE = "site"
+
+    fun getUiMode(context: Context): String =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_UI_MODE, UI_MODE_SCTV) ?: UI_MODE_SCTV
+
+    fun setUiMode(context: Context, mode: String) {
+        val value = if (mode == UI_MODE_SITE) UI_MODE_SITE else UI_MODE_SCTV
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_UI_MODE, value).apply()
+    }
+
+    fun isSctvMode(context: Context): Boolean = getUiMode(context) == UI_MODE_SCTV
+
     const val MIN_SPEED = 1
     const val MAX_SPEED = 10
     const val DEFAULT_SPEED = 5

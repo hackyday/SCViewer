@@ -3,6 +3,7 @@ package com.scviewer.fire.ui
 import android.app.Dialog
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.SeekBar
@@ -12,17 +13,18 @@ import com.scviewer.fire.R
 import com.scviewer.fire.data.SettingsStore
 
 /**
- * "Impostazioni" dialog — hosts the cursor-speed control.
+ * "Impostazioni" dialog — scelta interfaccia primaria (SCtv / sito) + controlli.
  *
  * Built with native views (SeekBar + buttons) so the Fire TV remote
- * navigates it out of the box: the bar gets focus automatically and
- * left/right on the D-pad changes the speed. The value is applied
- * immediately to any running [CursorController] (the speed is re-read on
- * every movement tick) and persisted via [SettingsStore].
+ * navigates it out of the box. In cima c'è la riga segmented per la modalità
+ * interfaccia: le sezioni legate al sito (puntatore, UA) sono visibili SOLO
+ * in modalità "site", la qualità resta sempre accessibile. [onSaved] riceve
+ * `modeChanged` così il chiamante (MainActivity o SctvActivity) può fare il
+ * routing quando l'utente ha cambiato interfaccia.
  */
 class SettingsDialog(
     context: Context,
-    private val onSaved: (Int) -> Unit,
+    private val onSaved: (Boolean) -> Unit,
     private val onActiveChange: ((Dialog?) -> Unit)? = null
 ) : Dialog(context, R.style.SCOverlay) {
 
@@ -37,6 +39,54 @@ class SettingsDialog(
             setDimAmount(0.6f)
         }
 
+        // -- Interfaccia primaria (segmented in cima) -------------------------
+        val initialMode = SettingsStore.getUiMode(context)
+        var uiMode = initialMode
+        val sctvBtn = findViewById<Button>(R.id.settingsModeSctv)
+        val siteBtn = findViewById<Button>(R.id.settingsModeSite)
+        val pointerSection = findViewById<View>(R.id.settingsPointerSection)
+        val uaSection = findViewById<View>(R.id.settingsUaSection)
+
+        fun renderModeRow() {
+            val sctvSelected = uiMode == SettingsStore.UI_MODE_SCTV
+            sctvBtn.setBackgroundResource(
+                if (sctvSelected) R.drawable.bg_sctv_button_primary
+                else R.drawable.bg_sctv_button_ghost
+            )
+            sctvBtn.setTextColor(
+                context.getColor(
+                    if (sctvSelected) R.color.sctv_text_primary
+                    else R.color.sctv_text_secondary
+                )
+            )
+            siteBtn.setBackgroundResource(
+                if (sctvSelected) R.drawable.bg_sctv_button_ghost
+                else R.drawable.bg_sctv_button_primary
+            )
+            siteBtn.setTextColor(
+                context.getColor(
+                    if (sctvSelected) R.color.sctv_text_secondary
+                    else R.color.sctv_text_primary
+                )
+            )
+            // Puntatore e UA esistono solo nel sito: fuori modalità site sono
+            // GONE (non solo invisibili) così non restano nel ciclo di focus.
+            val siteVisible = uiMode == SettingsStore.UI_MODE_SITE
+            pointerSection.visibility = if (siteVisible) View.VISIBLE else View.GONE
+            uaSection.visibility = if (siteVisible) View.VISIBLE else View.GONE
+        }
+        renderModeRow()
+
+        sctvBtn.setOnClickListener {
+            uiMode = SettingsStore.UI_MODE_SCTV
+            renderModeRow()
+        }
+        siteBtn.setOnClickListener {
+            uiMode = SettingsStore.UI_MODE_SITE
+            renderModeRow()
+        }
+
+        // -- Velocità puntatore (solo modalità sito) --------------------------
         val valueText = findViewById<TextView>(R.id.settingsSpeedValue)
         val seek = findViewById<SeekBar>(R.id.settingsSpeedSeek)
 
@@ -105,12 +155,14 @@ class SettingsDialog(
 
         findViewById<Button>(R.id.settingsCancel).setOnClickListener { dismiss() }
         findViewById<Button>(R.id.settingsSave).setOnClickListener {
+            val modeChanged = uiMode != initialMode
             val v = seek.progress + SettingsStore.MIN_SPEED
+            SettingsStore.setUiMode(context, uiMode)
             SettingsStore.setCursorSpeed(context, v)
             SettingsStore.setQualityStop(context, qualitySeek.progress)
             SettingsStore.setAlternateUa(context, uaValue)
             SettingsStore.setSitePointerMode(context, navPointer)
-            onSaved.invoke(v)
+            onSaved.invoke(modeChanged)
             Toast.makeText(
                 context,
                 context.getString(R.string.settings_saved_toast, v),
@@ -124,7 +176,12 @@ class SettingsDialog(
         super.show()
         onActiveChange?.invoke(this)
         setOnDismissListener { onActiveChange?.invoke(null) }
-        // Land the remote focus on the seek bar so left/right adjusts at once.
-        findViewById<SeekBar>(R.id.settingsSpeedSeek).requestFocus()
+        // Land the remote focus on the first visible control: in modalità
+        // SCtv la seek della velocità è GONE, quindi si parte dai bottoni
+        // segmented; in modalità sito dalla seek velocità come prima.
+        val first = findViewById<Button>(R.id.settingsModeSctv)
+        val speedSeek = findViewById<SeekBar>(R.id.settingsSpeedSeek)
+        if (SettingsStore.isSctvMode(context)) first.requestFocus()
+        else speedSeek.requestFocus()
     }
 }

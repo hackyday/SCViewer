@@ -3,6 +3,7 @@ package com.scviewer.fire
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -397,12 +398,23 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             onSettings = {
                 SettingsDialog(
                     this,
-                    onSaved = { _ ->
+                    onSaved = { modeChanged ->
                         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
                         // B17-kotlin: invalida la cache del flag pointer mode.
                         sitePointerMode = SettingsStore.getSitePointerMode(this)
                         applyUserAgent()
                         applyNavMode()
+                        // M1: l'utente ha scelto SCtv da sito → mano alla nuova
+                        // interfaccia (CLEAR_TASK per non lasciare stack sito).
+                        if (modeChanged && SettingsStore.isSctvMode(this)) {
+                            startActivity(
+                                Intent(this, SctvActivity::class.java).addFlags(
+                                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                                        Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                )
+                            )
+                            finish()
+                        }
                     },
                     onActiveChange = { d -> activeDialog = d }
                 ).show()

@@ -1,0 +1,2450 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <!--
+    SCtv — interfaccia TV (asset locale, offline).
+    Sorgente normativo: docs/sctv/sctv-interface.html, adattato per TV con i
+    fix obbligatori del piano §4 (M1). CSS Tailwind COMPILATO (sctv.css) +
+    font WOFF2 locali: rigenerare con tools/build-sctv.sh, MAI riportare il
+    CDN runtime (offline = interfaccia spogliata).
+  -->
+  <meta charset="UTF-8" />
+  <!-- Fix TV #10: layout fisso 1280 (lo stick ha viewport ~960 CSS px, la
+       WebView nativa forza useWideViewPort + textZoom 100). -->
+  <meta name="viewport" content="width=1280" />
+  <title>SCtv</title>
+  <link rel="stylesheet" href="sctv.css" />
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: #0E0E10;
+      color: #F4F4F5;
+      overflow-x: hidden;
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .tv-focusable {
+      transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+                  box-shadow 0.24s ease,
+                  border-color 0.24s ease,
+                  background-color 0.2s ease;
+    }
+
+    .tv-focused {
+      outline: none;
+      transform: scale(1.05);
+      box-shadow: 0 0 0 2.5px #FFFFFF, 0 20px 44px rgba(0, 0, 0, 0.9);
+      z-index: 30;
+    }
+
+    #tv-sidebar.sidebar-expanded {
+      width: 16rem;
+      box-shadow: 16px 0 48px rgba(0, 0, 0, 0.85);
+    }
+    #tv-sidebar.sidebar-expanded .sidebar-label {
+      opacity: 1;
+    }
+
+    .hero-vignette-left {
+      background: linear-gradient(90deg, #0E0E10 0%, rgba(14, 14, 16, 0.94) 30%, rgba(14, 14, 16, 0.45) 64%, rgba(14, 14, 16, 0.05) 100%);
+    }
+    .hero-vignette-bottom {
+      background: linear-gradient(0deg, #0E0E10 0%, rgba(14, 14, 16, 0.88) 20%, rgba(14, 14, 16, 0) 100%);
+    }
+
+    @keyframes sctvIntro {
+      0% { transform: scale(0.88); opacity: 0; letter-spacing: 0.32em; }
+      40% { transform: scale(1); opacity: 1; letter-spacing: 0.1em; }
+      85% { transform: scale(1.03); opacity: 1; letter-spacing: 0.12em; }
+      100% { transform: scale(1.18); opacity: 0; letter-spacing: 0.18em; }
+    }
+    .animate-sctv-intro {
+      animation: sctvIntro 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes kenBurns {
+      0% { transform: scale(1) translate(0, 0); }
+      50% { transform: scale(1.05) translate(-0.8%, -0.8%); }
+      100% { transform: scale(1) translate(0, 0); }
+    }
+    .animate-ken-burns {
+      animation: kenBurns 24s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="bg-[#0E0E10] text-zinc-100 antialiased selection:bg-[#E50914] selection:text-white">
+
+  <!-- ==================== 1. BOOT SPLASH SCREEN ==================== -->
+  <div id="boot-splash" class="fixed inset-0 z-[100] bg-[#050507] flex flex-col items-center justify-center transition-opacity duration-500">
+    <div class="animate-sctv-intro flex flex-col items-center">
+      <div class="flex items-baseline gap-1">
+        <span class="font-display text-7xl sm:text-9xl text-[#E50914] tracking-wider drop-shadow-[0_0_40px_rgba(229,9,20,0.55)]">SC</span>
+        <span class="font-sans text-4xl sm:text-6xl font-extrabold text-white tracking-tight">tv</span>
+      </div>
+      <div class="w-24 h-0.5 bg-gradient-to-r from-transparent via-[#E50914] to-transparent mt-3"></div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. WHO'S WATCHING (PROFILE GATE) ==================== -->
+  <div id="profile-screen" class="fixed inset-0 z-50 bg-[#0E0E10] hidden flex-col items-center justify-center px-6 py-10 overflow-y-auto">
+    <div class="absolute top-7 left-8 sm:left-12 flex items-center gap-3">
+      <div class="flex items-baseline">
+        <span class="font-display text-3xl sm:text-4xl text-[#E50914] tracking-wider">SC</span>
+        <span class="font-sans text-xl sm:text-2xl font-extrabold text-white tracking-tight">tv</span>
+      </div>
+    </div>
+
+    <div class="absolute top-7 right-8 sm:right-12 flex items-center gap-3">
+      <!-- Fix TV #5: raggiungibile col D-pad. -->
+      <button id="sound-toggle-profile" onclick="toggleSound()" class="tv-focusable px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold flex items-center gap-2 text-zinc-300 transition">
+        <span id="sound-icon-profile" class="w-4 h-4 flex items-center justify-center"></span>
+        <span id="sound-label-profile">UI Audio: On</span>
+      </button>
+    </div>
+
+    <div class="max-w-5xl w-full text-center my-auto">
+      <h1 id="profile-heading" class="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">Who's watching?</h1>
+      <p id="profile-subheading" class="text-zinc-400 text-sm mb-12">Select or create a profile to continue</p>
+
+      <div id="profiles-grid" class="flex flex-wrap items-center justify-center gap-6 sm:gap-10 mb-14"></div>
+
+      <div class="flex flex-wrap items-center justify-center gap-4">
+        <button id="manage-profiles-btn" onclick="toggleManageProfiles()" class="tv-focusable hidden px-8 py-3 rounded-lg border border-zinc-700 text-zinc-300 hover:text-white hover:border-white font-semibold tracking-wider uppercase text-xs transition">
+          Manage Profiles
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 3. ADD / EDIT PROFILE MODAL ==================== -->
+  <!-- Fix TV #2: TUTTI i controlli sono tv-focusable e il nome si scrive con
+       la mini-tastiera a schermo (l'IME di sistema su TV è inaffidabile). -->
+  <div id="profile-editor-modal" class="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md hidden items-center justify-center p-4">
+    <div class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl">
+      <h2 id="profile-editor-title" class="text-2xl font-bold mb-1">Add Profile</h2>
+      <p class="text-sm text-zinc-400 mb-6">Create a dedicated profile with personalized watchlists.</p>
+
+      <div class="space-y-5">
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Profile Name</label>
+          <input id="profile-name-input" type="text" maxlength="18" readonly placeholder="Use the on-screen keyboard" class="w-full bg-[#222226] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium focus:outline-none focus:border-white transition" />
+          <div id="profile-kbd" class="mt-3"></div>
+        </div>
+
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Avatar Style</label>
+          <div id="avatar-color-picker" class="grid grid-cols-5 gap-3"></div>
+        </div>
+
+        <!-- Fix TV #2: era una <label> con checkbox (inaccessible al D-pad). -->
+        <button type="button" id="profile-kids-toggle" onclick="toggleKidsCheckbox()" class="tv-focusable flex items-center justify-between bg-[#222226] border border-white/5 p-4 rounded-xl w-full text-left transition">
+          <div>
+            <div class="font-semibold text-sm text-white">Kids Profile</div>
+            <div class="text-xs text-zinc-400">Restrict catalog to PG and family titles</div>
+          </div>
+          <span id="profile-kids-check" class="w-6 h-6 rounded border-2 border-white/30 flex items-center justify-center text-[#E50914]"></span>
+        </button>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 mt-8">
+        <button id="delete-profile-btn" onclick="deleteEditingProfile()" class="tv-focusable hidden mr-auto px-4 py-2.5 rounded-xl bg-red-950/60 border border-red-800/40 text-red-400 hover:bg-red-900/60 text-xs font-bold uppercase tracking-wider transition">
+          Delete
+        </button>
+        <button onclick="closeProfileEditor()" class="tv-focusable px-5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-sm font-semibold transition">
+          Cancel
+        </button>
+        <button onclick="saveProfileEditor()" class="tv-focusable px-6 py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white text-sm font-bold transition">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 4. MAIN TV APP SHELL ==================== -->
+  <div id="tv-app-shell" class="hidden min-h-screen bg-[#0E0E10] relative">
+
+    <!-- LEFT EXPANDABLE TV NAVIGATION SIDEBAR -->
+    <aside id="tv-sidebar"
+      onmouseenter="expandSidebar(true)"
+      onmouseleave="handleSidebarMouseLeave()"
+      class="fixed top-0 left-0 bottom-0 z-40 w-20 bg-[#09090B]/95 backdrop-blur-xl border-r border-white/[0.07] flex flex-col justify-between py-6 transition-all duration-300 ease-out group overflow-hidden">
+
+      <div class="px-3.5">
+        <button onclick="openProfileGate()" data-nav="profiles" class="sidebar-item tv-focusable w-full flex items-center gap-3.5 p-2 rounded-xl hover:bg-white/[0.08] transition text-left">
+          <div id="sidebar-avatar" class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base shrink-0 shadow-md bg-gradient-to-br from-red-600 to-red-950 text-white"></div>
+          <div class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden">
+            <div id="sidebar-profile-name" class="font-bold text-sm leading-tight truncate text-white"></div>
+            <div class="text-[11px] text-zinc-400">Switch Profile</div>
+          </div>
+        </button>
+      </div>
+
+      <nav id="sidebar-nav-list" class="flex flex-col gap-1 px-3 my-auto"></nav>
+
+      <div class="px-3.5 flex flex-col gap-3">
+        <button onclick="toggleSound()" class="tv-focusable w-full flex items-center gap-4 p-2.5 rounded-xl hover:bg-white/[0.08] text-zinc-400 hover:text-white transition">
+          <span id="sidebar-sound-icon" class="w-5 h-5 flex items-center justify-center shrink-0"></span>
+          <span id="sidebar-sound-text" class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity text-xs font-semibold whitespace-nowrap">UI Audio: On</span>
+        </button>
+        <div class="flex items-baseline pl-2.5 pt-1 border-t border-white/[0.06]">
+          <span class="font-display text-2xl text-[#E50914] tracking-wider shrink-0">SC</span>
+          <span class="font-sans text-sm font-extrabold text-white shrink-0">tv</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT VIEWPORT -->
+    <main id="tv-main-content" class="pl-20 min-h-screen transition-all duration-300 pb-24">
+
+      <header class="fixed top-0 left-20 right-0 z-30 px-6 sm:px-10 py-4 flex items-center justify-between pointer-events-none bg-gradient-to-b from-[#0E0E10]/90 via-[#0E0E10]/40 to-transparent">
+        <div class="flex items-center gap-3 pointer-events-auto">
+          <div class="flex items-baseline mr-2">
+            <span class="font-display text-2xl text-[#E50914] tracking-wider">SC</span>
+            <span class="font-sans text-base font-extrabold text-white">tv</span>
+          </div>
+          <span id="view-breadcrumb" class="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-300 bg-white/[0.06] backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10">
+            Home
+          </span>
+          <span id="kids-mode-pill" class="hidden text-[11px] font-extrabold uppercase tracking-wider bg-amber-400 text-black px-3 py-1 rounded-md shadow">
+            Kids Mode
+          </span>
+        </div>
+
+        <div class="flex items-center gap-3 pointer-events-auto">
+          <!-- Fix TV #5: header Search raggiungibile col D-pad. -->
+          <button onclick="switchTab('search')" class="tv-focusable px-3.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] backdrop-blur-md border border-white/10 text-xs font-semibold flex items-center gap-2 text-zinc-200 transition">
+            <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span class="hidden sm:inline">Search</span>
+          </button>
+          <div id="tv-clock" class="text-xs font-semibold text-zinc-300 bg-white/[0.06] backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-white/10 tabular-nums"></div>
+        </div>
+      </header>
+
+      <div id="view-container"></div>
+
+    </main>
+  </div>
+
+  <!-- ==================== 5. TITLE DETAIL MODAL ("MORE INFO") ==================== -->
+  <div id="detail-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden items-center justify-center p-2 sm:p-6 overflow-y-auto">
+    <div id="detail-modal-card" class="relative bg-[#161619] border border-white/10 rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-y-auto no-scrollbar shadow-[0_25px_70px_rgba(0,0,0,0.95)]">
+      <button id="close-detail-btn" onclick="closeDetailModal()" class="tv-focusable absolute top-4 right-4 z-30 w-10 h-10 rounded-full bg-black/75 hover:bg-white hover:text-black text-white flex items-center justify-center border border-white/20 transition" aria-label="Close details">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div id="detail-modal-content"></div>
+    </div>
+  </div>
+
+  <!-- Fix TV #3: il player HTML5 (#video-player-overlay) e tutte le sue
+       funzioni sono RIMOSSI — su TV il playback è delegato al player nativo
+       via AndroidJs.play (M3). -->
+
+  <!-- ==================== 7. FLOATING VIRTUAL TV REMOTE ==================== -->
+  <!-- Fix TV #8: visibile SOLO senza bridge nativo (anteprima browser). -->
+  <div id="virtual-remote-root" class="hidden fixed bottom-5 right-5 z-[70] flex flex-col items-end">
+    <div id="virtual-remote-panel" class="hidden mb-3 bg-[#161619]/95 backdrop-blur-xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.9)] w-52">
+      <div class="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+        <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">SCtv Remote</span>
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <button onclick="handleRemoteAction('back')" class="bg-white/10 hover:bg-white/20 active:scale-95 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+          <span>Back</span>
+        </button>
+        <button onclick="handleRemoteAction('home')" class="bg-white/10 hover:bg-white/20 active:scale-95 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Home</span>
+        </button>
+      </div>
+
+      <div class="relative w-36 h-36 mx-auto bg-[#222226] rounded-full border border-white/10 flex items-center justify-center shadow-inner">
+        <button onclick="handleRemoteAction('up')" class="absolute top-1.5 left-1/2 -translate-x-1/2 w-10 h-9 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Up">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 8l6 6H6z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('down')" class="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-10 h-9 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Down">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 16l-6-6h12z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('left')" class="absolute left-1.5 top-1/2 -translate-y-1/2 w-9 h-10 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Left">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 12l6-6v12z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('right')" class="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-10 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Right">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M16 12l-6 6V6z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('ok')" class="w-14 h-14 rounded-full bg-[#E50914] hover:bg-[#FF1E27] active:scale-95 text-white font-bold text-xs shadow-lg transition">OK</button>
+      </div>
+    </div>
+
+    <button onclick="toggleVirtualRemote()" class="px-4 py-2.5 rounded-full bg-[#18181B]/95 hover:bg-[#222226] backdrop-blur-md border border-white/15 shadow-xl text-xs font-semibold flex items-center gap-2 text-zinc-200 transition">
+      <svg class="w-4 h-4 text-[#E50914]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="8" r="2"/><line x1="12" y1="14" x2="12" y2="14.01"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+      <span>Remote</span>
+    </button>
+  </div>
+
+  <!-- ==================== 8. TOAST NOTIFICATION BANNER ==================== -->
+  <div id="tv-toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[95] pointer-events-none opacity-0 translate-y-4 transition-all duration-300">
+    <div class="bg-white text-black font-bold text-xs sm:text-sm px-5 py-3 rounded-full shadow-2xl flex items-center gap-2.5">
+      <span id="tv-toast-dot" class="w-2 h-2 rounded-full bg-[#E50914]"></span>
+      <span id="tv-toast-msg"></span>
+    </div>
+  </div>
+
+  <!-- ==================== JAVASCRIPT APPLICATION LOGIC ==================== -->
+  <script>
+    /**
+     * 0. CRISP VECTOR ICON LIBRARY
+     */
+    const ICONS = {
+      volumeOn: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`,
+      volumeOff: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`,
+      edit: `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`,
+      check: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`,
+      plus: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+      bell: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`,
+      thumbUp: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+      thumbDown: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
+      heart: `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`,
+    };
+
+    /**
+     * 1. PROCEDURAL WEB AUDIO ENGINE (UI Feedback)
+     */
+    const AudioEngine = (() => {
+      let ctx = null;
+      let enabled = true;
+
+      function ensureCtx() {
+        if (!ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) ctx = new AudioCtx();
+        }
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume();
+        }
+      }
+
+      function playTick(freq = 540, duration = 0.03) {
+        if (!enabled) return;
+        try {
+          ensureCtx();
+          if (!ctx) return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(freq * 0.65, ctx.currentTime + duration);
+
+          gain.gain.setValueAtTime(0.05, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + duration);
+        } catch (e) {}
+      }
+
+      function playSelect() {
+        playTick(760, 0.05);
+      }
+
+      function playStartupChord() {
+        if (!enabled) return;
+        try {
+          ensureCtx();
+          if (!ctx) return;
+          const now = ctx.currentTime;
+          const freqs = [65.41, 130.81, 196.00, 261.63];
+          freqs.forEach((f, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = idx === 0 ? 'triangle' : 'sine';
+            osc.frequency.setValueAtTime(f, now + (idx === 0 ? 0 : 0.14));
+            gain.gain.setValueAtTime(0.001, now);
+            gain.gain.linearRampToValueAtTime(idx === 0 ? 0.2 : 0.08, now + (idx === 0 ? 0.03 : 0.2));
+            gain.gain.exponentialRampToValueAtTime(0.0008, now + 1.45);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 1.5);
+          });
+        } catch (e) {}
+      }
+
+      return {
+        get enabled() { return enabled; },
+        setEnabled(val) {
+          enabled = val;
+        },
+        playTick,
+        playSelect,
+        playStartupChord
+      };
+    })();
+
+    // Fix TV #15: il toggle audio SI PERSISTE. Il boot payload (settings.uiAudio)
+    // ha la precedenza quando arriva; tra un'avvio e l'altro vince il locale.
+    (function initAudioPref() {
+      try {
+        const v = localStorage.getItem('sctv.uiAudio');
+        if (v !== null) AudioEngine.setEnabled(v === '1');
+      } catch (e) {}
+    })();
+    function persistAudioPref() {
+      try { localStorage.setItem('sctv.uiAudio', AudioEngine.enabled ? '1' : '0'); } catch (e) {}
+    }
+
+    /**
+     * 1.5 LAYER BRIDGE NATIVO — unico canale con SctvActivity ("AndroidJs").
+     *
+     * Nativo→JS: UNICO entry window.__sctvReceive(ev) con envelope
+     *   {"t":"<tipo>","req":<int|null>,"d":{...}}
+     * tipi: boot | catalog | titleDetail | searchResults | myListChanged |
+     *       progressChanged | domainChanged | error
+     * JS→nativo: metodi @JavascriptInterface di SctvBridge (contratto piano §2).
+     */
+    const BRIDGE_VERSION = 1;
+    const Native = window.AndroidJs || null;
+    let reqCounter = 0;
+    function nextReq() {
+      reqCounter += 1;
+      return reqCounter;
+    }
+
+    let bootReceived = false;
+    let pendingDetail = null; // { titleId, req } — correlazione titleDetail (M2)
+
+    function numericTitleId(item) {
+      if (!item) return 0;
+      if (typeof item.titleId === 'number' && item.titleId > 0) return item.titleId;
+      const m = String(item.id || '').match(/(\d+)$/);
+      return m ? parseInt(m[1], 10) : 0;
+    }
+
+    function replaceCatalog(list) {
+      CATALOG.length = 0;
+      for (const it of (list || [])) CATALOG.push(it);
+    }
+
+    /** Applica l'elenco cw (continue watching): item sintetico se il titolo
+     *  non è in catalogo + mappa state.watchProgress per la rail. */
+    function applyContinueWatching(list) {
+      (list || []).forEach(cw => {
+        if (!cw || !cw.id) return;
+        if (!CATALOG.some(c => c.id === cw.id)) {
+          CATALOG.push({
+            id: cw.id,
+            titleId: cw.titleId || numericTitleId({ id: cw.id }),
+            title: cw.name || 'In corso',
+            type: cw.type || 'movie',
+            isOriginal: false, isKids: false,
+            match: 0, year: 0, maturity: 'NR', durationLabel: '',
+            badges: [], genres: [], cast: [], creator: null,
+            synopsis: cw.tag || '',
+            posterUrl: cw.poster || '', backdropUrl: cw.poster || '',
+            url: cw.url || '', comingSoon: false, seasons: 0, episodes: []
+          });
+        }
+        state.watchProgress[cw.id] = {
+          progress: cw.progress || 0,
+          label: cw.label || '',
+          season: cw.season || 1,
+          episode: cw.episode || 1
+        };
+      });
+    }
+
+    /** Spinner nel view-container (fix TV #12): tra boot e payload NON si
+     *  vede mai il flash "No Titles Available". */
+    function showViewLoading() {
+      const container = document.getElementById('view-container');
+      container.innerHTML = `
+        <div id="view-loading" class="fixed inset-0 flex flex-col items-center justify-center">
+          <div class="w-10 h-10 rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin"></div>
+          <p class="mt-4 text-sm text-zinc-400">Caricamento catalogo…</p>
+        </div>`;
+      refreshFocusableElements();
+    }
+
+    function hideViewLoading() {
+      const c = document.getElementById('view-loading');
+      if (c) c.parentElement.innerHTML = '';
+    }
+
+    window.__sctvReceive = function (ev) {
+      try {
+        if (!ev || typeof ev.t !== 'string') return;
+        const d = ev.d || {};
+        switch (ev.t) {
+          case 'boot': {
+            bootReceived = true;
+            hideViewLoading();
+            if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
+            state.rows = d.rows || {};
+            if (Array.isArray(d.myList)) state.myList = d.myList.slice();
+            applyContinueWatching(d.continueWatching);
+            if (d.heroTitleId) state.heroTitleId = d.heroTitleId;
+            if (d.settings && typeof d.settings.uiAudio === 'boolean') {
+              AudioEngine.setEnabled(d.settings.uiAudio);
+              persistAudioPref();
+              syncAudioIcons();
+            }
+            if (state.currentProfile) renderCurrentView();
+            break;
+          }
+
+          case 'catalog': {
+            // Righe/tab reali (M2): catalogo sostituito + re-render del tab attivo.
+            bootReceived = true;
+            hideViewLoading();
+            if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
+            if (d.rows) state.rows = d.rows;
+            // d.tab === 'new' con top10 dedicato: gestito in M2.
+            if (state.currentProfile) renderCurrentView();
+            break;
+          }
+
+          case 'titleDetail': {
+            const it = d.item;
+            if (!it) break;
+            const idx = CATALOG.findIndex(c => c.id === it.id);
+            if (idx >= 0) CATALOG[idx] = it; else CATALOG.push(it);
+            if (pendingDetail && ev.req === pendingDetail.req) {
+              pendingDetail = null;
+              state.detailModalTitleId = it.id;
+              renderDetailModalContent();
+            }
+            break;
+          }
+
+          case 'searchResults': {
+            bootReceived = true;
+            hideViewLoading();
+            if (state.activeTab === 'search') {
+              if (d.query != null) state.searchQuery = d.query;
+              const inp = document.getElementById('tv-search-input');
+              if (inp && inp.value !== state.searchQuery) inp.value = state.searchQuery;
+              const wrap = document.getElementById('search-results-wrap');
+              if (wrap) wrap.innerHTML = renderSearchResultsInner(Array.isArray(d.catalog) ? d.catalog : null);
+            }
+            break;
+          }
+
+          case 'myListChanged': {
+            if (Array.isArray(d.ids)) {
+              state.myList = d.ids.slice();
+              renderCurrentView(false); // push nativo: mai rubafuoco
+              if (state.detailModalTitleId) renderDetailModalContent();
+            }
+            break;
+          }
+
+          case 'progressChanged': {
+            // Fix TV #13: aggiornamento MIRATO della rail #row-continue,
+            // MAI renderCurrentView integrale (il fuoco resta dove è).
+            applyContinueWatching(d.continueWatching);
+            renderContinueRail();
+            break;
+          }
+
+          case 'domainChanged': {
+            showToast('Catalogo aggiornato: ' + (d.host || 'nuovo dominio'));
+            break;
+          }
+
+          case 'error': {
+            if (!bootReceived) renderErrorCard(d.message || 'Errore di connessione');
+            else showToast(d.message || 'Errore');
+            break;
+          }
+        }
+      } catch (e) {
+        console.error('__sctvReceive', e);
+      }
+    };
+
+    /** Contratto BACK nativo (chiamato da SctvActivity): 'exit' = chiudi app,
+     *  'stay' = la pagina ha già gestito via handleBackNavigation(). */
+    window.__sctvBackState = function () {
+      const gateShown = !document.getElementById('profile-screen').classList.contains('hidden');
+      if (gateShown || !state.currentProfile) return 'exit';
+      handleBackNavigation();
+      return 'stay';
+    };
+
+    // Helper bridge invocati dalla UI (view settings + card errore).
+    function openSettings() {
+      AudioEngine.playSelect();
+      if (Native && Native.openSettings) Native.openSettings();
+      else showToast('Bridge nativo non attivo (anteprima browser)');
+    }
+    function openSiteInterface() {
+      AudioEngine.playSelect();
+      if (Native && Native.openSiteInterface) Native.openSiteInterface();
+      else showToast('Bridge nativo non attivo (anteprima browser)');
+    }
+    function retryConnection() {
+      AudioEngine.playSelect();
+      if (Native && Native.retryConnection) {
+        Native.retryConnection();
+      } else {
+        showViewLoading();
+        setTimeout(() => window.__sctvReceive(localDemoBoot()), 400);
+      }
+    }
+
+    /** Chiamata a fine window.onload: con bridge il nativo risponde col push
+     *  dell'evento boot; senza bridge (anteprima browser) parte il demo locale. */
+    function bootReady() {
+      if (Native && Native.bootReady) {
+        Native.bootReady();
+        // Fallback di sicurezza: se il boot non arriva (bridge morto), il
+        // demo locale evita lo spinner infinito.
+        setTimeout(() => {
+          if (!bootReceived) window.__sctvReceive(localDemoBoot());
+        }, 8000);
+      } else {
+        window.__sctvReceive(localDemoBoot());
+      }
+    }
+
+    /**
+     * 2. SCTV CATALOG DATABASE (Populate with real media items)
+     * Expected item shape:
+     * {
+     *   id, titleId, title, type ('tv'|'movie'), isOriginal, isKids, top10Rank,
+     *   match, year, maturity, durationLabel, badges: [], genres: [],
+     *   synopsis, cast: [], creator, posterUrl, backdropUrl, streamUrl,
+     *   comingSoon, releaseDate, seasons, episodes: [{ ep, id, season, title, duration, desc, streamUrl }]
+     * }
+     */
+
+    // -- DATI DEMO (M1): 13 titoli completi per popolare TUTTE le rail. ------
+    // Copertine generate come SVG inline (offline-safe). M2: dati reali via
+    // evento boot (il dispatcher sostituisce il catalogo).
+    const DEMO_ART_PALETTE = [
+      ['#E50914', '#3B0A0D'], ['#2563EB', '#111B45'], ['#059669', '#052E24'],
+      ['#D97706', '#3B1F04'], ['#7C3AED', '#2A0D45'], ['#DB2777', '#450A26'],
+      ['#0EA5E9', '#0B2540'], ['#84CC16', '#1F2B06']
+    ];
+
+    function demoArt(seed, label, w, h) {
+      let hash = 2166136261;
+      for (let i = 0; i < seed.length; i++) {
+        hash ^= seed.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      const [c1, c2] = DEMO_ART_PALETTE[(hash >>> 16) % DEMO_ART_PALETTE.length];
+      const fs = Math.max(18, Math.min(w > 800 ? 96 : 52, Math.floor(w * 1.7 / Math.max(4, label.length))));
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
+        `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+        `<stop offset='0' stop-color='${c1}'/><stop offset='1' stop-color='${c2}'/>` +
+        `</linearGradient></defs>` +
+        `<rect width='${w}' height='${h}' fill='url(#g)'/>` +
+        `<text x='6%' y='88%' font-family='sans-serif' font-weight='800' font-size='${fs}' fill='rgba(255,255,255,0.88)'>${label}</text></svg>`;
+      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
+
+    const DEMO_STREAM = (file) =>
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/' + file + '.mp4';
+
+    const DEMO_CATALOG = [
+      {
+        id: 'site-4101', titleId: 4101, title: 'Ombra di Sangue', type: 'tv',
+        isOriginal: true, isKids: false, top10Rank: 1, match: 97, year: 2025,
+        maturity: '16+', durationLabel: '2 stagioni', badges: ['4K', 'DUB'],
+        genres: ['Thriller', 'Crime', 'Drama'], creator: 'Sara Donati',
+        cast: ['Aurora Vecchi', 'Marco Rinaldi', 'Elena Bruni'],
+        synopsis: 'Una detective della squadra mobile torna in città dopo dieci anni per indagare su una serie di omicidi che replicano un caso mai chiuso: quello che l\'ha costretta a andarsene.',
+        posterUrl: demoArt('site-4101', 'Ombra di Sangue', 400, 600),
+        backdropUrl: demoArt('site-4101', 'Ombra di Sangue', 1280, 720),
+        url: '/it/titles/4101-ombra-di-sangue', comingSoon: false, seasons: 2,
+        episodes: [
+          { ep: 1, id: 410111, season: 1, title: 'Il primo scomparso', duration: '52min', desc: 'Il ritorno in città coincide con un caso che ha l\'odore del vecchio diario.', streamUrl: DEMO_STREAM('BigBuckBunny'), thumb: demoArt('4101-s1e1', 'S1:E1', 640, 360) },
+          { ep: 2, id: 410112, season: 1, title: 'Sangue freddo', duration: '48min', desc: 'La lista dei sospetti si accorcia di un nome troppo presto.', streamUrl: DEMO_STREAM('ElephantsDream'), thumb: demoArt('4101-s1e2', 'S1:E2', 640, 360) },
+          { ep: 3, id: 410113, season: 1, title: 'La talpa', duration: '47min', desc: 'Chiunque consegni le foto alla stampa è dentro la squadra.', streamUrl: DEMO_STREAM('ForBiggerBlazes'), thumb: demoArt('4101-s1e3', 'S1:E3', 640, 360) },
+          { ep: 4, id: 410114, season: 1, title: 'Fuori dal buio', duration: '55min', desc: 'Il caso del 2015 si chiude su se stesso: tutto torna, perfino l\'errore.', streamUrl: DEMO_STREAM('ForBiggerEscapes'), thumb: demoArt('4101-s1e4', 'S1:E4', 640, 360) },
+          { ep: 1, id: 410121, season: 2, title: 'Nuova linfa', duration: '50min', desc: 'Una nuova recluta porta con sé un fascicolo che doveva restare chiuso.', streamUrl: DEMO_STREAM('ForBiggerFun'), thumb: demoArt('4101-s2e1', 'S2:E1', 640, 360) },
+          { ep: 2, id: 410122, season: 2, title: 'Il patto', duration: '46min', desc: 'Il sindaco offre la verità in cambio di un silenzio di tre mesi.', streamUrl: DEMO_STREAM('ForBiggerJoyrides'), thumb: demoArt('4101-s2e2', 'S2:E2', 640, 360) },
+          { ep: 3, id: 410123, season: 2, title: 'Conto alla rovescia', duration: '58min', desc: 'L\'ultimo atto si gioca in centrale: ormai chi è la talpa lo sanno tutti.', streamUrl: DEMO_STREAM('ForBiggerMeltdowns'), thumb: demoArt('4101-s2e3', 'S2:E3', 640, 360) }
+        ]
+      },
+      {
+        id: 'site-4102', titleId: 4102, title: 'Ferro e Velluto', type: 'movie',
+        isOriginal: false, isKids: false, top10Rank: 2, match: 91, year: 2024,
+        maturity: '14+', durationLabel: '1h 58min', badges: ['HD'],
+        genres: ['Drama', 'Romance'],
+        cast: ['Giulia Ferrero', "Paolo Sant'Elia"],
+        synopsis: 'Due famiglie di allenatori, un cavallo solo: al palio di settembre una rivalità decennale si trasforma in qualcosa di più pericoloso dell\'ambizione.',
+        posterUrl: demoArt('site-4102', 'Ferro e Velluto', 400, 600),
+        backdropUrl: demoArt('site-4102', 'Ferro e Velluto', 1280, 720),
+        url: '/it/titles/4102-ferro-e-velluto', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4103', titleId: 4103, title: 'Astral Express', type: 'tv',
+        isOriginal: true, isKids: true, top10Rank: 3, match: 95, year: 2025,
+        maturity: 'T', durationLabel: '2 stagioni', badges: ['4K', 'DUB'],
+        genres: ['Animation', 'Adventure', 'Family'],
+        synopsis: 'Un treno che viaggia tra le stelle, un equipaggio di bambini coraggiosi e una mappa di galassie da salvare, una stazione alla volta.',
+        posterUrl: demoArt('site-4103', 'Astral Express', 400, 600),
+        backdropUrl: demoArt('site-4103', 'Astral Express', 1280, 720),
+        url: '/it/titles/4103-astral-express', comingSoon: false, seasons: 2,
+        episodes: [
+          { ep: 1, id: 410311, season: 1, title: 'Partenza!', duration: '22min', desc: 'La Express riceve il primo biglietto a bordo di un passeggero fantasma.', streamUrl: DEMO_STREAM('Sintel'), thumb: demoArt('4103-s1e1', 'S1:E1', 640, 360) },
+          { ep: 2, id: 410312, season: 1, title: 'La stazione lunare', duration: '21min', desc: 'Una deviazione imprevista porta l\'equipaggio dentro una tempesta di polvere.', streamUrl: DEMO_STREAM('TearsOfSteel'), thumb: demoArt('4103-s1e2', 'S1:E2', 640, 360) },
+          { ep: 3, id: 410313, season: 1, title: 'Il passeggero senza nome', duration: '24min', desc: 'Il biglietto si rinnova da solo e la mappa cresce di una galassia.', streamUrl: DEMO_STREAM('VolkswagenGTIReview'), thumb: demoArt('4103-s1e3', 'S1:E3', 640, 360) },
+          { ep: 1, id: 410321, season: 2, title: 'Rotazione imprevista', duration: '23min', desc: 'Il treno impara a tornare indietro nel tempo di una fermata.', streamUrl: DEMO_STREAM('WeAreGoingOnBullrun'), thumb: demoArt('4103-s2e1', 'S2:E1', 640, 360) },
+          { ep: 2, id: 410322, season: 2, title: 'La cometa blu', duration: '22min', desc: 'La cometa blu chiede un aiuto che l\'equipaggio non sa ancora dare.', streamUrl: DEMO_STREAM('WhatCarCanYouGetForAGrand'), thumb: demoArt('4103-s2e2', 'S2:E2', 640, 360) }
+        ]
+      },
+      {
+        id: 'site-4104', titleId: 4104, title: "L'Ultima Fiamma", type: 'movie',
+        isOriginal: true, isKids: false, top10Rank: 4, match: 88, year: 2025,
+        maturity: '16+', durationLabel: '2h 04min', badges: ['4K'],
+        genres: ['Action', 'Thriller'],
+        cast: ['Riccardo Fanti', 'Serena Lupi'],
+        synopsis: 'Un pompiere in congedo riconosce l\'incendiarista che ha distrutto la sua squadra: adesso la caccia è personale, e la città brucia di nuovo.',
+        posterUrl: demoArt('site-4104', "L'Ultima Fiamma", 400, 600),
+        backdropUrl: demoArt('site-4104', "L'Ultima Fiamma", 1280, 720),
+        url: '/it/titles/4104-l-ultima-fiamma', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4105', titleId: 4105, title: 'Neviche Stagioni', type: 'movie',
+        isOriginal: false, isKids: false, top10Rank: 5, match: 84, year: 2023,
+        maturity: 'T', durationLabel: '1h 47min', badges: ['HD'],
+        genres: ['Comedy', 'Romance'],
+        cast: ['Marta Cei', 'Luca Vanni'],
+        synopsis: 'Due sconosciuti bloccati da una bufera in un rifugio di montagna scoprono di essere, ognuno per conto proprio, il motivo per cui l\'altro è lì.',
+        posterUrl: demoArt('site-4105', 'Neviche Stagioni', 400, 600),
+        backdropUrl: demoArt('site-4105', 'Neviche Stagioni', 1280, 720),
+        url: '/it/titles/4105-neviche-stagioni', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4106', titleId: 4106, title: 'Il Sarto di Palermo', type: 'movie',
+        isOriginal: false, isKids: false, top10Rank: 6, match: 90, year: 2024,
+        maturity: '14+', durationLabel: '2h 11min', badges: ['HD'],
+        genres: ['Crime', 'Drama'],
+        cast: ['Vito Arena', 'Chiara Lupo', 'Nino Ferrara'],
+        synopsis: 'Il miglior sarto della città cuce abiti per la mafia finché una giornalista non gli chiede di scegliere: il silenzio o il testimone.',
+        posterUrl: demoArt('site-4106', 'Il Sarto di Palermo', 400, 600),
+        backdropUrl: demoArt('site-4106', 'Il Sarto di Palermo', 1280, 720),
+        url: '/it/titles/4106-il-sarto-di-palermo', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4107', titleId: 4107, title: 'Deep Circle', type: 'tv',
+        isOriginal: true, isKids: false, match: 86, year: 2024,
+        maturity: '16+', durationLabel: '1 stagione', badges: ['4K'],
+        genres: ['Sci-Fi', 'Mystery'], creator: 'Marco Petti',
+        cast: ['Irene Bassi', 'Tommaso Riva'],
+        synopsis: 'Una stazione subacquea privata smette di rispondere: i sei sopravvissuti scoprono che il cerchio di dosti che li proteggeva è stato chiuso dall\'interno.',
+        posterUrl: demoArt('site-4107', 'Deep Circle', 400, 600),
+        backdropUrl: demoArt('site-4107', 'Deep Circle', 1280, 720),
+        url: '/it/titles/4107-deep-circle', comingSoon: false, seasons: 1,
+        episodes: [
+          { ep: 1, id: 410711, season: 1, title: 'Immersione', duration: '45min', desc: 'La Base Cerchio perde i contatti con la superficie a 3.100 metri.', streamUrl: DEMO_STREAM('BigBuckBunny'), thumb: demoArt('4107-s1e1', 'S1:E1', 640, 360) },
+          { ep: 2, id: 410712, season: 1, title: 'Il cerchio', duration: '43min', desc: 'Il sistema di bordo riconosce un equipaggio che non è mai salito.', streamUrl: DEMO_STREAM('ElephantsDream'), thumb: demoArt('4107-s1e2', 'S1:E2', 640, 360) },
+          { ep: 3, id: 410713, season: 1, title: 'Superficie', duration: '47min', desc: 'L\'unico modo per uscire è diventare quello che il cerchio aspetta.', streamUrl: DEMO_STREAM('ForBiggerBlazes'), thumb: demoArt('4107-s1e3', 'S1:E3', 640, 360) }
+        ]
+      },
+      {
+        id: 'site-4108', titleId: 4108, title: 'Risata Criminale', type: 'movie',
+        isOriginal: false, isKids: false, match: 79, year: 2022,
+        maturity: '14+', durationLabel: '1h 39min', badges: ['HD'],
+        genres: ['Comedy', 'Crime'],
+        cast: ['Bruno Meli', 'Sofia Renda'],
+        synopsis: 'Un comico fallito viene scambiato per un killer in fuga e scopre che lo stand-up nella malavita è molto più semplice: lì il pubblico non fischietta.',
+        posterUrl: demoArt('site-4108', 'Risata Criminale', 400, 600),
+        backdropUrl: demoArt('site-4108', 'Risata Criminale', 1280, 720),
+        url: '/it/titles/4108-risata-criminale', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4109', titleId: 4109, title: 'Piccoli Eroi', type: 'movie',
+        isOriginal: false, isKids: true, match: 92, year: 2025,
+        maturity: 'T', durationLabel: '1h 32min', badges: ['4K', 'DUB'],
+        genres: ['Family', 'Adventure'],
+        synopsis: 'Quando il parco del quartiere viene chiuso, quattro amici di dieci anni organizzano la più disordinata (e efficace) campagna civica della storia.',
+        posterUrl: demoArt('site-4109', 'Piccoli Eroi', 400, 600),
+        backdropUrl: demoArt('site-4109', 'Piccoli Eroi', 1280, 720),
+        url: '/it/titles/4109-piccoli-eroi', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4110', titleId: 4110, title: 'La Torre Silente', type: 'tv',
+        isOriginal: true, isKids: false, match: 93, year: 2025,
+        maturity: '16+', durationLabel: '1 stagione', badges: ['4K'],
+        genres: ['Mystery', 'Drama'], creator: 'Elena Grasso',
+        cast: ['Noemi Dati', 'Andrea Villoresi'],
+        synopsis: 'In un grattacielo dove nessuno si parla da vent\'anni, una ragazza inizia a ricevere biglietti che descrivono la sua giornata… un giorno prima che accada.',
+        posterUrl: demoArt('site-4110', 'La Torre Silente', 400, 600),
+        backdropUrl: demoArt('site-4110', 'La Torre Silente', 1280, 720),
+        url: '/it/titles/4110-la-torre-silente', comingSoon: false, seasons: 1,
+        episodes: [
+          { ep: 1, id: 411011, season: 1, title: 'Apertura', duration: '44min', desc: 'Il primo biglietto descrive una giornata che non è ancora successa.', streamUrl: DEMO_STREAM('Sintel'), thumb: demoArt('4110-s1e1', 'S1:E1', 640, 360) },
+          { ep: 2, id: 411012, season: 1, title: 'Piano dopo piano', duration: '42min', desc: 'Le videocamere della torre mostrano sempre lo stesso corridoio.', streamUrl: DEMO_STREAM('TearsOfSteel'), thumb: demoArt('4110-s1e2', 'S1:E2', 640, 360) },
+          { ep: 3, id: 411013, season: 1, title: "L'ultima porta", duration: '49min', desc: 'Il piano che non esiste nelle planimetrie risponde al citofono.', streamUrl: DEMO_STREAM('VolkswagenGTIReview'), thumb: demoArt('4110-s1e3', 'S1:E3', 640, 360) }
+        ]
+      },
+      {
+        id: 'site-4111', titleId: 4111, title: 'Velocità Estrema', type: 'movie',
+        isOriginal: false, isKids: false, match: 77, year: 2021,
+        maturity: '16+', durationLabel: '1h 52min', badges: ['HD'],
+        genres: ['Action'],
+        cast: ['Dario Costa', 'Mila Renzi'],
+        synopsis: 'Un pilota ritirato accetta una corsa attraverso tre confini in una notte: il carico è illegale, il passeggero è peggio.',
+        posterUrl: demoArt('site-4111', 'Velocità Estrema', 400, 600),
+        backdropUrl: demoArt('site-4111', 'Velocità Estrema', 1280, 720),
+        url: '/it/titles/4111-velocita-estrema', comingSoon: false, seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4112', titleId: 4112, title: 'Dopo il Silenzio', type: 'movie',
+        isOriginal: false, isKids: false, match: 0, year: 2026,
+        maturity: '16+', durationLabel: 'TBA', badges: [],
+        genres: ['Thriller'],
+        synopsis: 'Dodici anni dopo la scomparsa della sorella, un\'ingegnere acustica riceve una registrazione dove la voce di lei chiama per nome la sua città.',
+        posterUrl: demoArt('site-4112', 'Dopo il Silenzio', 400, 600),
+        backdropUrl: demoArt('site-4112', 'Dopo il Silenzio', 1280, 720),
+        url: '/it/titles/4112-dopo-il-silenzio', comingSoon: true,
+        releaseDate: '5 Dic 2025', seasons: 0, episodes: []
+      },
+      {
+        id: 'site-4113', titleId: 4113, title: 'Astral Express: Il Film', type: 'movie',
+        isOriginal: true, isKids: true, match: 0, year: 2026,
+        maturity: 'T', durationLabel: '1h 36min', badges: ['4K'],
+        genres: ['Animation', 'Family'],
+        synopsis: 'Il viaggio più lungo della Express: oltre l\'ultima stazione della mappa c\'è il mondo che ha costruito il treno.',
+        posterUrl: demoArt('site-4113', 'Astral Express: Il Film', 400, 600),
+        backdropUrl: demoArt('site-4113', 'Astral Express: Il Film', 1280, 720),
+        url: '/it/titles/4113-astral-express-il-film', comingSoon: true,
+        releaseDate: '12 Gen 2026', seasons: 0, episodes: []
+      }
+    ];
+
+    // Rail fake per i tre tab browse (contratto boot.rows: {label, ids, isTop10}).
+    const DEMO_ROWS = {
+      home: [
+        { label: 'Continua a guardare', ids: ['site-4101', 'site-4103'] },
+        { label: 'Trending adesso', ids: ['site-4101', 'site-4104', 'site-4102', 'site-4110', 'site-4106'] },
+        { label: 'Top 10 oggi', isTop10: true, ids: ['site-4101', 'site-4102', 'site-4103', 'site-4104', 'site-4105', 'site-4106'] },
+        { label: 'SCtv Originals', ids: ['site-4101', 'site-4103', 'site-4104', 'site-4107', 'site-4110', 'site-4113'] },
+        { label: 'Tutto il catalogo', ids: ['site-4101', 'site-4102', 'site-4103', 'site-4104', 'site-4105', 'site-4106', 'site-4107', 'site-4108', 'site-4109', 'site-4110', 'site-4111'] }
+      ],
+      tv: [
+        { label: 'Top 10 Serie oggi', isTop10: true, ids: ['site-4101', 'site-4103'] },
+        { label: 'Tutte le serie', ids: ['site-4101', 'site-4103', 'site-4107', 'site-4110'] }
+      ],
+      movie: [
+        { label: 'Top 10 Film oggi', isTop10: true, ids: ['site-4102', 'site-4104', 'site-4105', 'site-4106'] },
+        { label: 'Tutti i film', ids: ['site-4102', 'site-4104', 'site-4105', 'site-4106', 'site-4108', 'site-4109', 'site-4111'] }
+      ]
+    };
+
+    const DEMO_CONTINUE = [
+      { id: 'site-4101', titleId: 4101, name: 'Ombra di Sangue', tag: 'S1:E3', progress: 0.42, label: 'S1:E3 · 28 min rimasti', poster: demoArt('site-4101', 'Ombra di Sangue', 400, 600), season: 1, episode: 3, positionSec: 1180, durationSec: 2030, url: '/it/watch/4101' },
+      { id: 'site-4103', titleId: 4103, name: 'Astral Express', tag: 'S1:E2', progress: 0.65, label: 'S1:E2 · 8 min rimasti', poster: demoArt('site-4103', 'Astral Express', 400, 600), season: 1, episode: 2, positionSec: 850, durationSec: 1290, url: '/it/watch/4103' }
+    ];
+
+    /** Evento boot sintetico per l'anteprima browser (senza bridge nativo). */
+    function localDemoBoot() {
+      return {
+        t: 'boot',
+        req: null,
+        d: {
+          bridgeVersion: BRIDGE_VERSION,
+          uiMode: 'sctv',
+          domainHost: 'demo.sctv.local',
+          myList: ['site-4101', 'site-4106'],
+          continueWatching: DEMO_CONTINUE,
+          catalog: DEMO_CATALOG,
+          rows: DEMO_ROWS,
+          heroTitleId: 'site-4101',
+          settings: { uiAudio: AudioEngine.enabled }
+        }
+      };
+    }
+
+    const CATALOG = [];
+
+    /**
+     * 3. APPLICATION STATE & AVATAR PRESETS
+     */
+    const AVATAR_PRESETS = [
+      { id: 'crimson', bg: 'from-[#E50914] to-[#6B0409]', label: 'Crimson' },
+      { id: 'cobalt', bg: 'from-blue-600 to-indigo-950', label: 'Cobalt' },
+      { id: 'emerald', bg: 'from-emerald-500 to-teal-950', label: 'Emerald' },
+      { id: 'amber', bg: 'from-amber-400 via-orange-500 to-rose-600', label: 'Solar' },
+      { id: 'violet', bg: 'from-violet-600 to-fuchsia-950', label: 'Violet' },
+    ];
+
+    function renderAvatarMark(name, isKids = false) {
+      if (isKids) {
+        return `<span class="font-display text-2xl sm:text-3xl tracking-wider text-white">KIDS</span>`;
+      }
+      const initials = (name || 'SC').trim().slice(0, 2).toUpperCase();
+      return `<span class="font-display text-4xl sm:text-5xl tracking-wider text-white">${initials}</span>`;
+    }
+
+    const state = {
+      profiles: [],
+      currentProfile: null,
+      managingProfiles: false,
+      editingProfileId: null,
+      selectedPresetIdx: 0,
+
+      activeTab: 'home',
+      selectedCategory: 'All',
+      searchQuery: '',
+
+      myList: [],
+      ratings: {},
+      reminders: [],
+      watchProgress: {},
+      rows: {},
+
+      heroTitleId: null,
+      heroMuted: true,
+
+      detailModalTitleId: null,
+      detailSelectedSeason: 1,
+
+      virtualRemoteOpen: false,
+    };
+
+    // Fix TV #11: profili in localStorage (sctv.profiles / sctv.currentProfileId).
+    const PROFILE_STORE_KEY = 'sctv.profiles';
+    const PROFILE_CURRENT_KEY = 'sctv.currentProfileId';
+
+    function loadProfiles() {
+      try {
+        const raw = localStorage.getItem(PROFILE_STORE_KEY);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length > 0) return arr;
+        }
+      } catch (e) {}
+      // Primo boot: profilo default "Predefinito".
+      return [{ id: 'p-default', name: 'Predefinito', avatarBg: AVATAR_PRESETS[0].bg, isKids: false }];
+    }
+
+    function persistProfiles() {
+      try { localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(state.profiles)); } catch (e) {}
+    }
+
+    function persistCurrentProfileId(id) {
+      try { localStorage.setItem(PROFILE_CURRENT_KEY, id); } catch (e) {}
+    }
+
+    const NAV_ITEMS = [
+      { id: 'search', label: 'Search', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>` },
+      { id: 'home', label: 'Home', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>` },
+      { id: 'tv', label: 'TV Shows', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>` },
+      { id: 'movies', label: 'Movies', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>` },
+      { id: 'new', label: 'New & Popular', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>` },
+      { id: 'mylist', label: 'My List', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>` },
+      { id: 'categories', label: 'Categories', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>` },
+      { id: 'settings', label: 'Settings', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
+    ];
+
+    /**
+     * 4. HELPER UTILITIES
+     */
+    function getScopedCatalog() {
+      if (state.currentProfile && state.currentProfile.isKids) {
+        return CATALOG.filter(item => item.isKids);
+      }
+      return CATALOG;
+    }
+
+    function getTitleById(id) {
+      return CATALOG.find(t => t.id === id) || CATALOG[0] || null;
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const toast = document.getElementById('tv-toast');
+      document.getElementById('tv-toast-msg').textContent = msg;
+      toast.classList.remove('opacity-0', 'translate-y-4');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-4');
+      }, 2400);
+    }
+
+    function syncAudioIcons() {
+      const on = AudioEngine.enabled;
+      const iconHTML = on ? ICONS.volumeOn : ICONS.volumeOff;
+      const profIcon = document.getElementById('sound-icon-profile');
+      const profLabel = document.getElementById('sound-label-profile');
+      const sideIcon = document.getElementById('sidebar-sound-icon');
+      const sideText = document.getElementById('sidebar-sound-text');
+
+      if (profIcon) profIcon.innerHTML = iconHTML;
+      if (profLabel) profLabel.textContent = on ? 'UI Audio: On' : 'UI Audio: Off';
+      if (sideIcon) sideIcon.innerHTML = iconHTML;
+      if (sideText) sideText.textContent = on ? 'UI Audio: On' : 'UI Audio: Off';
+    }
+
+    function toggleSound() {
+      const next = !AudioEngine.enabled;
+      AudioEngine.setEnabled(next);
+      persistAudioPref();
+      if (next) AudioEngine.playSelect();
+      syncAudioIcons();
+      showToast(next ? 'TV Interface Audio Enabled' : 'TV Interface Audio Muted');
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const str = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const el = document.getElementById('tv-clock');
+      if (el) el.textContent = str;
+    }
+    setInterval(updateClock, 15000);
+
+    /** Card di errore con Riprova (bridge retryConnection). */
+    function renderErrorCard(msg) {
+      const container = document.getElementById('view-container');
+      container.innerHTML = `
+        <div class="pt-32 px-6 sm:px-10 max-w-2xl mx-auto text-center">
+          <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 shadow-xl">
+            <h2 class="text-2xl font-bold mb-2">Impossibile raggiungere il catalogo</h2>
+            <p class="text-sm text-zinc-400 mb-6">${msg}</p>
+            <button onclick="retryConnection()" class="tv-focusable px-6 py-3 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-sm">Riprova</button>
+          </div>
+        </div>`;
+      refreshFocusableElements();
+      setTVFocus(focusableList[0]);
+    }
+
+    /**
+     * 5. PROFILE GATE & MANAGEMENT
+     */
+    function renderProfilesGrid() {
+      const grid = document.getElementById('profiles-grid');
+      const heading = document.getElementById('profile-heading');
+      const manageBtn = document.getElementById('manage-profiles-btn');
+
+      if (state.profiles.length > 0) {
+        manageBtn.classList.remove('hidden');
+      } else {
+        manageBtn.classList.add('hidden');
+        state.managingProfiles = false;
+      }
+
+      heading.textContent = state.managingProfiles ? 'Manage Profiles' : "Who's watching?";
+      manageBtn.textContent = state.managingProfiles ? 'Done' : 'Manage Profiles';
+      manageBtn.className = state.managingProfiles
+        ? 'tv-focusable px-8 py-3 rounded-lg bg-white text-black font-bold tracking-wider uppercase text-xs transition'
+        : 'tv-focusable px-8 py-3 rounded-lg border border-zinc-700 text-zinc-300 hover:text-white hover:border-white font-semibold tracking-wider uppercase text-xs transition';
+
+      let html = state.profiles.map(p => `
+        <button onclick="handleProfileClick('${p.id}')"
+          class="tv-focusable group flex flex-col items-center gap-3.5 p-2 rounded-2xl focus:outline-none">
+          <div class="relative w-28 h-28 sm:w-36 sm:h-36 rounded-2xl bg-gradient-to-br ${p.avatarBg} flex items-center justify-center shadow-2xl border-2 border-white/10 group-hover:border-white transition overflow-hidden">
+            ${renderAvatarMark(p.name, p.isKids)}
+            ${state.managingProfiles ? `
+              <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
+                <div class="w-11 h-11 rounded-full border-2 border-white flex items-center justify-center text-white">
+                  ${ICONS.edit}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <span class="text-zinc-400 group-hover:text-white font-semibold text-base sm:text-lg transition">${p.name}</span>
+        </button>
+      `).join('');
+
+      if (state.profiles.length < 5) {
+        html += `
+          <button onclick="openProfileEditor(null)"
+            class="tv-focusable group flex flex-col items-center gap-3.5 p-2 rounded-2xl focus:outline-none">
+            <div class="w-28 h-28 sm:w-36 sm:h-36 rounded-2xl bg-white/[0.03] group-hover:bg-white/[0.08] border-2 border-dashed border-zinc-700 group-hover:border-white flex items-center justify-center text-zinc-500 group-hover:text-white transition">
+              <svg class="w-9 h-9" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <span class="text-zinc-500 group-hover:text-white font-semibold text-base sm:text-lg transition">Add Profile</span>
+          </button>
+        `;
+      }
+
+      grid.innerHTML = html;
+      refreshFocusableElements();
+      // Fix TV #6: dopo ogni render del gate il fuoco torna sul primo profilo.
+      setTVFocus(focusableList[0]);
+    }
+
+    function toggleManageProfiles() {
+      AudioEngine.playSelect();
+      state.managingProfiles = !state.managingProfiles;
+      renderProfilesGrid();
+    }
+
+    function handleProfileClick(id) {
+      const profile = state.profiles.find(p => p.id === id);
+      if (!profile) return;
+
+      if (state.managingProfiles) {
+        AudioEngine.playSelect();
+        openProfileEditor(profile);
+        return;
+      }
+
+      AudioEngine.playStartupChord();
+      state.currentProfile = profile;
+      persistCurrentProfileId(id);
+      document.getElementById('profile-screen').classList.add('hidden');
+      document.getElementById('profile-screen').classList.remove('flex');
+      document.getElementById('tv-app-shell').classList.remove('hidden');
+
+      const sideAvatar = document.getElementById('sidebar-avatar');
+      sideAvatar.className = `w-10 h-10 rounded-lg flex items-center justify-center font-display text-lg tracking-wider shrink-0 shadow-md bg-gradient-to-br ${profile.avatarBg} text-white`;
+      sideAvatar.textContent = profile.isKids ? 'KIDS' : profile.name.slice(0, 2).toUpperCase();
+      document.getElementById('sidebar-profile-name').textContent = profile.name;
+
+      const kidsPill = document.getElementById('kids-mode-pill');
+      if (profile.isKids) {
+        kidsPill.classList.remove('hidden');
+      } else {
+        kidsPill.classList.add('hidden');
+      }
+
+      state.activeTab = 'home';
+      renderSidebarNav();
+      renderCurrentView();
+      showToast(`Signed in as ${profile.name}`);
+    }
+
+    function openProfileGate() {
+      AudioEngine.playSelect();
+      state.managingProfiles = false;
+      document.getElementById('tv-app-shell').classList.add('hidden');
+      const screen = document.getElementById('profile-screen');
+      screen.classList.remove('hidden');
+      screen.classList.add('flex');
+      renderProfilesGrid();
+    }
+
+    // Mini-tastiera del modal profilo (fix TV #2): il nome si compone a
+    // schermo, niente IME di sistema.
+    let profNameDraft = '';
+    let profKidsChecked = false;
+
+    function renderProfileKeyboard() {
+      const keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+      const box = document.getElementById('profile-kbd');
+      if (!box) return;
+      box.innerHTML = `
+        <div class="grid grid-cols-3 gap-2 mb-2">
+          <button type="button" onclick="profAppendChar(' ')" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Spazio</button>
+          <button type="button" onclick="profBackspaceChar()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Canc</button>
+          <button type="button" onclick="profClearName()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Reset</button>
+        </div>
+        <div class="grid grid-cols-6 gap-1.5">
+          ${keys.map(k => `
+            <button type="button" onclick="profAppendChar('${k}')"
+              class="tv-focusable aspect-square rounded-lg bg-[#222226] hover:bg-white hover:text-black font-bold text-sm flex items-center justify-center transition">
+              ${k}
+            </button>
+          `).join('')}
+        </div>`;
+    }
+
+    function profAppendChar(ch) {
+      AudioEngine.playTick(600);
+      if (profNameDraft.length < 18) profNameDraft += ch;
+      syncProfileNameDraft();
+    }
+    function profBackspaceChar() {
+      AudioEngine.playTick(420);
+      profNameDraft = profNameDraft.slice(0, -1);
+      syncProfileNameDraft();
+    }
+    function profClearName() {
+      AudioEngine.playTick(420);
+      profNameDraft = '';
+      syncProfileNameDraft();
+    }
+    function syncProfileNameDraft() {
+      const inp = document.getElementById('profile-name-input');
+      if (inp) inp.value = profNameDraft;
+    }
+
+    function renderKidsToggle() {
+      const mark = document.getElementById('profile-kids-check');
+      if (mark) mark.innerHTML = profKidsChecked ? ICONS.check : '';
+    }
+
+    function toggleKidsCheckbox() {
+      AudioEngine.playTick();
+      profKidsChecked = !profKidsChecked;
+      renderKidsToggle();
+    }
+
+    function openProfileEditor(profile) {
+      state.editingProfileId = profile ? profile.id : null;
+      document.getElementById('profile-editor-title').textContent = profile ? 'Edit Profile' : 'Add Profile';
+      profNameDraft = profile ? profile.name : '';
+      document.getElementById('profile-name-input').value = profNameDraft;
+      profKidsChecked = profile ? profile.isKids : false;
+      renderKidsToggle();
+
+      const delBtn = document.getElementById('delete-profile-btn');
+      if (profile) {
+        delBtn.classList.remove('hidden');
+      } else {
+        delBtn.classList.add('hidden');
+      }
+
+      const foundIdx = profile ? AVATAR_PRESETS.findIndex(a => a.bg === profile.avatarBg) : 0;
+      state.selectedPresetIdx = foundIdx >= 0 ? foundIdx : 0;
+      renderAvatarPresets();
+
+      const modal = document.getElementById('profile-editor-modal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      refreshFocusableElements();
+      setTVFocus(focusableList[0]);
+    }
+
+    function renderAvatarPresets() {
+      const container = document.getElementById('avatar-color-picker');
+      container.innerHTML = AVATAR_PRESETS.map((preset, idx) => `
+        <button type="button" onclick="selectAvatarPreset(${idx})"
+          class="tv-focusable h-12 rounded-xl bg-gradient-to-br ${preset.bg} flex items-center justify-center text-[11px] font-bold uppercase tracking-wider text-white transition ${state.selectedPresetIdx === idx ? 'ring-2 ring-white scale-105' : 'opacity-65 hover:opacity-100'}">
+          ${preset.label}
+        </button>
+      `).join('');
+    }
+
+    function selectAvatarPreset(idx) {
+      AudioEngine.playTick();
+      state.selectedPresetIdx = idx;
+      renderAvatarPresets();
+    }
+
+    function closeProfileEditor() {
+      const modal = document.getElementById('profile-editor-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      refreshFocusableElements();
+      setTVFocus(focusableList[0]);
+    }
+
+    function saveProfileEditor() {
+      const rawName = profNameDraft.trim();
+      if (!rawName) {
+        showToast('Please enter a profile name');
+        return;
+      }
+      const isKids = profKidsChecked;
+      const preset = AVATAR_PRESETS[state.selectedPresetIdx];
+
+      if (state.editingProfileId) {
+        const idx = state.profiles.findIndex(p => p.id === state.editingProfileId);
+        if (idx >= 0) {
+          state.profiles[idx] = { ...state.profiles[idx], name: rawName, avatarBg: preset.bg, isKids };
+        }
+        showToast('Profile updated');
+      } else {
+        state.profiles.push({
+          id: 'p-' + Date.now(),
+          name: rawName,
+          avatarBg: preset.bg,
+          isKids
+        });
+        showToast(`Created profile "${rawName}"`);
+      }
+
+      AudioEngine.playSelect();
+      persistProfiles();
+      closeProfileEditor();
+      renderProfilesGrid();
+    }
+
+    function deleteEditingProfile() {
+      if (!state.editingProfileId) return;
+      state.profiles = state.profiles.filter(p => p.id !== state.editingProfileId);
+      // Il default non deve mai mancare: ricreato se l'utente ha cancellato tutto.
+      if (state.profiles.length === 0) {
+        state.profiles = [{ id: 'p-default', name: 'Predefinito', avatarBg: AVATAR_PRESETS[0].bg, isKids: false }];
+      }
+      AudioEngine.playSelect();
+      persistProfiles();
+      closeProfileEditor();
+      renderProfilesGrid();
+      showToast('Profile deleted');
+    }
+
+    /**
+     * 6. SIDEBAR NAVIGATION
+     */
+    function expandSidebar(expand) {
+      const sb = document.getElementById('tv-sidebar');
+      if (!sb) return;
+      if (expand) sb.classList.add('sidebar-expanded');
+      else sb.classList.remove('sidebar-expanded');
+    }
+
+    function handleSidebarMouseLeave() {
+      if (currentFocusedEl && currentFocusedEl.closest('#tv-sidebar')) return;
+      expandSidebar(false);
+    }
+
+    function renderSidebarNav() {
+      const nav = document.getElementById('sidebar-nav-list');
+      nav.innerHTML = NAV_ITEMS.map(item => {
+        const active = state.activeTab === item.id;
+        return `
+          <button onclick="switchTab('${item.id}')" data-tab="${item.id}"
+            class="tv-focusable relative flex items-center gap-4 px-3.5 py-3 rounded-xl transition ${active ? 'text-white bg-white/[0.12] font-bold' : 'text-zinc-400 hover:text-white hover:bg-white/[0.06] font-medium'}">
+            ${active ? `<span class="absolute left-0 top-2.5 bottom-2.5 w-1 bg-[#E50914] rounded-r-full"></span>` : ''}
+            ${item.icon}
+            <span class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-sm whitespace-nowrap">${item.label}</span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function switchTab(tabId) {
+      AudioEngine.playSelect();
+      // Sul TV "Settings" apre il dialog NATIVO (contratto bridge
+      // openSettings); il view web resta per l'anteprima browser.
+      if (tabId === 'settings' && Native && Native.openSettings) {
+        Native.openSettings();
+        return;
+      }
+      state.activeTab = tabId;
+      const navMeta = NAV_ITEMS.find(n => n.id === tabId);
+      document.getElementById('view-breadcrumb').textContent = navMeta ? navMeta.label : 'Browse';
+      renderSidebarNav();
+      renderCurrentView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    /**
+     * 7. CONTENT ROWS & CARD RENDERERS
+     */
+    function renderTop10SVG(rank) {
+      return `
+        <svg viewBox="0 0 110 150" class="w-16 sm:w-24 h-28 sm:h-40 shrink-0 -mr-3 sm:-mr-4 z-0 select-none">
+          <text x="52" y="132" text-anchor="middle"
+            font-family="Bebas Neue, Impact, sans-serif"
+            font-size="${rank === 10 ? '125' : '152'}"
+            font-weight="900"
+            fill="#0E0E10"
+            stroke="#52525B"
+            stroke-width="4"
+            letter-spacing="-6">${rank}</text>
+        </svg>
+      `;
+    }
+
+    function renderPosterCard(item, options = {}) {
+      const inList = state.myList.includes(item.id);
+      const prog = state.watchProgress[item.id];
+      const showProgress = options.showProgress && prog;
+      const topRank = options.topRank;
+
+      return `
+        <div class="flex items-end shrink-0 group">
+          ${topRank ? renderTop10SVG(topRank) : ''}
+          <div tabindex="0"
+            onclick="openDetailModal('${item.id}')"
+            onkeydown="if(event.key==='Enter') openDetailModal('${item.id}')"
+            class="tv-focusable relative z-10 w-36 sm:w-44 md:w-48 aspect-[2/3] rounded-xl overflow-hidden bg-sctv-card cursor-pointer border border-white/10 shadow-xl">
+
+            ${item.posterUrl
+              ? `<img src="${item.posterUrl}" alt="${item.title}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />`
+              : `<div class="w-full h-full bg-zinc-900 flex items-center justify-center p-4 text-center font-display text-2xl text-zinc-300">${item.title}</div>`
+            }
+
+            <div class="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+              ${item.isOriginal ? `<span class="px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm font-display text-[#E50914] text-sm tracking-wider shadow">SC</span>` : '<span></span>'}
+              ${item.top10Rank ? `<span class="bg-[#E50914] text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shadow">TOP 10</span>` : ''}
+            </div>
+
+            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-3">
+              <div class="flex items-center gap-1.5 mb-2.5">
+                <button onclick="event.stopPropagation(); startPlayback('${item.id}')"
+                  class="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition shadow" title="Play">
+                  <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button onclick="event.stopPropagation(); toggleMyList('${item.id}')"
+                  class="w-8 h-8 rounded-full bg-black/75 border border-white/40 text-white flex items-center justify-center hover:border-white transition" title="My List">
+                  ${inList ? ICONS.check : ICONS.plus}
+                </button>
+                <button onclick="event.stopPropagation(); openDetailModal('${item.id}')"
+                  class="ml-auto w-8 h-8 rounded-full bg-black/75 border border-white/40 text-white flex items-center justify-center hover:border-white transition" title="More Info">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+              </div>
+              ${item.match ? `<div class="text-[11px] font-bold text-emerald-400">${item.match}% Match</div>` : ''}
+              <div class="flex items-center gap-1.5 text-[10px] text-zinc-300 mt-0.5">
+                ${item.maturity ? `<span class="border border-zinc-600 px-1 rounded">${item.maturity}</span>` : ''}
+                ${item.durationLabel ? `<span>${item.durationLabel}</span>` : ''}
+              </div>
+            </div>
+
+            ${showProgress ? `
+              <div class="absolute bottom-0 inset-x-0 bg-black/85 backdrop-blur-sm px-2.5 py-1.5">
+                <div class="text-[10px] text-zinc-300 font-medium mb-1 truncate">${prog.label}</div>
+                <div class="w-full h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div class="h-full bg-[#E50914]" style="width: ${Math.round(prog.progress * 100)}%"></div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCarouselRow(rowId, title, items, options = {}) {
+      if (!items || items.length === 0) return '';
+      return `
+        <section class="mb-9 relative group/row">
+          <div class="flex items-center justify-between px-6 sm:px-10 mb-3">
+            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2.5">
+              <span>${title}</span>
+            </h2>
+            <div class="hidden sm:flex items-center gap-1.5">
+              <button onclick="scrollRow('${rowId}', -1)" class="w-8 h-8 rounded-lg bg-white/[0.07] hover:bg-white/[0.16] flex items-center justify-center text-zinc-300 transition" aria-label="Scroll left">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <button onclick="scrollRow('${rowId}', 1)" class="w-8 h-8 rounded-lg bg-white/[0.07] hover:bg-white/[0.16] flex items-center justify-center text-zinc-300 transition" aria-label="Scroll right">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="${rowId}" class="flex items-center gap-3.5 sm:gap-4 overflow-x-auto no-scrollbar px-6 sm:px-10 py-3 scroll-smooth">
+            ${items.map((item, index) => renderPosterCard(item, {
+              ...options,
+              topRank: options.isTop10 ? index + 1 : null
+            })).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    function scrollRow(rowId, dir) {
+      AudioEngine.playTick();
+      const el = document.getElementById(rowId);
+      if (el) el.scrollBy({ left: dir * 560, behavior: 'smooth' });
+    }
+
+    /** Righe dal bridge (boot.rows): {label, ids, isTop10}. La rail continue
+     *  conserva SEMPRE l'id fisso row-continue per l'aggiornamento mirato. */
+    function rowsForTab(filterType) {
+      if (!state.rows) return [];
+      if (filterType === 'all') return state.rows.home || [];
+      if (filterType === 'tv') return state.rows.tv || [];
+      if (filterType === 'movie') return state.rows.movie || [];
+      return [];
+    }
+
+    function renderBridgeRow(row, idx) {
+      const scopedIds = new Set(getScopedCatalog().map(i => i.id));
+      const items = (row.ids || [])
+        .map(id => CATALOG.find(c => c.id === id))
+        .filter(i => i && scopedIds.has(i.id));
+      if (!items.length) return '';
+      const isContinue = /continua|continue/i.test(row.label || '');
+      const rowId = isContinue ? 'row-continue' : 'row-bridge-' + idx;
+      return renderCarouselRow(rowId, row.label, items, {
+        showProgress: isContinue,
+        isTop10: !!row.isTop10
+      });
+    }
+
+    // Fix TV #13: aggiornamento MIRATO della rail "Continua a guardare" su
+    // progressChanged — solo il contenuto dello scroller #row-continue.
+    function renderContinueRail() {
+      const el = document.getElementById('row-continue');
+      if (!el) return;
+      const items = getScopedCatalog().filter(i => state.watchProgress[i.id] && !i.comingSoon);
+      const section = el.closest('section');
+      if (!items.length) {
+        if (section) section.remove();
+        return;
+      }
+      el.innerHTML = items.map(item => renderPosterCard(item, { showProgress: true })).join('');
+      refreshFocusableElements();
+    }
+
+    /**
+     * 8. VIEW RENDERERS
+     */
+    function renderEmptyCatalogState(title = 'No Titles Available', subtitle = 'Add media items to the catalog to start browsing.') {
+      return `
+        <div class="pt-32 px-6 sm:px-10 max-w-2xl mx-auto text-center">
+          <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 shadow-xl">
+            <h2 class="text-2xl font-bold mb-2">${title}</h2>
+            <p class="text-sm text-zinc-400">${subtitle}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderHeroBillboard(heroItem) {
+      if (!heroItem) return '';
+      const inList = state.myList.includes(heroItem.id);
+      return `
+        <section class="relative w-full h-[68vh] sm:h-[76vh] min-h-[480px] max-h-[780px] overflow-hidden mb-4">
+          ${heroItem.backdropUrl
+            ? `<img src="${heroItem.backdropUrl}" alt="${heroItem.title}" class="absolute inset-0 w-full h-full object-cover animate-ken-burns" />`
+            : `<div class="absolute inset-0 bg-zinc-950"></div>`
+          }
+          <div class="hero-vignette-left absolute inset-0"></div>
+          <div class="hero-vignette-bottom absolute inset-0"></div>
+
+          <div class="relative z-10 h-full flex flex-col justify-end pb-14 sm:pb-20 px-6 sm:px-10 max-w-3xl">
+            <div class="flex items-center gap-2.5 mb-3">
+              ${heroItem.isOriginal ? `<span class="font-display text-xl sm:text-2xl text-[#E50914] tracking-wider">SCTV</span>` : ''}
+              <span class="text-[11px] uppercase tracking-[0.35em] text-zinc-400 font-bold">
+                ${heroItem.type === 'tv' ? 'SERIES' : 'FILM'}
+              </span>
+              ${heroItem.top10Rank ? `
+                <span class="ml-2 bg-[#E50914] text-white text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider">
+                  # ${heroItem.top10Rank} Today
+                </span>
+              ` : ''}
+            </div>
+
+            <h1 class="font-display text-5xl sm:text-7xl md:text-8xl tracking-wide leading-[0.95] text-white drop-shadow-2xl mb-4">
+              ${heroItem.title}
+            </h1>
+
+            <div class="flex flex-wrap items-center gap-2.5 text-xs sm:text-sm font-semibold mb-4">
+              ${heroItem.match ? `<span class="text-emerald-400 font-bold">${heroItem.match}% Match</span>` : ''}
+              ${heroItem.year ? `<span class="text-zinc-300">${heroItem.year}</span>` : ''}
+              ${heroItem.maturity ? `<span class="border border-zinc-600 px-1.5 py-0.5 rounded text-xs text-zinc-200">${heroItem.maturity}</span>` : ''}
+              ${heroItem.durationLabel ? `<span class="text-zinc-300">${heroItem.durationLabel}</span>` : ''}
+              ${(heroItem.badges || []).map(b => `<span class="bg-white/10 border border-white/15 px-2 py-0.5 rounded text-[11px] text-zinc-200">${b}</span>`).join('')}
+            </div>
+
+            <p class="text-zinc-300 text-sm sm:text-base line-clamp-3 leading-relaxed mb-7 max-w-2xl">
+              ${heroItem.synopsis || ''}
+            </p>
+
+            <div class="flex flex-wrap items-center gap-3.5">
+              <button onclick="startPlayback('${heroItem.id}')"
+                class="tv-focusable bg-white hover:bg-zinc-200 text-black font-extrabold px-7 sm:px-9 py-3.5 rounded-xl flex items-center gap-2.5 text-sm sm:text-base shadow-xl transition">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <span>Play</span>
+              </button>
+
+              <button onclick="openDetailModal('${heroItem.id}')"
+                class="tv-focusable bg-white/[0.14] hover:bg-white/[0.22] backdrop-blur-md text-white font-bold px-6 sm:px-8 py-3.5 rounded-xl flex items-center gap-2.5 text-sm sm:text-base border border-white/15 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>More Info</span>
+              </button>
+
+              <button onclick="toggleMyList('${heroItem.id}')"
+                class="tv-focusable bg-black/50 hover:bg-white/15 backdrop-blur-md text-white font-semibold px-5 py-3.5 rounded-xl border border-white/20 text-sm sm:text-base flex items-center gap-2 transition">
+                ${inList ? ICONS.check : ICONS.plus}
+                <span>${inList ? 'In My List' : 'My List'}</span>
+              </button>
+            </div>
+          </div>
+
+          ${heroItem.maturity ? `
+            <div class="hidden sm:flex items-center gap-3 absolute right-0 bottom-20 z-10">
+              <div class="bg-zinc-900/90 border-l-4 border-white px-5 py-2 text-sm font-bold tracking-wider">
+                ${heroItem.maturity}
+              </div>
+            </div>
+          ` : ''}
+        </section>
+      `;
+    }
+
+    function renderBrowseView(filterType = 'all') {
+      const pool = getScopedCatalog().filter(i => !i.comingSoon);
+      const filteredPool = filterType === 'all' ? pool : pool.filter(i => i.type === filterType);
+      const rows = rowsForTab(filterType);
+
+      if (filteredPool.length === 0 && rows.length === 0) {
+        return renderEmptyCatalogState();
+      }
+
+      const heroItem = filteredPool.find(i => i.id === state.heroTitleId) || filteredPool[0] || null;
+
+      // Con righe dal bridge (boot/catalog) si renderizzano quelle; senza,
+      // l'anteprima browser ricade sulle rail calcolate dal catalogo.
+      const rowsHtml = rows.length > 0
+        ? rows.map((row, idx) => renderBridgeRow(row, idx)).join('')
+        : (() => {
+            const continueWatching = filteredPool.filter(i => state.watchProgress[i.id]);
+            const top10TV = pool.filter(i => i.type === 'tv' && i.top10Rank).sort((a, b) => a.top10Rank - b.top10Rank);
+            const top10Movies = pool.filter(i => i.type === 'movie' && i.top10Rank).sort((a, b) => a.top10Rank - b.top10Rank);
+            const originals = filteredPool.filter(i => i.isOriginal);
+            return `
+              ${renderCarouselRow('row-continue', `Continue Watching for ${state.currentProfile.name}`, continueWatching, { showProgress: true })}
+              ${filterType !== 'movie' ? renderCarouselRow('row-top10-tv', 'Top 10 Series Today', top10TV, { isTop10: true }) : ''}
+              ${renderCarouselRow('row-all', filterType === 'tv' ? 'All Series' : filterType === 'movie' ? 'All Films' : 'Catalog', filteredPool)}
+              ${filterType !== 'tv' ? renderCarouselRow('row-top10-movies', 'Top 10 Films Today', top10Movies, { isTop10: true }) : ''}
+              ${renderCarouselRow('row-originals', 'SCtv Originals', originals)}
+            `;
+          })();
+
+      return `
+        ${heroItem ? renderHeroBillboard(heroItem) : ''}
+        <div class="-mt-6 relative z-20">
+          ${rowsHtml}
+        </div>
+      `;
+    }
+
+    function renderNewAndPopularView() {
+      const pool = getScopedCatalog();
+      const comingSoon = pool.filter(i => i.comingSoon);
+      // Fix TV #9: il Top 10 è ORDINATO per top10Rank (non per ordine catalogo).
+      const top10All = pool
+        .filter(i => i.top10Rank && !i.comingSoon)
+        .sort((a, b) => (a.top10Rank || 0) - (b.top10Rank || 0))
+        .slice(0, 10);
+
+      if (comingSoon.length === 0 && top10All.length === 0) {
+        return renderEmptyCatalogState('No Upcoming or Trending Titles', 'New releases and popular titles will appear here.');
+      }
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-8">New & Popular</h1>
+
+          ${comingSoon.length > 0 ? `
+            <h2 class="text-lg font-bold uppercase tracking-wider text-zinc-300 mb-4">Coming Soon</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+              ${comingSoon.map(item => {
+                const reminded = state.reminders.includes(item.id);
+                return `
+                  <div class="bg-[#18181B] border border-white/10 rounded-2xl overflow-hidden flex flex-col sm:flex-row shadow-xl">
+                    ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" class="sm:w-56 h-44 sm:h-auto object-cover" />` : ''}
+                    <div class="p-5 flex flex-col justify-between flex-1">
+                      <div>
+                        <div class="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 mb-1">${item.releaseDate || 'Coming Soon'}</div>
+                        <h3 class="font-display text-3xl tracking-wide mb-2">${item.title}</h3>
+                        <p class="text-xs text-zinc-400 line-clamp-3 mb-4 leading-relaxed">${item.synopsis || ''}</p>
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <button onclick="toggleReminder('${item.id}')"
+                          class="tv-focusable px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition ${reminded ? 'bg-emerald-500 text-black' : 'bg-white text-black hover:bg-zinc-200'}">
+                          ${reminded ? ICONS.check : ICONS.bell}
+                          <span>${reminded ? 'Reminder Set' : 'Remind Me'}</span>
+                        </button>
+                        <button onclick="openDetailModal('${item.id}')" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold transition">
+                          Details
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : ''}
+
+          ${top10All.length > 0 ? `
+            <h2 class="text-lg font-bold uppercase tracking-wider text-zinc-300 mb-4">Top 10 Most Watched</h2>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+              ${top10All.map(item => renderPosterCard(item)).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function renderMyListView() {
+      const pool = getScopedCatalog();
+      const saved = pool.filter(i => state.myList.includes(i.id));
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <div class="mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight">My List</h1>
+            <p class="text-zinc-400 text-sm mt-1">${saved.length} saved title${saved.length === 1 ? '' : 's'} for ${state.currentProfile.name}</p>
+          </div>
+
+          ${saved.length === 0 ? `
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 text-center max-w-lg mx-auto my-12">
+              <h2 class="text-xl font-bold mb-2">Your watchlist is empty</h2>
+              <p class="text-sm text-zinc-400 mb-6">Save series and films to watch later by selecting "+ My List" on any title.</p>
+              <button onclick="switchTab('home')" class="tv-focusable px-6 py-3 rounded-xl bg-white text-black font-bold text-sm">
+                Explore Catalog
+              </button>
+            </div>
+          ` : `
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+              ${saved.map(item => renderPosterCard(item)).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function renderCategoriesView() {
+      const pool = getScopedCatalog();
+      const dynamicGenres = Array.from(new Set(pool.flatMap(i => i.genres || [])));
+      const allGenres = ['All', ...dynamicGenres];
+      const filtered = state.selectedCategory === 'All'
+        ? pool
+        : pool.filter(i => (i.genres || []).includes(state.selectedCategory));
+
+      if (pool.length === 0) {
+        return renderEmptyCatalogState('No Categories Available', 'Categories are generated automatically from catalog genres.');
+      }
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-6">Categories</h1>
+
+          <div class="flex flex-wrap gap-2.5 mb-8">
+            ${allGenres.map(g => `
+              <button onclick="selectCategory('${g}')"
+                class="tv-focusable px-5 py-2.5 rounded-lg text-xs uppercase tracking-wider font-bold transition ${state.selectedCategory === g ? 'bg-[#E50914] text-white shadow-lg' : 'bg-white/[0.07] text-zinc-300 hover:bg-white/[0.15] hover:text-white'}">
+                ${g}
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+            ${filtered.map(item => renderPosterCard(item)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function selectCategory(genre) {
+      AudioEngine.playSelect();
+      state.selectedCategory = genre;
+      renderCurrentView();
+    }
+
+    /**
+     * 9. TV ON-SCREEN KEYBOARD SEARCH VIEW
+     */
+    function searchPool() {
+      const pool = getScopedCatalog();
+      const q = state.searchQuery.trim().toLowerCase();
+      return q
+        ? pool.filter(i =>
+            i.title.toLowerCase().includes(q) ||
+            (i.genres || []).some(g => g.toLowerCase().includes(q)) ||
+            (i.cast || []).some(c => c.toLowerCase().includes(q))
+          )
+        : pool.slice(0, 10);
+    }
+
+    /** Blocco destro del tab search (heading + griglia/empty): viene
+     *  sostituito MIRATAMENTE ad ogni tasto (fix TV #14). */
+    function renderSearchResultsInner(itemsOverride) {
+      const q = state.searchQuery.trim();
+      const results = itemsOverride || searchPool();
+      return `
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold tracking-tight">
+            ${q ? `Results for "${state.searchQuery}" (${results.length})` : 'Browse Catalog'}
+          </h2>
+        </div>
+
+        ${results.length === 0 ? `
+          <div class="bg-[#18181B] rounded-2xl p-10 text-center border border-white/10">
+            <p class="text-lg font-bold mb-1">${q ? `No matches found for "${state.searchQuery}"` : 'Catalog is empty'}</p>
+            <p class="text-sm text-zinc-400">${q ? 'Try searching for another title, cast member, or genre.' : 'Add items to the catalog to enable search.'}</p>
+          </div>
+        ` : `
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            ${results.map(item => renderPosterCard(item)).join('')}
+          </div>
+        `}
+      `;
+    }
+
+    function renderSearchView() {
+      const keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+            <div class="lg:col-span-5 bg-[#18181B] border border-white/10 rounded-2xl p-5 h-fit">
+              <div class="flex items-center gap-3 bg-black/75 border border-white/15 rounded-xl px-4 py-3 mb-4">
+                <svg class="w-5 h-5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input id="tv-search-input" type="text" value="${state.searchQuery}"
+                  oninput="handleSearchInput(this.value)"
+                  placeholder="Titles, genres, or cast"
+                  class="bg-transparent text-white font-semibold text-sm w-full focus:outline-none" />
+                <button id="search-clear-btn" onclick="clearSearchQuery()"
+                  class="tv-focusable hidden text-zinc-400 hover:text-white text-xs font-bold uppercase shrink-0">Clear</button>
+              </div>
+
+              <div class="grid grid-cols-3 gap-2 mb-2.5">
+                <button onclick="appendSearchChar(' ')" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Space</button>
+                <button onclick="backspaceSearchChar()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Delete</button>
+                <button onclick="clearSearchQuery()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Reset</button>
+              </div>
+
+              <div class="grid grid-cols-6 gap-1.5">
+                ${keys.map(k => `
+                  <button onclick="appendSearchChar('${k}')"
+                    class="tv-focusable aspect-square rounded-lg bg-[#222226] hover:bg-white hover:text-black font-bold text-sm flex items-center justify-center transition">
+                    ${k}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+
+            <div class="lg:col-span-7" id="search-results-wrap">
+              ${renderSearchResultsInner()}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Fix TV #14: aggiornamento MIRATO (input + griglia) — MAI
+    // renderCurrentView integrale per tasto (il fuoco resta sul tasto).
+    function updateSearchView() {
+      const inp = document.getElementById('tv-search-input');
+      if (inp && inp.value !== state.searchQuery) inp.value = state.searchQuery;
+      const clearBtn = document.getElementById('search-clear-btn');
+      if (clearBtn) clearBtn.classList.toggle('hidden', !state.searchQuery);
+      const wrap = document.getElementById('search-results-wrap');
+      if (wrap) wrap.innerHTML = renderSearchResultsInner();
+    }
+
+    function appendSearchChar(ch) {
+      AudioEngine.playTick(600);
+      state.searchQuery += ch;
+      updateSearchView();
+    }
+    function backspaceSearchChar() {
+      AudioEngine.playTick(420);
+      state.searchQuery = state.searchQuery.slice(0, -1);
+      updateSearchView();
+    }
+    function clearSearchQuery() {
+      AudioEngine.playSelect();
+      state.searchQuery = '';
+      updateSearchView();
+    }
+    // Typing reale (IME/desktop): solo griglia, niente render integrale né
+    // rubafuoco — l'input conserva il suo focus.
+    function handleSearchInput(val) {
+      state.searchQuery = val;
+      updateSearchView();
+    }
+
+    /**
+     * 10. SETTINGS & CONNECTION STATUS VIEW
+     */
+    function renderSettingsView() {
+      const isOnline = navigator.onLine;
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-4xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2">Settings</h1>
+          <p class="text-zinc-400 text-sm mb-8">Manage active profile, interface audio, and connection status.</p>
+
+          <div class="space-y-5">
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6 flex items-center justify-between">
+              <div class="flex items-center gap-4">
+                <div class="w-14 h-14 rounded-xl bg-gradient-to-br ${state.currentProfile.avatarBg} flex items-center justify-center font-display text-2xl tracking-wider text-white">
+                  ${state.currentProfile.isKids ? 'KIDS' : state.currentProfile.name.slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div class="font-bold text-lg">${state.currentProfile.name}</div>
+                  <div class="text-xs text-zinc-400">${state.currentProfile.isKids ? 'Kids Profile (PG & Below)' : 'Standard Profile'}</div>
+                </div>
+              </div>
+              <button onclick="openProfileGate()" class="tv-focusable px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs uppercase tracking-wider font-bold transition">
+                Switch Profile
+              </button>
+            </div>
+
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6 space-y-4">
+              <h2 class="font-bold text-base uppercase tracking-wider text-zinc-300">Audio</h2>
+              <div class="flex items-center justify-between py-2">
+                <div>
+                  <div class="font-semibold text-sm">TV Interface Audio</div>
+                  <div class="text-xs text-zinc-400">Navigation feedback and startup chord</div>
+                </div>
+                <button onclick="toggleSound(); renderCurrentView();" class="tv-focusable px-4 py-2 rounded-lg bg-white text-black font-bold text-xs uppercase tracking-wider">
+                  ${AudioEngine.enabled ? 'Enabled' : 'Muted'}
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6 space-y-4">
+              <h2 class="font-bold text-base uppercase tracking-wider text-zinc-300">Interface</h2>
+              <div class="flex items-center justify-between py-2">
+                <div>
+                  <div class="font-semibold text-sm">Native App Settings</div>
+                  <div class="text-xs text-zinc-400">Interface mode (SCtv / classic site) and streaming quality cap</div>
+                </div>
+                <button onclick="openSettings()" class="tv-focusable px-4 py-2 rounded-lg bg-white text-black font-bold text-xs uppercase tracking-wider">
+                  Open
+                </button>
+              </div>
+              <div class="flex items-center justify-between py-2">
+                <div>
+                  <div class="font-semibold text-sm">Classic Site Interface</div>
+                  <div class="text-xs text-zinc-400">Leave SCtv and browse the StreamingCommunity site</div>
+                </div>
+                <button onclick="openSiteInterface()" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase tracking-wider">
+                  Switch
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h2 class="font-bold text-base uppercase tracking-wider text-zinc-300">Network</h2>
+                  <p class="text-xs text-zinc-400">Device connectivity status</p>
+                </div>
+                <button onclick="checkConnectionStatus()" class="tv-focusable px-5 py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-xs uppercase tracking-wider transition">
+                  Refresh Status
+                </button>
+              </div>
+              <div id="network-test-output" class="bg-black/60 border border-white/5 rounded-xl p-4 text-sm text-zinc-300 flex items-center justify-between">
+                <span>Network State: <strong id="network-status-label" class="${isOnline ? 'text-emerald-400' : 'text-red-400'}">${isOnline ? 'Online' : 'Offline'}</strong></span>
+                <span id="network-catalog-count" class="font-mono text-xs text-zinc-400">${CATALOG.length} catalog item${CATALOG.length === 1 ? '' : 's'} loaded</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function checkConnectionStatus() {
+      AudioEngine.playSelect();
+      const online = navigator.onLine;
+      const lbl = document.getElementById('network-status-label');
+      if (lbl) {
+        lbl.textContent = online ? 'Online' : 'Offline';
+        lbl.className = online ? 'text-emerald-400' : 'text-red-400';
+      }
+      showToast(online ? 'Device is online' : 'Device is offline');
+    }
+
+    function renderCurrentView(focusFirst = true) {
+      const container = document.getElementById('view-container');
+      // Fix TV #12: finché il boot non è arrivato, spinner — mai il flash
+      // "No Titles Available".
+      if (!bootReceived) {
+        showViewLoading();
+        return;
+      }
+      switch (state.activeTab) {
+        case 'home':
+          container.innerHTML = renderBrowseView('all');
+          break;
+        case 'tv':
+          container.innerHTML = renderBrowseView('tv');
+          break;
+        case 'movies':
+          container.innerHTML = renderBrowseView('movie');
+          break;
+        case 'new':
+          container.innerHTML = renderNewAndPopularView();
+          break;
+        case 'mylist':
+          container.innerHTML = renderMyListView();
+          break;
+        case 'categories':
+          container.innerHTML = renderCategoriesView();
+          break;
+        case 'search':
+          container.innerHTML = renderSearchView();
+          break;
+        case 'settings':
+          container.innerHTML = renderSettingsView();
+          break;
+      }
+      refreshFocusableElements();
+      // Fix TV #6: fuoco automatico al primo elemento dopo ogni render.
+      if (focusFirst) setTVFocus(focusableList[0]);
+    }
+
+    /**
+     * 11. MY LIST, RATINGS & REMINDERS
+     */
+    function toggleMyList(titleId) {
+      AudioEngine.playSelect();
+      const idx = state.myList.indexOf(titleId);
+      const item = getTitleById(titleId);
+      if (!item) return;
+      if (idx >= 0) {
+        state.myList.splice(idx, 1);
+        showToast(`Removed "${item.title}" from My List`);
+      } else {
+        state.myList.push(titleId);
+        showToast(`Added "${item.title}" to My List`);
+      }
+      renderCurrentView();
+      if (state.detailModalTitleId === titleId) renderDetailModalContent();
+      // Bridge: FavoritesStore reale (M2). L'aggiornamento ottimistico sopra
+      // rende la UI immediata anche se il nativo non risponde.
+      if (Native && Native.toggleMyList) Native.toggleMyList(numericTitleId(item));
+    }
+
+    function setRating(titleId, ratingVal) {
+      AudioEngine.playSelect();
+      if (state.ratings[titleId] === ratingVal) {
+        delete state.ratings[titleId];
+        showToast('Rating removed');
+      } else {
+        state.ratings[titleId] = ratingVal;
+        const labels = { down: 'Marked as not for me', up: 'Rated: Liked', love: 'Rated: Loved' };
+        showToast(labels[ratingVal]);
+      }
+      if (state.detailModalTitleId === titleId) renderDetailModalContent();
+    }
+
+    function toggleReminder(titleId) {
+      AudioEngine.playSelect();
+      const idx = state.reminders.indexOf(titleId);
+      const item = getTitleById(titleId);
+      if (!item) return;
+      if (idx >= 0) {
+        state.reminders.splice(idx, 1);
+        showToast(`Reminder removed for ${item.title}`);
+      } else {
+        state.reminders.push(titleId);
+        showToast(`Reminder set for ${item.title}`);
+      }
+      renderCurrentView();
+    }
+
+    /**
+     * 12. TITLE DETAIL MODAL
+     */
+    function openDetailModal(titleId) {
+      const item = getTitleById(titleId);
+      if (!item) return;
+      AudioEngine.playSelect();
+      state.detailModalTitleId = titleId;
+      state.detailSelectedSeason = 1;
+      // M2: episodi reali via bridge quando il catalogo li ha vuoti (serie).
+      pendingDetail = null;
+      if (Native && Native.loadDetail && item.type === 'tv' &&
+          (!item.episodes || item.episodes.length === 0)) {
+        const req = nextReq();
+        pendingDetail = { titleId: item.id, req };
+        Native.loadDetail(numericTitleId(item), req);
+      }
+      renderDetailModalContent();
+
+      const modal = document.getElementById('detail-modal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      refreshFocusableElements();
+      setTVFocus(focusableList[0]);
+    }
+
+    function closeDetailModal() {
+      AudioEngine.playTick(400);
+      state.detailModalTitleId = null;
+      pendingDetail = null;
+      const modal = document.getElementById('detail-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      refreshFocusableElements();
+      // Fix TV #6: al rientro dalla modal il fuoco torna sul primo elemento
+      // della vista sottostante.
+      setTVFocus(focusableList[0]);
+    }
+
+    function renderDetailModalContent() {
+      const item = getTitleById(state.detailModalTitleId);
+      if (!item) return;
+      const inList = state.myList.includes(item.id);
+      const rating = state.ratings[item.id];
+      const similar = getScopedCatalog().filter(t => t.id !== item.id && (t.genres || []).some(g => (item.genres || []).includes(g))).slice(0, 6);
+
+      // Fix TV #4: filtro stagione sul campo ep.season (il selettore <select>
+      // è stato sostituito da coppie di bottoni ◀/▶ navigabili col D-pad).
+      const seasonTotal = item.seasons || 1;
+      const eps = (item.episodes || []).filter(ep => (ep.season || 1) === state.detailSelectedSeason);
+
+      const episodesSection = item.type === 'tv' && ((item.episodes || []).length > 0 || item.seasons > 0) ? `
+        <div class="mt-8 border-t border-white/10 pt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold uppercase tracking-wider text-zinc-200">Episodes</h3>
+            <div class="flex items-center gap-2">
+              <button id="season-prev" onclick="changeDetailSeason(state.detailSelectedSeason - 1)"
+                class="tv-focusable w-10 h-9 rounded-lg bg-[#222226] border border-white/15 flex items-center justify-center text-zinc-300 hover:text-white transition" aria-label="Previous season">◀</button>
+              <span class="px-3 py-1.5 rounded-lg bg-[#222226] border border-white/15 text-sm font-bold min-w-[7.5rem] text-center tabular-nums">
+                Season ${state.detailSelectedSeason}${seasonTotal > 1 ? ' / ' + seasonTotal : ''}
+              </span>
+              <button id="season-next" onclick="changeDetailSeason(state.detailSelectedSeason + 1)"
+                class="tv-focusable w-10 h-9 rounded-lg bg-[#222226] border border-white/15 flex items-center justify-center text-zinc-300 hover:text-white transition" aria-label="Next season">▶</button>
+            </div>
+          </div>
+
+          ${eps.length === 0 ? `
+            <div class="bg-[#18181B] border border-white/10 rounded-xl p-6 text-center">
+              <p class="text-sm text-zinc-400">Nessun episodio disponibile per la stagione ${state.detailSelectedSeason}.</p>
+            </div>
+          ` : `
+            <div class="space-y-3">
+              ${eps.map(ep => `
+                <div onclick="startPlayback('${item.id}', ${ep.season || 1}, ${ep.ep})"
+                  class="tv-focusable flex items-center gap-4 p-3.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.1] cursor-pointer border border-transparent hover:border-white/15 transition">
+                  <div class="text-lg font-bold text-zinc-500 w-7 text-center">${ep.ep}</div>
+                  <div class="relative w-32 sm:w-40 aspect-video rounded-lg overflow-hidden shrink-0 bg-black">
+                    ${ep.thumb || item.backdropUrl ? `<img src="${ep.thumb || item.backdropUrl}" alt="${ep.title}" class="w-full h-full object-cover opacity-85" />` : ''}
+                    <div class="absolute inset-0 flex items-center justify-center">
+                      <span class="w-9 h-9 rounded-full bg-black/75 border border-white/80 flex items-center justify-center text-white">
+                        <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                      <h4 class="font-bold text-sm sm:text-base truncate">S${ep.season || 1}:E${ep.ep} "${ep.title}"</h4>
+                      <span class="text-xs text-zinc-400 shrink-0">${ep.duration || ''}</span>
+                    </div>
+                    <p class="text-xs text-zinc-400 line-clamp-2">${ep.desc || ''}</p>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      ` : '';
+
+      document.getElementById('detail-modal-content').innerHTML = `
+        <div class="relative h-72 sm:h-96 overflow-hidden">
+          ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" class="w-full h-full object-cover" />` : '<div class="w-full h-full bg-zinc-950"></div>'}
+          <div class="absolute inset-0 bg-gradient-to-t from-[#161619] via-[#161619]/45 to-transparent"></div>
+
+          <div class="absolute bottom-6 left-6 sm:left-10 right-6">
+            <div class="flex items-center gap-2 mb-2">
+              ${item.isOriginal ? `<span class="font-display text-xl text-[#E50914] tracking-wider">SCTV</span>` : ''}
+              <span class="text-[11px] uppercase tracking-[0.3em] text-zinc-400 font-bold">${item.type === 'tv' ? 'SERIES' : 'FILM'}</span>
+            </div>
+            <h2 class="font-display text-4xl sm:text-6xl tracking-wide mb-4">${item.title}</h2>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <button onclick="startPlayback('${item.id}')"
+                class="tv-focusable bg-white hover:bg-zinc-200 text-black font-extrabold px-7 py-3 rounded-xl flex items-center gap-2 text-sm sm:text-base transition">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <span>${item.comingSoon ? 'Play Teaser' : 'Play'}</span>
+              </button>
+
+              <button onclick="toggleMyList('${item.id}')"
+                class="tv-focusable px-5 py-3 rounded-xl bg-white/[0.12] hover:bg-white/[0.2] border border-white/20 font-bold text-sm flex items-center gap-2 transition">
+                ${inList ? ICONS.check : ICONS.plus}
+                <span>${inList ? 'In My List' : 'My List'}</span>
+              </button>
+
+              <div class="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl p-1">
+                <button onclick="setRating('${item.id}', 'down')" class="tv-focusable p-2.5 rounded-lg transition ${rating === 'down' ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/15'}" title="Not for me">${ICONS.thumbDown}</button>
+                <button onclick="setRating('${item.id}', 'up')" class="tv-focusable p-2.5 rounded-lg transition ${rating === 'up' ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/15'}" title="I like this">${ICONS.thumbUp}</button>
+                <button onclick="setRating('${item.id}', 'love')" class="tv-focusable p-2.5 rounded-lg transition ${rating === 'love' ? 'bg-[#E50914] text-white' : 'text-zinc-300 hover:bg-white/15'}" title="Love this">${ICONS.heart}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-6 sm:px-10 pb-10">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="md:col-span-2">
+              <div class="flex flex-wrap items-center gap-2.5 text-sm font-semibold mb-3">
+                ${item.match ? `<span class="text-emerald-400 font-bold">${item.match}% Match</span>` : ''}
+                ${item.year ? `<span>${item.year}</span>` : ''}
+                ${item.maturity ? `<span class="border border-zinc-600 px-1.5 py-0.5 rounded text-xs">${item.maturity}</span>` : ''}
+                ${item.durationLabel ? `<span>${item.durationLabel}</span>` : ''}
+                ${(item.badges || []).map(b => `<span class="bg-white/10 px-2 py-0.5 rounded text-xs text-zinc-300">${b}</span>`).join('')}
+              </div>
+              <p class="text-zinc-300 text-sm sm:text-base leading-relaxed">${item.synopsis || ''}</p>
+            </div>
+
+            <div class="text-xs sm:text-sm space-y-2 text-zinc-300">
+              ${item.cast && item.cast.length ? `<div><span class="text-zinc-500">Cast:</span> ${item.cast.join(', ')}</div>` : ''}
+              ${item.genres && item.genres.length ? `<div><span class="text-zinc-500">Genres:</span> ${item.genres.join(', ')}</div>` : ''}
+              ${item.creator ? `<div><span class="text-zinc-500">Creator:</span> ${item.creator}</div>` : ''}
+            </div>
+          </div>
+
+          ${episodesSection}
+
+          ${similar.length > 0 ? `
+            <div class="mt-8 border-t border-white/10 pt-6">
+              <h3 class="text-lg font-bold uppercase tracking-wider text-zinc-200 mb-4">More Like This</h3>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                ${similar.map(sim => `
+                  <div onclick="openDetailModal('${sim.id}')" class="tv-focusable bg-[#222226] rounded-xl overflow-hidden cursor-pointer border border-white/10 hover:border-white/30 transition">
+                    ${sim.backdropUrl ? `<img src="${sim.backdropUrl}" alt="${sim.title}" class="w-full h-28 object-cover" />` : ''}
+                    <div class="p-3.5">
+                      <div class="flex items-center justify-between text-xs mb-1">
+                        ${sim.match ? `<span class="text-emerald-400 font-bold">${sim.match}% Match</span>` : '<span></span>'}
+                        ${sim.maturity ? `<span class="border border-zinc-600 px-1 rounded text-[10px]">${sim.maturity}</span>` : ''}
+                      </div>
+                      <div class="font-bold text-sm truncate mb-1">${sim.title}</div>
+                      <p class="text-xs text-zinc-400 line-clamp-2">${sim.synopsis || ''}</p>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // Fix TV #4: il selettore stagione è una coppia di bottoni ◀/▶.
+    function changeDetailSeason(n) {
+      const item = getTitleById(state.detailModalTitleId);
+      const max = (item && item.seasons) || 1;
+      const next = Math.min(max, Math.max(1, parseInt(n, 10) || 1));
+      if (next === state.detailSelectedSeason) return;
+      AudioEngine.playTick();
+      state.detailSelectedSeason = next;
+      renderDetailModalContent();
+      // Riporta il fuoco sul selettore stagione (restare in pagina invece di
+      // saltare al primo elemento del modal dopo ogni ◀/▶).
+      refreshFocusableElements();
+      const prev = document.getElementById('season-prev');
+      setTVFocus(prev && focusableList.includes(prev) ? prev : focusableList[0]);
+    }
+
+    /**
+     * 13. PLAYBACK — delegato al player NATIVO
+     */
+    // Fix TV #3/#7: niente player HTML5; startPlayback passa dal bridge e
+    // azzera il fuoco corrente (la WebView va in onPause: un anello
+    // congelato su video nativo sembrerebbe un bug).
+    function startPlayback(titleId, season = 1, episode = 1) {
+      const item = getTitleById(titleId);
+      if (!item) return;
+
+      AudioEngine.playSelect();
+      if (state.detailModalTitleId) closeDetailModal();
+
+      if (currentFocusedEl) {
+        currentFocusedEl.classList.remove('tv-focused');
+        currentFocusedEl = null;
+      }
+
+      if (Native && Native.play) {
+        Native.play(titleId, season || 1, episode || 1);
+      } else {
+        showToast('Playback requires the native app (browser preview only)');
+      }
+    }
+
+    /**
+     * 14. SMART TV SPATIAL D-PAD NAVIGATION & VIRTUAL REMOTE
+     */
+    let focusableList = [];
+    let currentFocusedEl = null;
+
+    function refreshFocusableElements() {
+      let root = document;
+      // Fix TV #3: il root del player overlay non esiste più — l'ordine di
+      // precedenza resta modal dettaglio > modal profilo > gate > shell.
+      if (!document.getElementById('detail-modal').classList.contains('hidden')) {
+        root = document.getElementById('detail-modal');
+      } else if (!document.getElementById('profile-editor-modal').classList.contains('hidden')) {
+        root = document.getElementById('profile-editor-modal');
+      } else if (!document.getElementById('profile-screen').classList.contains('hidden')) {
+        root = document.getElementById('profile-screen');
+      } else {
+        root = document.getElementById('tv-app-shell');
+      }
+
+      focusableList = Array.from(root.querySelectorAll('.tv-focusable')).filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    }
+
+    function setTVFocus(el) {
+      if (!el) return;
+      if (currentFocusedEl) {
+        currentFocusedEl.classList.remove('tv-focused');
+      }
+      currentFocusedEl = el;
+      el.classList.add('tv-focused');
+
+      const isInSidebar = Boolean(el.closest('#tv-sidebar'));
+      expandSidebar(isInSidebar);
+
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      AudioEngine.playTick();
+    }
+
+    function moveSpatialFocus(direction) {
+      refreshFocusableElements();
+      if (focusableList.length === 0) return;
+
+      if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
+        setTVFocus(focusableList[0]);
+        return;
+      }
+
+      const currInSidebar = Boolean(currentFocusedEl.closest('#tv-sidebar'));
+      const currRect = currentFocusedEl.getBoundingClientRect();
+      const cx = currRect.left + currRect.width / 2;
+      const cy = currRect.top + currRect.height / 2;
+
+      let bestCandidate = null;
+      let bestScore = Infinity;
+
+      for (const cand of focusableList) {
+        if (cand === currentFocusedEl) continue;
+        const candInSidebar = Boolean(cand.closest('#tv-sidebar'));
+
+        if (currInSidebar && direction === 'right' && candInSidebar) continue;
+        if (currInSidebar && (direction === 'up' || direction === 'down') && !candInSidebar) continue;
+
+        const r = cand.getBoundingClientRect();
+        const tx = r.left + r.width / 2;
+        const ty = r.top + r.height / 2;
+        const dx = tx - cx;
+        const dy = ty - cy;
+
+        let valid = false;
+        let primaryDist = 0;
+        let orthoDist = 0;
+
+        if (direction === 'right' && dx > 12) {
+          valid = true; primaryDist = dx; orthoDist = Math.abs(dy);
+        } else if (direction === 'left' && dx < -12) {
+          valid = true; primaryDist = -dx; orthoDist = Math.abs(dy);
+        } else if (direction === 'down' && dy > 12) {
+          valid = true; primaryDist = dy; orthoDist = Math.abs(dx);
+        } else if (direction === 'up' && dy < -12) {
+          valid = true; primaryDist = -dy; orthoDist = Math.abs(dx);
+        }
+
+        if (valid) {
+          const score = primaryDist + orthoDist * 2.6;
+          if (score < bestScore) {
+            bestScore = score;
+            bestCandidate = cand;
+          }
+        }
+      }
+
+      if (bestCandidate) {
+        setTVFocus(bestCandidate);
+      }
+    }
+
+    function toggleVirtualRemote() {
+      AudioEngine.playSelect();
+      state.virtualRemoteOpen = !state.virtualRemoteOpen;
+      const panel = document.getElementById('virtual-remote-panel');
+      if (state.virtualRemoteOpen) panel.classList.remove('hidden');
+      else panel.classList.add('hidden');
+    }
+
+    function handleRemoteAction(action) {
+      if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
+        moveSpatialFocus(action);
+      } else if (action === 'ok') {
+        if (currentFocusedEl) currentFocusedEl.click();
+      } else if (action === 'back') {
+        // Su TV il BACK nativo passa da window.__sctvBackState (che qui
+        // richiama handleBackNavigation e decide stay/exit); questo ramo
+        // serve al remote virtuale dell'anteprima browser.
+        handleBackNavigation();
+      } else if (action === 'home') {
+        if (state.detailModalTitleId) closeDetailModal();
+        if (state.currentProfile) switchTab('home');
+      }
+    }
+
+    function handleBackNavigation() {
+      if (!document.getElementById('detail-modal').classList.contains('hidden')) {
+        closeDetailModal();
+      } else if (!document.getElementById('profile-editor-modal').classList.contains('hidden')) {
+        closeProfileEditor();
+      } else if (state.currentProfile && state.activeTab !== 'home') {
+        switchTab('home');
+      } else if (state.currentProfile) {
+        openProfileGate();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const activeTag = document.activeElement ? document.activeElement.tagName : '';
+      const isTyping = activeTag === 'INPUT' || activeTag === 'SELECT';
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveSpatialFocus('up');
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveSpatialFocus('down');
+      } else if (e.key === 'ArrowLeft' && !isTyping) {
+        e.preventDefault();
+        moveSpatialFocus('left');
+      } else if (e.key === 'ArrowRight' && !isTyping) {
+        e.preventDefault();
+        moveSpatialFocus('right');
+      } else if (e.key === 'Enter' && !isTyping) {
+        if (currentFocusedEl) {
+          e.preventDefault();
+          currentFocusedEl.click();
+        }
+      } else if (e.key === 'Escape' || (e.key === 'Backspace' && !isTyping)) {
+        e.preventDefault();
+        handleBackNavigation();
+      }
+    });
+
+    // Fix TV #1: l'handler mousemove che cancellava il fuoco è RIMOSSO —
+    // su TV arrivano mousemove sintetici che rendevano il D-pad "morto".
+
+    /**
+     * 15. INITIALIZATION ON WINDOW LOAD
+     */
+    window.onload = function () {
+      // Fix TV #11: profili da localStorage con default "Predefinito".
+      state.profiles = loadProfiles();
+      updateClock();
+      syncAudioIcons();
+      renderProfileKeyboard();
+      renderProfilesGrid();
+
+      // Fix TV #8: il remote virtuale esiste solo SENZA bridge nativo.
+      if (!Native) {
+        const remoteRoot = document.getElementById('virtual-remote-root');
+        if (remoteRoot) remoteRoot.classList.remove('hidden');
+      }
+
+      bootReady();
+
+      setTimeout(() => {
+        const splash = document.getElementById('boot-splash');
+        splash.classList.add('opacity-0');
+        setTimeout(() => {
+          splash.classList.add('hidden');
+          const profScreen = document.getElementById('profile-screen');
+          profScreen.classList.remove('hidden');
+          profScreen.classList.add('flex');
+          refreshFocusableElements();
+          // Fix TV #6: primo profilo già in fuoco al gate.
+          setTVFocus(focusableList[0]);
+        }, 500);
+      }, 1350);
+    };
+  </script>
+</body>
+</html>

@@ -6,6 +6,8 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 -keep class com.scviewer.fire.web.JsInterface { *; }
+# Bridge SCtv (M1): metodi invocati da JS per nome.
+-keep class com.scviewer.fire.bridge.SctvBridge { *; }
 
 # Keep kotlinx.serialization generated serializers
 -keepattributes *Annotation*, InnerClasses
