@@ -52,6 +52,14 @@
 0.0.0.0 www.google-analytics.com
 0.0.0.0 hotjar.com
 0.0.0.0 *.hotjar.com
+
+# ---- Player SCtv (vixcloud) — PLAYER V2, piano §5.1 ----
+# Analytics dell'embed e rete ads spbgc: bloccati anche a livello nativo in
+# PlayerActivity.shouldInterceptRequest (l'asset su disco si aggiorna solo
+# ricopiando al primo avvio, quindi il codice copre le installazioni esistenti).
+0.0.0.0 analytics.vixcloud.cc
+0.0.0.0 spbgc.com
+0.0.0.0 *.spbgc.com
 0.0.0.0 mixpanel.com
 0.0.0.0 *.mixpanel.com
 0.0.0.0 segment.io

@@ -33,7 +33,12 @@ class JsInterface(
      *  link. Returns "resume" when a playback position exists for the title
      *  (the page must block navigation while the native popup asks), or
      *  "none" to let it proceed. Runs on the JS bridge thread. */
-    private val onPlayClicked: (Int) -> String
+    private val onPlayClicked: (Int) -> String,
+    /** PLAYER V2 (direct-embed): evento JSON del player_bridge.js
+     *  ({t:'ready'|'time'|'state'|'complete'|'error', ...}). Solo
+     *  PlayerActivity in direct mode registra player_bridge.js — per gli
+     *  altri chiamanti (MainActivity) resta il default no-op. */
+    private val onPlayerEvent: (String) -> Unit = { _ -> }
 ) {
 
     private data class Cmd(val text: String, val atMs: Long, val ttlMs: Long)
@@ -87,6 +92,14 @@ class JsInterface(
     fun onPosterFound(titleId: String, posterUrl: String) {
         val tid = titleId.toIntOrNull() ?: return
         if (posterUrl.isNotBlank()) onPosterFound.invoke(tid, posterUrl)
+    }
+
+    /** PLAYER V2: chiamato da player_bridge.js (direct mode) a ogni evento
+     *  del player JW: ready (con snapshot), time (pos/dur), state
+     *  (playing/paused), complete, error. Il payload è JSON in stringa. */
+    @JavascriptInterface
+    fun onPlayerEvent(json: String) {
+        if (json.isNotBlank()) onPlayerEvent.invoke(json)
     }
 
     /** Called by page_inject.js on every "Guarda" click: the page blocks its

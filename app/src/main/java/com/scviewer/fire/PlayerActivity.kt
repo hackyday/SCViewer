@@ -3,6 +3,8 @@ package com.scviewer.fire
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -17,6 +19,10 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +31,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.scviewer.fire.data.HistoryStore
@@ -47,9 +56,18 @@ import java.util.concurrent.TimeUnit
  * (watch URL) gira in un WebView a tutto schermo; sopra c'è un overlay di
  * controlli nativi in stile design (Back to Browse, titolo/episodio,
  * scrubber, play/pausa, ±10s, Skip Intro, card Prossimo episodio) navigabile
- * col D-pad e niente mouse. I report di riproduzione arrivano da
- * video_agent.js (iniettato a document start) e i comandi passano dalla
- * coda di JsInterface — lo stesso meccanismo provato di MainActivity.
+ * col D-pad e niente mouse.
+ *
+ * DUE MODALITÀ (PLAYER V2):
+ *  - DIRECT (extra "embedUrl" presente): l'embed vixcloud risolto da
+ *    SctvActivity (OkHttp, token monouso ~10s, +nogui=1) È il main frame —
+ *    nessun two-stage, nessuna watch page, nessun flash. Il ponte con JW è
+ *    player_bridge.js (document start): eventi → [onPlayerEvent], comandi →
+ *    window.__sctvPlayer (API diretta, bypass della coda JsInterface). La
+ *    copertura nera si toglie solo all'evento 'ready' del bridge.
+ *  - LEGACY (modalità sito, extra "url" soltanto): two-stage home→watch con
+ *    video_agent.js + page_inject.js, coda comandi di JsInterface e fallback
+ *    embed M4b — flusso invariato.
  */
 class PlayerActivity : Activity() {
 
@@ -91,11 +109,13 @@ class PlayerActivity : Activity() {
      *  Inertia della watch page non espone il titleId. */
     private var titleId = 0
 
-    /** Ordine di fuoco tra i controlli visibili. */
+    /** Ordine di fuoco tra i controlli visibili. Direct mode: lo scrubber è
+     *  fuocabile e con LEFT/RIGHT fa da seek rapido (see dispatchKeyEvent). */
     private val focusOrder: List<View>
         get() = listOfNotNull(
             backBtn,
             playBtn, rewBtn, ffwBtn, langBtn,
+            scrubber.takeIf { directEmbed },
             skipBtn.takeIf { it.visibility == View.VISIBLE },
             nextPlay.takeIf { nextCard.visibility == View.VISIBLE },
             nextCancel.takeIf { nextCard.visibility == View.VISIBLE }
@@ -121,11 +141,44 @@ class PlayerActivity : Activity() {
     /** Lingua audio corrente (parametro lang dell'embed vixcloud). */
     private var currentLang = "it"
 
+    // -- Direct-embed mode (PLAYER V2) ------------------------------------------
+    /** TRUE quando SctvActivity ha già risolto l'embed vixcloud (extra
+     *  "embedUrl"): decide document-start script, loadUrl, wiring comandi,
+     *  evento ready, progresso e dialog lingua. */
+    private var directEmbed = false
+    /** Embed vixcloud con &nogui=1 (token monouso ~10s): caricato SUBITO in
+     *  onCreate con il Referer del sito (403 senza). */
+    private var embedUrl = ""
+    /** Metadati del titolo per i record (ProgressStore/HistoryStore): li
+     *  passa SctvActivity dal detail cache — in direct mode non esiste la
+     *  watch page che in legacy li esponeva via onPageInfo. */
+    private var posterUrl = ""
+    private var recordSlug = ""
+    private var recordType = ""
+    private var episodeName = ""
+    private var recordSeason = 1
+    private var recordEpisode = 1
+    private var nextEpisodeSeason = 0
+    private var nextEpisodeNumber = 0
+    /** Throttle UI per gli eventi 'time' di JW (arrivano più volte al
+     *  secondo): barra/skip/next card a ≥1s, salvataggi a ≥10s. */
+    private var lastTimeUiAt = 0L
+    private var lastSaveAt = 0L
+    /** Cancel sulla card prossimo episodio: senza flag, l'evento 'time'
+     *  successivo (≤1s) la riaprirebbe subito. */
+    private var nextCardDismissed = false
+    /** Toast di errore JW: una sola volta per riproduzione. */
+    private var directErrorShown = false
+    /** HistoryStore: una sola voce per riproduzione (al primo ready). */
+    private var historyLogged = false
+
     // -- Resume seek (M3) -------------------------------------------------------
-    /** Posizione di ripresa (extra startPositionSec). Si attiva SOLO al primo
-     *  onVideoState(active=true) — prima il video potrebbe non esistere — e
-     *  converge in onProgress (±20s). Attivo il push immediato con retry a
-     *  3.5s e 8s (schema pushPendingResumeSeek di MainActivity). */
+    /** Posizione di ripresa (extra startPositionSec, SECONDI — piano V2:
+     *  il parametro minute dell'embed non si usa, i secondi sono più
+     *  precisi). Si attiva SOLO quando il video esiste davvero — legacy:
+     *  primo onVideoState(active=true); direct: primo evento 'ready' del
+     *  bridge — e converge sugli eventi di posizione (±20s). Push immediato
+     *  con retry a 3.5s e 8s (schema pushPendingResumeSeek di MainActivity). */
     private var pendingSeek = 0
     private var resumeSeekArmed = false
 
@@ -133,7 +186,7 @@ class PlayerActivity : Activity() {
     private var pageInfo: PageInfo? = null
 
     private val resumeSeekRetry = Runnable {
-        if (pendingSeek > 0 && resumeSeekArmed) jsBridge.requestSeekTo(pendingSeek)
+        if (pendingSeek > 0 && resumeSeekArmed) playerSeekTo(pendingSeek)
     }
 
     private val adBlocker by lazy { AdBlocker.get(this) }
@@ -170,10 +223,39 @@ class PlayerActivity : Activity() {
         pendingSeek = intent.getIntExtra("startPositionSec", 0)
         saveUrlRel = SiteUrl.relativeOf(watchUrl)
         currentLang = SettingsStore.getSctvAudioLang(this)
-        titleView.text = titleText
+
+        // -- PLAYER V2: extras della modalità direct ---------------------------
+        embedUrl = intent.getStringExtra("embedUrl") ?: ""
+        directEmbed = embedUrl.isNotBlank()
+        posterUrl = intent.getStringExtra("poster") ?: ""
+        recordSlug = intent.getStringExtra("slug") ?: ""
+        recordType = intent.getStringExtra("type") ?: ""
+        episodeName = intent.getStringExtra("episodeName") ?: ""
+        recordSeason = intent.getIntExtra("season", 1).coerceAtLeast(1)
+        recordEpisode = intent.getIntExtra("episode", 1).coerceAtLeast(1)
+        nextEpisodeId = intent.getIntExtra("nextEpisodeId", 0)
+        nextEpisodeSeason = intent.getIntExtra("nextEpisodeSeason", 0)
+        nextEpisodeNumber = intent.getIntExtra("nextEpisodeNumber", 0)
+        if (directEmbed && nextEpisodeNumber > 0) {
+            nextCard.findViewById<TextView>(R.id.playerNextTitle).text =
+                "S$nextEpisodeSeason E$nextEpisodeNumber"
+        }
+        // Direct: label S#E# subito (legacy la riceve da onPageInfo).
+        if (directEmbed && recordType == "tv" && recordEpisode > 0) {
+            episodeText = "S$recordSeason E$recordEpisode" +
+                (episodeName.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+            episodeView.text = episodeText
+        }
+
         backBtn.setOnClickListener { finish() }
         playBtn.setOnClickListener {
-            jsBridge.requestPauseToggle()
+            if (directEmbed) {
+                // Toggle via ultimo stato noto (gli eventi 'state' correggono
+                // eventuali difformità).
+                directCall(if (playing) "pause()" else "play()")
+            } else {
+                jsBridge.requestPauseToggle()
+            }
             playing = !playing
             updatePlayIcon()
             scheduleHide()
@@ -185,19 +267,36 @@ class PlayerActivity : Activity() {
         skipBtn.setOnClickListener {
             skipAvailable = false
             skipBtn.visibility = View.GONE
-            jsBridge.requestSkipIntro()
+            if (directEmbed) directCall("seek(30)") else jsBridge.requestSkipIntro()
         }
         nextPlay.setOnClickListener {
             if (nextEpisodeId > 0) {
-                val domain = com.scviewer.fire.data.DomainRepository.get(this).currentDomain()
-                web.loadUrl(domain.trimEnd('/') + "/it/watch/" +
-                    (watchUrl.substringAfterLast("/watch/").substringBefore("?")) +
-                    "?e=" + nextEpisodeId)
-                nextCard.visibility = View.GONE
-                showControls()
+                if (directEmbed) {
+                    // V2: la catena riparte pulita — result → SctvActivity
+                    // onActivityResult → onPlayRequested (embed fresco, token
+                    // nuovo); NESSUN loadUrl di una watch page da qui.
+                    nextCard.visibility = View.GONE
+                    val res = Intent().apply {
+                        putExtra("nextEpisodeId", nextEpisodeId)
+                        putExtra("nextEpisodeSeason", nextEpisodeSeason)
+                        putExtra("nextEpisodeNumber", nextEpisodeNumber)
+                    }
+                    setResult(RESULT_OK, res)
+                    finish()
+                } else {
+                    val domain = com.scviewer.fire.data.DomainRepository.get(this).currentDomain()
+                    web.loadUrl(domain.trimEnd('/') + "/it/watch/" +
+                        (watchUrl.substringAfterLast("/watch/").substringBefore("?")) +
+                        "?e=" + nextEpisodeId)
+                    nextCard.visibility = View.GONE
+                    showControls()
+                }
             }
         }
-        nextCancel.setOnClickListener { nextCard.visibility = View.GONE }
+        nextCancel.setOnClickListener {
+            nextCard.visibility = View.GONE
+            nextCardDismissed = true
+        }
 
         // WebView: player reale del sito + agent iniettato a document start.
         @SuppressLint("SetJavaScriptEnabled")
@@ -241,7 +340,11 @@ class PlayerActivity : Activity() {
                 onProgress = { pos, dur -> runOnUiThread { onProgress(pos, dur) } },
                 onPlayClicked = { "none" },
                 onPosterFound = { _, _ -> },
-                onCloudflareBlock = { }
+                onCloudflareBlock = { },
+                // PLAYER V2: eventi del bridge JW (ready/time/state/complete/
+                // error). In legacy mode non arriva MAI (player_bridge non è
+                // registrato): l'handler esce subito su !directEmbed.
+                onPlayerEvent = { json -> runOnUiThread { onPlayerEvent(json) } }
             )
             web.addJavascriptInterface(jsBridge, "AndroidJs")
             web.webChromeClient = WebChromeClient()
@@ -258,6 +361,17 @@ class PlayerActivity : Activity() {
                         return adBlocker.blockedResponse()
                     }
                     HlsRewriter.intercept(request)?.let { return it }
+
+                    // Pulizia player (piano §5.1): analytics vixcloud e ads
+                    // spbgc, in ENTRAMBE le modalità. Hard-coded qui oltre
+                    // alla hosts-list: l'asset viene ricopiato su disco solo
+                    // al primo avvio, un'installazione esistente resterebbe
+                    // con la lista vecchia.
+                    val host = (request.url.host ?: "").lowercase()
+                    if (host.endsWith("spbgc.com") ||
+                        host.endsWith("analytics.vixcloud.cc")) {
+                        return adBlocker.blockedResponse()
+                    }
 
                     val url = request.url
                     val path = (url.path ?: "").lowercase()
@@ -282,6 +396,11 @@ class PlayerActivity : Activity() {
                 ) {
                     super.onPageStarted(view, url, favicon)
                     if (url == null) return
+                    // Direct mode: la copertura nera si toglie SOLO
+                    // all'evento 'ready' del bridge (o safety 25s) —
+                    // l'embed vixcloud è contenuto vero ma non è ancora
+                    // riproducibile quando la pagina inizia a caricarsi.
+                    if (directEmbed) return
                     // Il contenuto VERO (watch page, wrapper /it/iframe o embed
                     // vixcloud) sta entrando → togli la copertura nera. La home
                     // dello stage1 e le pagine intermedie restano coperte.
@@ -295,6 +414,9 @@ class PlayerActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    // Direct mode: nessuna orchestrazione (stage1/stage2/
+                    // fallback) — l'embed è già il main frame definitivo.
+                    if (directEmbed) return
                     if (url != null && isPlayerContentUrl(url)) {
                         // Caso redirect server-side che salta onPageStarted.
                         if (url.contains("/watch/")) {
@@ -334,24 +456,53 @@ class PlayerActivity : Activity() {
                     }
                 }
             }
+            // Direct mode: lo scrubber è fuocabile (seek col D-pad).
+            if (directEmbed) {
+                scrubber.isFocusable = true
+                scrubber.isFocusableInTouchMode = true
+            }
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
-                    val inject = assets.open("page_inject.js").bufferedReader().use { it.readText() }
-                    WebViewCompat.addDocumentStartJavaScript(web, agent + "\n" + inject, setOf("*"))
+                    if (directEmbed) {
+                        // V2: SOLO player_bridge.js (piano §2.4) — gira nel
+                        // frame vixcloud e fa da ponte JW↔nativo. video_agent/
+                        // page_inject qui sono inutili e potenzialmente
+                        // rumorosi (poll DOM + iniezioni UI nel player pulito).
+                        val bridge = assets.open("player_bridge.js")
+                            .bufferedReader().use { it.readText() }
+                        WebViewCompat.addDocumentStartJavaScript(web, bridge, setOf("*"))
+                    } else {
+                        val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
+                        val inject = assets.open("page_inject.js").bufferedReader().use { it.readText() }
+                        // Pulizia difensiva della watch page (piano §5.2), a
+                        // document start come early_hide.js (pattern coerente
+                        // con la registrazione legacy).
+                        WebViewCompat.addDocumentStartJavaScript(
+                            web, agent + "\n" + inject + "\n" + WATCH_HARDENING_JS, setOf("*")
+                        )
+                    }
                 }
             } catch (_: Throwable) { }
         }
         setup()
         showControls()
         // Copertura nera ON finché il contenuto vero non entra (anti-flash
-        // dello stage1). Rete di sicurezza: mai nero oltre BLACKOUT_MAX_MS.
+        // dello stage1) — in direct mode finché l'evento 'ready' del bridge.
+        // Rete di sicurezza: mai nero oltre BLACKOUT_MAX_MS.
         blackout.visibility = View.VISIBLE
-        handler.postDelayed({ hideBlackout() }, BLACKOUT_MAX_MS)
-        // Carico prima la HOME del sito: stabilisce cookie/sessione JS —
-        // la watch page a cookie freddi viene rimandata alla pagina titolo.
-        web.loadUrl(DomainHome())
-        stage2Started = false
+        handler.postDelayed(blackoutSafety, BLACKOUT_MAX_MS)
+        if (directEmbed) {
+            // V2: l'embed vixcloud È il main frame. NESSUN two-stage — la
+            // risoluzione (token monouso ~10s) è già stata fatta da
+            // SctvActivity subito prima del lancio. Il Referer è OBBLIGATORIO
+            // (verificato: 403 senza).
+            web.loadUrl(embedUrl, mapOf("Referer" to DomainHome().trimEnd('/') + "/"))
+        } else {
+            // Carico prima la HOME del sito: stabilisce cookie/sessione JS —
+            // la watch page a cookie freddi viene rimandata alla pagina titolo.
+            web.loadUrl(DomainHome())
+            stage2Started = false
+        }
     }
 
     private val pageJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -452,13 +603,15 @@ class PlayerActivity : Activity() {
 
     // -- Lingua audio (M4b) ----------------------------------------------------
 
-    /** Dialog lingua AUDIO (Italiano / Inglese). Gli SOTTOTITOLI non hanno
-     *  supporto parametrico nell'embed (bundle vixcloud verificato: i soli
-     *  parametri URL gestiti sono lang, canPlayFHD, scz, t, d, minute,
-     *  nextEpisode, referer) — restano nel menu ⚙ del player web, non
-     *  raggiungibile col D-pad; opzione futura: ExoPlayer con i file
-     *  #EXT-X-MEDIA della master m3u8. */
+    /** Dialog LINGUA. Direct mode (V2): dialog LIVE con AUDIO e SOTTOTITOLI
+     *  dal snapshot JW corrente — nessun reload (la master playlist è già
+     *  caricata, le tracce si commutano via API JW). Legacy: dialog reload
+     *  col parametro lang dell'embed (comportamento M4b invariato). */
     private fun showLanguageDialog() {
+        if (directEmbed) {
+            showLiveLanguageDialog()
+            return
+        }
         val labels = arrayOf("Italiano", "Inglese")
         val checked = if (currentLang == "en") 1 else 0
         AlertDialog.Builder(this, R.style.SCOverlay)
@@ -473,6 +626,131 @@ class PlayerActivity : Activity() {
             .setNegativeButton("Annulla", null)
             .show()
     }
+
+    /** Dialog LINGUA LIVE (piano §4): snapshot da window.__sctvPlayer
+     *  (evaluateJavascript) → due sezioni — AUDIO (getAudioTracks →
+     *  setAudio(ix)) e SOTTOTITOLI (getCaptionsList → setCaptions(ix),
+     *  l'indice 0 è "Off") — con la voce corrente evidenziata. NESSUN
+     *  reload: applicazione immediata sul player già in riproduzione. */
+    private fun showLiveLanguageDialog() {
+        web.evaluateJavascript(
+            "try{window.__sctvPlayer?__sctvPlayer.snapshot():null}catch(e){null}"
+        ) { raw ->
+            val snapJson = decodeJsReturnValue(raw)
+            val snap = snapJson?.let {
+                runCatching { JSONObject(it) }.getOrNull()
+            }
+            if (snap == null) {
+                // Snapshot fallito (player non pronto / bridge assente).
+                AlertDialog.Builder(this, R.style.SCOverlay)
+                    .setTitle("Lingua")
+                    .setMessage("Player non pronto: riprova tra qualche istante.")
+                    .setPositiveButton("Ok", null)
+                    .show()
+                return@evaluateJavascript
+            }
+            runOnUiThread { buildLiveLanguageDialog(snap).show() }
+        }
+    }
+
+    /** evaluateJavascript restituisce il valore JS come literal JSON: per una
+     *  stringa arriva racchiusa tra virgolette con escape. Qui la decodifica
+     *  al valore vero (null se il valore era null o non è una stringa). */
+    private fun decodeJsReturnValue(raw: String?): String? {
+        if (raw.isNullOrBlank() || raw == "null") return null
+        return runCatching { pageJson.decodeFromString<String>(raw.trim()) }.getOrNull()
+    }
+
+    /** Costruisce il dialog LIVE: ScrollView con sezione AUDIO e sezione
+     *  SOTTOTITOLI (RadioButton, corrente pre-selezionato). Sezioni vuote →
+     *  nota fissa (film con unica traccia, nessun sottotitolo). */
+    private fun buildLiveLanguageDialog(snap: JSONObject): AlertDialog {
+        val audio = snap.optJSONArray("audio") ?: JSONArray()
+        val audioIx = snap.optInt("audioIx", 0)
+        val cc = snap.optJSONArray("cc") ?: JSONArray()
+        // getCurrentCaptions può tornare -1: "Off" è comunque l'indice 0.
+        val ccIx = snap.optInt("ccIx", 0).let { if (it < 0) 0 else it }
+        lateinit var dlg: AlertDialog
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), dp(4))
+        }
+
+        // -- Sezione AUDIO -----------------------------------------------------
+        content.addView(sectionLabel("AUDIO"))
+        if (audio.length() > 0) {
+            val group = RadioGroup(this)
+            for (i in 0 until audio.length()) {
+                val tr = audio.optJSONObject(i)
+                val label = tr?.optString("label")?.takeIf { it.isNotBlank() }
+                    ?: tr?.optString("name")?.takeIf { it.isNotBlank() }
+                    ?: tr?.optString("language")?.takeIf { it.isNotBlank() }
+                    ?: "Traccia ${i + 1}"
+                group.addView(RadioButton(this).apply {
+                    text = label
+                    textSize = 15f
+                    isChecked = i == audioIx
+                    setOnClickListener {
+                        dlg.dismiss()
+                        if (i != audioIx) directCall("setAudio($i)")
+                    }
+                })
+            }
+            content.addView(group)
+        } else {
+            content.addView(sectionNote("Unica traccia audio"))
+        }
+
+        // -- Sezione SOTTOTITOLI ------------------------------------------------
+        content.addView(sectionLabel("SOTTOTITOLI"))
+        if (cc.length() > 0) {
+            val group = RadioGroup(this)
+            for (i in 0 until cc.length()) {
+                val label = cc.optJSONObject(i)?.optString("label")
+                    ?.takeIf { it.isNotBlank() } ?: if (i == 0) "Off" else "Traccia ${i + 1}"
+                group.addView(RadioButton(this).apply {
+                    text = label
+                    textSize = 15f
+                    isChecked = i == ccIx
+                    setOnClickListener {
+                        dlg.dismiss()
+                        if (i != ccIx) directCall("setCaptions($i)")
+                    }
+                })
+            }
+            content.addView(group)
+        } else {
+            content.addView(sectionNote("Non disponibili"))
+        }
+
+        val scroll = ScrollView(this).apply { addView(content) }
+        dlg = AlertDialog.Builder(this, R.style.SCOverlay)
+            .setTitle("Lingua e sottotitoli")
+            .setView(scroll)
+            .setNegativeButton("Annulla", null)
+            .create()
+        return dlg
+    }
+
+    /** Intestazione di sezione del dialog lingua live. */
+    private fun sectionLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        setTextColor(0xFF8A8A8A.toInt())
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding(0, dp(16), 0, dp(4))
+    }
+
+    /** Nota per sezione senza voci (unica traccia / nessun sottotitolo). */
+    private fun sectionNote(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 14f
+        setTextColor(0xFFBBBBBB.toInt())
+        setPadding(dp(4), dp(2), 0, dp(2))
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     /** Ricarica il player con il parametro lang nuovo PRESERVANDO la
      *  posizione: la posizione corrente (onProgress → posSec) riparte con la
@@ -583,13 +861,14 @@ class PlayerActivity : Activity() {
     }
 
     /** Schema pushPendingResumeSeek di MainActivity: push immediato del seek
-     *  + retry a 3.5s e 8s (l'agent consuma la coda ogni 80ms, il TTL del
-     *  comando è 12s). La conferma arriva da onProgress: convergenza ±20s →
-     *  pendingSeek=0 e i retry pendenti diventano no-op. */
+     *  + retry a 3.5s e 8s (legacy: l'agent consuma la coda ogni 80ms, TTL
+     *  12s; direct: API __sctvPlayer diretta). La conferma arriva da
+     *  onProgress/onPlayerEvent('time'): convergenza ±20s → pendingSeek=0 e
+     *  i retry pendenti diventano no-op. */
     private fun pushPendingResumeSeek() {
         val target = pendingSeek
         if (target <= 0 || !resumeSeekArmed) return
-        jsBridge.requestSeekTo(target)
+        playerSeekTo(target)
         handler.removeCallbacks(resumeSeekRetry)
         handler.postDelayed(resumeSeekRetry, 3500)
         handler.postDelayed(resumeSeekRetry, 8000)
@@ -620,7 +899,7 @@ class PlayerActivity : Activity() {
             } else if (pos < pendingSeek - 20) {
                 // Video vivo ma ancora prima del punto salvato: ripusha e
                 // ritenta a 3.5s e 8s (schema di MainActivity).
-                jsBridge.requestSeekTo(pendingSeek)
+                playerSeekTo(pendingSeek)
                 handler.removeCallbacks(resumeSeekRetry)
                 handler.postDelayed(resumeSeekRetry, 3500)
                 handler.postDelayed(resumeSeekRetry, 8000)
@@ -674,7 +953,177 @@ class PlayerActivity : Activity() {
         "%d:%02d".format(sec / 60, sec % 60)
 
     private fun seekBy(delta: Int) {
-        jsBridge.requestSeekTo((posSec + delta).coerceIn(0, (durSec - 1).coerceAtLeast(0)))
+        playerSeekTo((posSec + delta).coerceIn(0, (durSec - 1).coerceAtLeast(0)))
+    }
+
+    // -- Comandi player: routing direct ↔ legacy --------------------------------
+
+    /** Seek assoluto: direct → API __sctvPlayer sul frame vixcloud; legacy →
+     *  coda comandi di JsInterface (video_agent). */
+    private fun playerSeekTo(sec: Int) {
+        if (directEmbed) directCall("seek($sec)") else jsBridge.requestSeekTo(sec)
+    }
+
+    /** Valuta una chiamata dell'API __sctvPlayer sul frame vixcloud (direct
+     *  mode, sempre dal thread UI). [call] è l'espressione COMPLETA già con
+     *  i suoi argomenti (es. "seek(30)", "setAudio(1)", "pause()").
+     *  Silenziosamente no-op se il bridge non è ancora pronto (pagina in
+     *  caricamento o player non ancora creato). */
+    private fun directCall(call: String) {
+        web.evaluateJavascript(
+            "try{window.__sctvPlayer&&__sctvPlayer.$call}catch(e){}", null
+        )
+    }
+
+    // -- Eventi del bridge JW (PLAYER V2, direct mode) ---------------------------
+
+    /** Eventi di player_bridge.js: ready (snapshot completo), time, state,
+     *  complete, error. È l'equivalente direct di onVideoState/onProgress —
+     *  in questo mode video_agent non esiste. */
+    private fun onPlayerEvent(json: String) {
+        if (!directEmbed) return
+        val ev = runCatching { JSONObject(json) }.getOrNull() ?: return
+        when (ev.optString("t")) {
+            "ready" -> {
+                nextCardDismissed = false
+                hideBlackout()
+                val st = ev.optJSONObject("snapshot")?.optString("state")
+                // nogui autostarta: buffering/playing contano come "playing"
+                // per auto-hide e icona; idle/paused/complete no.
+                playing = when (st) { "paused", "idle", "complete" -> false; else -> true }
+                updatePlayIcon()
+                showControls()
+                scheduleHide()
+
+                // Cronologia: UNA voce per riproduzione, al primo ready. Il
+                // record DEVE portare il watch URL (extra di SctvActivity),
+                // mai l'embedUrl — stessa convenzione della modalità sito.
+                if (!historyLogged && watchUrl.isNotBlank()) {
+                    historyLogged = true
+                    HistoryStore.get(this).add(watchUrl, recordLabel(), posterUrl.ifBlank { null })
+                    if (posterUrl.isNotBlank() && titleId > 0) {
+                        PosterCache.put(this, titleId, posterUrl)
+                    }
+                }
+
+                // Resume seek (M3): si arma al PRIMO ready — qui non c'è
+                // onVideoState (video_agent non gira in direct mode).
+                if (!resumeSeekArmed) {
+                    resumeSeekArmed = true
+                    if (pendingSeek > 0) pushPendingResumeSeek()
+                }
+            }
+            "time" -> onDirectTime(ev.optInt("pos"), ev.optInt("dur"))
+            "state" -> {
+                playing = ev.optString("state") == "playing"
+                updatePlayIcon()
+                scheduleHide()
+            }
+            "complete" -> {
+                playing = false
+                updatePlayIcon()
+                // A video finito gli eventi 'time' cessano: se c'è un prossimo
+                // episodio, la card resta visibile (come in legacy).
+                if (nextEpisodeId > 0 && !nextCardDismissed) {
+                    nextCard.visibility = View.VISIBLE
+                    showControls()
+                }
+            }
+            "error" -> {
+                Log.w("Player", "bridge JW: errore: ${ev.optString("msg")}")
+                // L'embed mostra la sua schermata di errore: scopri e segnala
+                // (una volta sola per riproduzione).
+                if (!directErrorShown) {
+                    directErrorShown = true
+                    hideBlackout()
+                    Toast.makeText(this, "Errore di riproduzione: riprova dal titolo",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** "Nome — S1E2 · Titolo puntata" per Cronologia/ProgressStore (stesso
+     *  formato di PageInfo.displayLabel in legacy). */
+    private fun recordLabel(): String =
+        if (recordType == "tv" && recordEpisode > 0)
+            "$titleText — S$recordSeason E$recordEpisode" +
+                (episodeName.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+        else titleText
+
+    /** Evento 'time' del bridge (direct): aggiorna barra/tempi, resume seek,
+     *  skip intro, card prossimo episodio e salvataggio progresso.
+     *  Throttle: JW emette 'time' più volte al secondo — UI a ≥1s (legacy
+     *  riceve report ogni ~2s), salvataggi a ≥10s (stesso throttle di
+     *  video_agent). */
+    private fun onDirectTime(pos: Int, dur: Int) {
+        posSec = pos; durSec = dur
+        val now = System.currentTimeMillis()
+        if (now - lastTimeUiAt < 1000) return
+        lastTimeUiAt = now
+
+        scrubber.max = dur.coerceAtLeast(1)
+        scrubber.progress = pos
+        timeCur.text = fmt(pos)
+        timeTot.text = fmt(dur)
+
+        // -- Resume seek: convergenza (±20s) o ripush — identico a M3 --------
+        if (pendingSeek > 0) {
+            if (kotlin.math.abs(pos - pendingSeek) < 20) {
+                pendingSeek = 0                          // già a punto
+            } else if (pos > pendingSeek + 20) {
+                pendingSeek = 0                          // oltre (es. seek utente)
+            } else if (pos < pendingSeek - 20) {
+                playerSeekTo(pendingSeek)
+                handler.removeCallbacks(resumeSeekRetry)
+                handler.postDelayed(resumeSeekRetry, 3500)
+                handler.postDelayed(resumeSeekRetry, 8000)
+            }
+        }
+
+        // Skip intro (euristica piano §4): primi 30s di un titolo >60s.
+        skipAvailable = dur > 60 && pos > 0 && pos < 30
+        skipBtn.visibility = if (skipAvailable) View.VISIBLE else View.GONE
+
+        // Prossimo episodio: card negli ultimi 90s (solo serie con next id).
+        val showNext = nextEpisodeId > 0 && !nextCardDismissed && dur > 0 &&
+                dur - pos < 90 && pos > dur / 2
+        nextCard.visibility = if (showNext) View.VISIBLE else View.GONE
+        if (showNext) showControls()
+
+        // -- Salvataggio progresso (throttle 10s) ------------------------------
+        // Solo a video maturo e solo dopo che il resume seek è confluito:
+        // la posizione pre-seek (≈0) non deve regredire il punto di ripresa.
+        if (dur <= 60 || pendingSeek > 0 || titleId <= 0) return
+        if (now - lastSaveAt < 10_000) return
+        lastSaveAt = now
+        // URL RELATIVO del watch (MAI l'embedUrl nel record — piano §4).
+        val urlRel = SiteUrl.relativeOf(watchUrl) ?: return
+        ProgressStore.get(this).save(
+            WatchProgress(
+                titleId = titleId,
+                name = titleText,
+                slug = recordSlug,
+                type = recordType.ifBlank { "movie" },
+                season = recordSeason,
+                episode = recordEpisode,
+                episodeName = episodeName.takeIf { it.isNotBlank() },
+                positionSec = pos,
+                durationSec = dur,
+                url = urlRel,
+                poster = posterUrl.takeIf { it.isNotBlank() },
+                updatedAt = now
+            )
+        )
+    }
+
+    /** Seek da scrubber (direct, fuocabile): passo = 10% della durata (min
+     *  30s), seek immediato — il prossimo evento 'time' riposiziona la barra. */
+    private fun scrubSeek(dir: Int) {
+        if (durSec <= 0) return
+        val step = (durSec / 10).coerceAtLeast(30)
+        playerSeekTo((posSec + dir * step).coerceIn(0, durSec - 1))
+        showControls()
     }
 
     private fun scheduleHide() {
@@ -721,8 +1170,14 @@ class PlayerActivity : Activity() {
         // Qualsiasi altro D-pad: mostra i controlli e muovi il fuoco.
         showControls()
         when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> moveFocus(-1)
-            KeyEvent.KEYCODE_DPAD_RIGHT -> moveFocus(1)
+            // Direct mode: fuoco sullo scrubber → LEFT/RIGHT = seek rapido
+            // (10% della durata) invece di spostare il fuoco.
+            KeyEvent.KEYCODE_DPAD_LEFT ->
+                if (directEmbed && focusOrder.getOrNull(focusIdx) === scrubber) scrubSeek(-1)
+                else moveFocus(-1)
+            KeyEvent.KEYCODE_DPAD_RIGHT ->
+                if (directEmbed && focusOrder.getOrNull(focusIdx) === scrubber) scrubSeek(1)
+                else moveFocus(1)
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER ->
                 focusOrder.getOrNull(focusIdx)?.performClick()
             else -> return super.dispatchKeyEvent(event)
@@ -747,6 +1202,28 @@ class PlayerActivity : Activity() {
         private const val RESUME_SEEK_DESIST_MS = 15_000L
         /** Massimo tempo coperto dalla schermata nera anti-flash. */
         private const val BLACKOUT_MAX_MS = 25_000L
+
+        /** Pulizia difensiva della watch page (legacy, piano §5.2 — RE
+         *  schermata watch): nasconde la modal premium (body>.modal) e i
+         *  noscript, blocca lo scroll e fonda il fondo a nero. Registrata a
+         *  document start (stesso pattern di early_hide.js) e limitata al
+         *  main frame: l'iframe vixcloud gestisce da solo il proprio layout.
+         *  Copre anche il main-frame-embed del fallback M4b (fondo nero
+         *  mentre il player vixcloud si avvia). */
+        private const val WATCH_HARDENING_JS = """
+(function(){
+  if (window.__scvWatchHardening || window.top !== window) return;
+  window.__scvWatchHardening = true;
+  try {
+    var s = document.createElement('style');
+    s.id = 'scv-watch-hardening';
+    s.textContent = 'body>.modal{display:none !important;}' +
+        'noscript{display:none !important;}' +
+        'html,body{overflow:hidden !important; background:#000 !important;}';
+    (document.head || document.documentElement).appendChild(s);
+  } catch (e) { /* no-op */ }
+})();
+"""
     }
 
     /** Client HTTP per wrapper/props legati al player (risolve l'embed per

@@ -9,17 +9,20 @@ import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.scviewer.fire.bridge.SctvBridge
 import com.scviewer.fire.bridge.SctvRepository
 import com.scviewer.fire.data.DomainRepository
+import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.SettingsDialog
+import com.scviewer.fire.web.SCWebViewClient
 import com.scviewer.fire.work.DomainRefreshScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +30,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 /**
  * Nuova interfaccia SCtv (M2 — dati reali): WebView fullscreen che carica
@@ -50,16 +56,21 @@ import org.json.JSONObject
  * ([loadCandidate]); se il mirror risponde viene promosso a primario
  * ([promoteRedirect]) e pushato `domainChanged` al JS.
  *
- * Player NATIVO delegato: startPlayback (JS) → AndroidJs.play → qui si
- * risolve il watch URL (detail cache → episodeId, fallback ?s=) e si apre
- * PlayerActivity con titleId + startPositionSec (ripresa da ProgressStore).
- * NIENTE player HTML5 nella WebView.
+ * Player NATIVO delegato (PLAYER V2 — direct-embed): startPlayback (JS) →
+ * AndroidJs.play → qui si risolve la puntata (detail cache → episodeId), si
+ * risolve ORA l'embed vixcloud via OkHttp (+nogui=1, token monouso ~10s) e
+ * si apre PlayerActivity con embedUrl + metadati (titleId, season/episode,
+ * nextEpisodeId, poster, watch URL per i record). Su fallimento della
+ * resolve: errore in UI e stop. La catena "prossimo episodio" riparte da
+ * onActivityResult (RESULT_OK con nextEpisodeId). NIENTE player HTML5.
  */
 class SctvActivity : Activity() {
 
     companion object {
         private const val TAG = "SctvActivity"
         private const val BRIDGE_VERSION = 1
+        /** requestCode del player: serve alla catena "prossimo episodio" (V2). */
+        private const val REQ_PLAYER = 7001
     }
 
     private lateinit var web: WebView
@@ -67,6 +78,10 @@ class SctvActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val domainRepo by lazy { DomainRepository.get(this) }
     private val repo by lazy { SctvRepository(this) }
+
+    /** titleId del play in corso: onActivityResult (catena prossimo
+     *  episodio) riparte da qui senza riscattare l'id dal result. */
+    private var pendingPlayTitleId = 0
 
     /** true dopo il push del primo evento boot: evita push progressChanged
      *  verso una pagina che non ha ancora il dispatcher attivo. */
@@ -278,8 +293,10 @@ class SctvActivity : Activity() {
 
     // -- Handler bridge ------------------------------------------------------------
 
-    /** M3 — player nativo: risolve il watch URL dalla puntata richiesta e
-     *  apre PlayerActivity con titleId/startPositionSec per la ripresa.
+    /** M3 — player nativo + PLAYER V2 (direct-embed): risolve la puntata
+     *  richiesta, risolve ORA l'embed vixcloud via OkHttp (token monouso
+     *  ~10s → lo start deve essere immediato, piano §2.1) e apre
+     *  PlayerActivity in direct mode con tutti i metadati per i record.
      *
      *  Risoluzione episodeId, in ordine:
      *   1. episodi già nel dettaglio in cache (stagione di default del sito);
@@ -289,6 +306,9 @@ class SctvActivity : Activity() {
      *      URL (il sito apre la stagione richiesta); per season<=1 il watch
      *      nudo lascia a PlayerActivity.resolveWatchUrl (prima stagione).
      *  Un film va direttamente a /it/watch/<id>.
+     *
+     *  Il watch URL (assoluto) va SEMPRE nell'extra "url": nei record
+     *  (ProgressStore/HistoryStore) DEVE finire /it/watch/..., mai l'embed.
      */
     private fun onPlayRequested(titleId: Int, season: Int, episode: Int) {
         if (titleId <= 0) {
@@ -306,13 +326,43 @@ class SctvActivity : Activity() {
             val domain = domainRepo.currentDomain()
 
             var episodeId = 0
+            var episodesArr: JSONArray? = null
             if (type == "tv" && episode > 0) {
-                episodeId = episodeIdIn(item.optJSONArray("episodes"), season, episode)
+                episodesArr = item.optJSONArray("episodes")
+                episodeId = episodeIdIn(episodesArr, season, episode)
                 if (episodeId == 0 && season > 0) {
                     val eps = withContext(Dispatchers.IO) {
                         runCatching { repo.seasonEpisodes(titleId, season, domain) }.getOrNull()
                     }?.second
                     episodeId = episodeIdIn(eps, season, episode)
+                    if (episodeId > 0) episodesArr = eps
+                }
+            }
+
+            // V2: nome dell'episodio corrente e PROSSIMO episodio (stessa
+            // stagione, k+1 nell'array usato) — la card "Up Next" del player
+            // direct ne ha bisogno, la catena riparte via onActivityResult.
+            var episodeName = ""
+            var nextEpisodeId = 0
+            var nextEpisodeNumber = 0
+            var nextEpisodeSeason = 0
+            if (episodeId > 0 && episodesArr != null) {
+                var k = -1
+                for (i in 0 until episodesArr.length()) {
+                    val e = episodesArr.optJSONObject(i) ?: continue
+                    if (e.optInt("id") == episodeId) {
+                        k = i
+                        episodeName = e.optString("title")
+                        break
+                    }
+                }
+                if (k >= 0) {
+                    val nx = episodesArr.optJSONObject(k + 1)
+                    if (nx != null && nx.optInt("id", 0) > 0) {
+                        nextEpisodeId = nx.optInt("id")
+                        nextEpisodeNumber = nx.optInt("ep")
+                        nextEpisodeSeason = nx.optInt("season", season.coerceAtLeast(1))
+                    }
                 }
             }
 
@@ -338,16 +388,115 @@ class SctvActivity : Activity() {
                 (p.episode ?: 1) == episode && (p.season ?: 1) == season.coerceAtLeast(1)
             ) p.positionSec else 0
 
-            Log.i(TAG, "play titleId=$titleId → $watchPath (start=${startPositionSec}s)")
-            startActivity(
+            // V2 — direct embed: GET /it/iframe/<id>?episode_id=<ep> con i
+            // cookie della sessione sito (WebView) e il Referer, estrai l'src
+            // vixcloud e aggiungi &nogui=1. FALLIMENTO → errore e stop: il
+            // flusso watch-page resta per la modalità sito, niente fallback
+            // in cascata qui (piano §4).
+            val embedUrl = withContext(Dispatchers.IO) {
+                resolveEmbedDirect(titleId, episodeId, domain)
+            }
+            if (embedUrl.isNullOrBlank()) {
+                Log.w(TAG, "play $titleId: embed vixcloud non risolvibile")
+                pushError("Player non disponibile: riprova tra qualche istante")
+                return@launch
+            }
+
+            // Poster per i record del player: progresso salvato → PosterCache
+            // → dettaglio (stesso ordine con cui i rail popolano le card).
+            val poster = p?.poster?.takeIf { it.isNotBlank() }
+                ?: PosterCache.get(this@SctvActivity, titleId)
+                ?: item.optString("posterUrl").takeIf { it.isNotBlank() }
+                ?: ""
+            // Slug dall'URL titolo del dettaglio (per il record WatchProgress;
+            // il sito risolve comunque per id se lo slug fosse parziale).
+            val slug = item.optString("url").substringAfter("-$titleId-", "")
+
+            Log.i(TAG, "play titleId=$titleId → $watchPath (start=${startPositionSec}s, " +
+                "direct, nextEp=$nextEpisodeId)")
+            pendingPlayTitleId = titleId
+            startActivityForResult(
                 Intent(this@SctvActivity, PlayerActivity::class.java).apply {
-                    putExtra("url", url)
+                    putExtra("url", url)                 // watch URL assoluto (record/cronologia)
+                    putExtra("embedUrl", embedUrl)       // embed vixcloud +nogui → direct mode
                     putExtra("title", name)
                     putExtra("titleId", titleId)
                     putExtra("startPositionSec", startPositionSec)
+                    putExtra("season", if (type == "tv") season.coerceAtLeast(1) else 1)
+                    putExtra("episode", if (type == "tv") episode.coerceAtLeast(1) else 1)
+                    putExtra("type", type)
+                    putExtra("slug", slug)
+                    putExtra("episodeName", episodeName)
+                    putExtra("nextEpisodeId", nextEpisodeId)
+                    putExtra("nextEpisodeSeason", nextEpisodeSeason)
+                    putExtra("nextEpisodeNumber", nextEpisodeNumber)
+                    putExtra("poster", poster)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
+                },
+                REQ_PLAYER
             )
+        }
+    }
+
+    /** PLAYER V2 — GET del wrapper {domain}/it/iframe/<titleId>[?episode_id=]
+     *  (thread IO) e estrazione dell'src dell'iframe vixcloud con &nogui=1
+     *  (il bundle nogui cambia: controls:false, autostart+mute, nessun
+     *  force-720p necessario — max 720p comunque senza canPlayFHD).
+     *  Il token dentro l'src è MONOUSO e scade in ~10s: chiamare SUBITO
+     *  prima dello start, senza delay intermedi. Referer OBBLIGATORIO. */
+    private fun resolveEmbedDirect(titleId: Int, episodeId: Int, domain: String): String? {
+        val cookie = runCatching { CookieManager.getInstance().getCookie(domain) }.getOrNull()
+        val wrapperUrl = buildString {
+            append(domain.trimEnd('/'))
+            append("/it/iframe/")
+            append(titleId)
+            if (episodeId > 0) append("?episode_id=").append(episodeId)
+        }
+        return runCatching {
+            val b = Request.Builder().url(wrapperUrl)
+                .header("User-Agent", SCWebViewClient.DESKTOP_UA)
+                .header("Accept", "text/html")
+                .header("Referer", domain.trimEnd('/') + "/")
+            cookie?.takeIf { it.isNotBlank() }?.let { b.header("Cookie", it) }
+            resolveClient.newCall(b.build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w(TAG, "iframe fetch HTTP ${resp.code} ($wrapperUrl)")
+                    return@use null
+                }
+                val html = resp.body?.string() ?: return@use null
+                Regex("src=\"(https://vixcloud[^\"]+)\"").find(html)
+                    ?.groupValues?.get(1)
+                    ?.replace("&amp;", "&")
+                    ?.let { src ->
+                        val sep = if (src.contains("?")) "&" else "?"
+                        src + sep + "nogui=1"
+                    }
+            }
+        }.onFailure { Log.w(TAG, "resolveEmbedDirect failed", it) }.getOrNull()
+    }
+
+    /** Client HTTP per la resolve dell'embed (V2). Timeout stretti: il token
+     *  vixcloud del wrapper scade in ~10s. */
+    private val resolveClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+    }
+
+    /** PLAYER V2 — catena "prossimo episodio": PlayerActivity termina con
+     *  RESULT_OK + nextEpisodeId (più stagione/numero) → riparte
+     *  onPlayRequested pulita (risoluzione episodio + embed freschi). */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PLAYER || resultCode != RESULT_OK || data == null) return
+        val nextId = data.getIntExtra("nextEpisodeId", 0)
+        val ns = data.getIntExtra("nextEpisodeSeason", 0)
+        val ne = data.getIntExtra("nextEpisodeNumber", 0)
+        if (nextId > 0 && ns > 0 && ne > 0) {
+            Log.i(TAG, "player → prossimo episodio S$ns:E$ne (id=$nextId) di $pendingPlayTitleId")
+            onPlayRequested(pendingPlayTitleId, ns, ne)
         }
     }
 
