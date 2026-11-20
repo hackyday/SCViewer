@@ -257,7 +257,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             setPadding(padH, padV, padH, padV)
             elevation = 10f * density
             isClickable = true
-            isFocusable = true
+            // B16: mai focusabile — si usa solo col cursore (come resumeChip).
+            isFocusable = false
             setOnClickListener { startAutoUpdate(updateTag ?: "") }
         }
         content.addView(
@@ -283,6 +284,11 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         val skipContainer = findViewById<FrameLayout>(R.id.skipIntroContainer)
         val skipButton = findViewById<Button>(R.id.skipIntroButton)
+        // B16: i chip nativi sono COERENTI — mai focusabili (in modalità
+        // anello nessun tasto li raggiunge, un focus nativo li sgrana).
+        // L'utente li usa SOLO col cursore: isClickable resta. requestFocus()
+        // in SkipIntroController.show() diventa di fatto un no-op.
+        skipButton.isFocusable = false
         skipIntroController = SkipIntroController(skipContainer, skipButton) { jsBridge.requestSkipIntro() }
 
         cursorCtl = CursorController(
@@ -342,7 +348,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             setPadding(padH, padV, padH, padV)
             elevation = 10f * density
             isClickable = true
-            isFocusable = true
+            // B16: mai focusabile — si usa solo col cursore (coerenza con
+            // gli altri chip nativi; l'anello D-pad non lo raggiunge mai).
+            isFocusable = false
             setOnClickListener { onResumeChipClicked() }
         }
         findViewById<FrameLayout>(android.R.id.content).addView(
@@ -402,6 +410,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             onOpenChanged = { open ->
                 if (open) {
                     cursorCtl.hide()
+                    // Anche l'anello spaziale: a sidebar aperta il sito non è
+                    // navigabile e il ring sotto il pannello semitrasparente
+                    // sembra un anello "scomparso" (QA: colonna sinistra).
+                    webView.evaluateJavascript(
+                        "if(window.__sctvNav&&__sctvNav.hide)__sctvNav.hide()", null
+                    )
                 } else if (SettingsStore.getSitePointerMode(this) && !cinemaMode) {
                     cursorCtl.show()
                 }
@@ -941,7 +955,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             setPadding(padH, padV, padH, padV)
             elevation = 10f * density
             isClickable = true
-            isFocusable = true
+            // B16: chip player (prossimo episodio / salta outro) mai
+            // focusabili — solo cursore, come gli altri chip nativi.
+            isFocusable = false
             setOnClickListener(onClick)
             content.addView(
                 this,
@@ -973,7 +989,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             setBackgroundResource(R.drawable.bg_sctv_chip)
             elevation = 10f * density
             isClickable = true
-            isFocusable = true
+            // B16: cancel chip — solo cursore, mai focusabile.
+            isFocusable = false
             setOnClickListener { hideAutoNext() }
         }
         content.addView(

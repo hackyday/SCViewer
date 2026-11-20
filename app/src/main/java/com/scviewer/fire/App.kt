@@ -48,6 +48,12 @@ class App : Application(), Configuration.Provider {
 
         // Don't call WorkManager.initialize() here — Configuration.Provider
         // takes care of it lazily on first getInstance() call.
+
+        // Solo debug: proxy TCP verso il socket DevTools del WebView, così i
+        // test agenti parlano con CDP via WiFi senza adb forward.
+        if (BuildConfig.DEBUG) {
+            com.scviewer.fire.web.DevToolsProxy.startIfDebug()
+        }
     }
 
     override val workManagerConfiguration: Configuration

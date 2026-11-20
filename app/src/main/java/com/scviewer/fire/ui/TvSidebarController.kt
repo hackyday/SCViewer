@@ -58,11 +58,25 @@ class TvSidebarController(
         }
     }
 
-    /** Apre la sidebar e mette il fuoco sulla prima voce. */
+    /** B18: prima voce VISIBILE della sidebar in ordine di LAYOUT — non un
+     *  id hardcodato: l'ordine visivo del layout è la verità (oggi la prima
+     *  voce è "Cerca", "Home" è la seconda). Scorre i figli diretti della
+     *  root (l'ordine dei child corrisponde all'ordine verticale) e prende
+     *  il primo focusable visibile. */
+    private fun firstVisibleFocusableItem(): View? {
+        for (i in 0 until root.childCount) {
+            val c = root.getChildAt(i)
+            if (c.visibility == View.VISIBLE && c.isFocusable) return c
+        }
+        return null
+    }
+
+    /** Apre la sidebar e mette il fuoco sulla prima voce visibile. */
     fun open() {
         root.visibility = View.VISIBLE
         onOpenChanged(true)
-        root.findViewById<LinearLayout>(R.id.navItemHome).requestFocus()
+        (firstVisibleFocusableItem()
+            ?: root.findViewById<LinearLayout>(R.id.navItemHome)).requestFocus()
     }
 
     /** Chiude la sidebar e restituisce il fuoco al contenuto. */

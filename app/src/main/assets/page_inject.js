@@ -14,6 +14,9 @@
  *      mousedown sentinel (__scvTouchSeen) and a __scvTap(viewX, viewY, ...)
  *      fallback that clicks the DOM element under the pointer if the WebView
  *      ever ignores the synthetic touch.
+ *   5. Hero trailer tame — rimozione degli iframe vixcloud.cc/embed (trailer
+ *      hero in HLS) su pagine NON watch: il decoder dell'iframe cross-origin
+ *      brucia CPU/GPU su stick da 1 GB e l'intercettore 'play' non lo vede.
  *
  * NOTE: in "pointer mode" the D-pad drives the NATIVE CursorController
  * (virtual mouse cursor overlay). In the default "D-pad mode" the native side
@@ -76,6 +79,49 @@
         // own write, forever, wedging the renderer's JS thread (no click
         // handlers, no timers, ~100% CPU) and eventually OOM-crashing it.
         style.textContent = css;
+      }
+    } catch (e) { /* no-op */ }
+  }
+
+  // ---- 5b. Trailer hero = IFRAME vixcloud embed ------------------------------
+  // Scoperta runtime: il trailer dell'hero (home) NON è un <video> del frame
+  // principale ma un IFRAME cross-origin https://vixcloud.cc/embed/<id> con
+  // player HLS dentro: l'intercettore 'play' (main frame) non lo vede, il
+  // video decodifica continuamente (MediaCodec attivo, frame persi) e
+  // brucia CPU/GPU su uno stick da 1 GB.
+  //
+  // STRADA SCELTA (documentata): rimozione via page_inject, NON blocco in
+  // shouldInterceptRequest (SCWebViewClient). Motivi:
+  //   1. L'intercettore deve decidere dall'URL corrente della WebView, ma
+  //      legge su thread background: servirebbe un campo @Volatile aggiornato
+  //      da onPageStarted/onPageInfoChanged. Quel riscaldamento ARRIVA TARDI
+  //      nel flusso critico: l'ingresso in /it/watch/ è una navigazione SPA
+  //      (mappa §7.9 — pushState → swap DOM → request dell'iframe embed) e
+  //      il report Inertia che aggiorna l'URL cachato arriva DOPO la request
+  //      dell'iframe: con l'URL stantio (ancora /it/titles/...) un blocco
+  //      di vixcloud.cc/embed/* ucciderebbe IL PLAYER VERO. L'esito peggiore
+  //      possibile; qui invece location.pathname del frame principale è
+  //      sempre fresco e sincrono — guard esatto, nessuna corsa.
+  //   2. RIMOZIONE dal DOM, non display:none: display:none NON ferma la
+  //      decodifica di un iframe cross-origin (il player continuerebbe a
+  //      bruciare CPU da nascosto); la rimozione scarica l'intero frame
+  //      (rete + decoder + superficie di composizione — teardown standard
+  //      del documento, non manipolazione di layer). L'incidente "compositor
+  //      nero" passato nasceva nascondendo via CSS un VIDEO GIÀ IN PLAY;
+  //      qui si rimuove un iframe, via diversa. Fallback visivo intatto:
+  //      dietro l'iframe l'hero ha .background-wrap/.background-image
+  //      (mappa §1.2) che ricompare subito.
+  // Guard: su /it/watch/ l'iframe vixcloud È il player (mappa §1.5) — mai
+  // toccato. Solo il path /embed/: playlist e segmenti (/playlist/,
+  // /download/) non passano di qui (l'iframe non li referenzia come src).
+  function tameHeroTrailerIframes() {
+    try {
+      if (location.pathname.indexOf('/it/watch/') === 0) return;
+      var ifr = document.querySelectorAll('iframe[src*="vixcloud.cc/embed"]');
+      for (var i = 0; i < ifr.length; i++) {
+        try {
+          if (ifr[i].parentNode) ifr[i].parentNode.removeChild(ifr[i]);
+        } catch (eR) { /* no-op */ }
       }
     } catch (e) { /* no-op */ }
   }
@@ -180,6 +226,7 @@
   // ---- Run ----------------------------------------------------------------
   hideAds();
   killPopunders();
+  tameHeroTrailerIframes();
   installScrollGuard();
 
   // ---- 8. Rilevamento pagina di blocco anti-bot -----------------------------
@@ -341,10 +388,11 @@
   //                           da PageListener.onPageLoaded (no-op se il modulo
   //                           è appena stato iniettato su un documento nuovo).
   //   __sctvNav.isTyping()  : true se il fuoco è in un input/textarea/select
-  //                           ATTIVO — in quello stato SINISTRA/DESTRA non
-  //                           muovono l'anello (servono al cursore testo);
-  //                           il nativo può usarlo per inoltrare le frecce
-  //                           all'input o aprire la tastiera.
+  //                           ATTIVO — in quello stato SINISTRA/DESTRA
+  //                           muovono il caret del campo (B14, gestito nel
+  //                           modulo) e SU/GIÙ escono dal campo con blur;
+  //                           il nativo può usare il valore per decidere
+  //                           se aprire la tastiera su OK.
   //   __sctvNav.spaReset()  : interno — hook pushState/popState di Inertia
   //                           (sezione 10): ricentra il fuoco dopo ogni
   //                           navigazione SPA.
@@ -709,13 +757,17 @@
       // DENTRO l'<a> della card (numero gigante, copre numero+poster). La
       // regola "più interno vince" si INVERTE quando l'interno è un svg
       // decorativo con un antenato semantico candidato: tieni l'ANTENATO.
+      // QA E: il <path> INTERNO all'svg passava l'esclusione limitata a
+      // <svg> e batteva la card sul centro-x → tutti i discendenti SVG.
+      var SVGTAGS = 'svg,path,use,g,polygon,circle,rect,line,polyline,ellipse,text';
       var out2 = [];
       for (i = 0; i < out.length; i++) {
         var dv = out[i];
         var dropDv = false;
-        var tn = dv.tagName;
-        if (tn === 'svg' || tn === 'SVG') dropDv = true;
-        else {
+        try {
+          dropDv = dv.matches(SVGTAGS);
+        } catch (eSv) { dropDv = false; }
+        if (!dropDv) {
           try {
             dropDv = dv.classList.contains('svg-icon') ||
                      dv.classList.contains('top-10-rank') ||
@@ -743,20 +795,52 @@
 
       // 3. dedup per contenimento: fra elementi sovrapposti tiene il più
       //    interno (il target reale del click), scarta il contenitore.
+      //    CORREZIONE P0 (QA B/G): la condizione era INVERTITA — controllava
+      //    rr (corrente, più grande) dentro kr (tenuto, più piccolo), quasi
+      //    sempre falso → sopravvivevano SPAN+ANCHOR dello stesso bottone
+      //    (doppio-step: 2 pressioni per controllo) e svg dentro link.
+      //    Ora: kr (già tenuto) DENTRO rr → scarta il contenitore rr, con
+      //    inversione semantica: se il contenitore è semantico e l'interno
+      //    no (span di testo dentro <a>), vince il CONTENITORE — l'anello
+      //    abbraccia il bottone intero e OK ha un solo stop per controllo.
+      function isSemanticCand(el) {
+        try {
+          return !!el.matches('a[href],button,input,select,textarea,[role="button"],[tabindex]');
+        } catch (eS2) { return false; }
+      }
       out.sort(function (a, b) {
         return a.__sctvRect.width * a.__sctvRect.height -
                b.__sctvRect.width * b.__sctvRect.height;
       });
       var kept = [];
+      var demoted = new Set();
       for (i = 0; i < out.length; i++) {
         var rr = out[i].__sctvRect;
         var inside = false;
         for (var m = 0; m < kept.length; m++) {
           var kr = kept[m].__sctvRect;
-          if (rr.left >= kr.left - 2 && rr.right <= kr.right + 2 &&
-              rr.top >= kr.top - 2 && rr.bottom <= kr.bottom + 2) { inside = true; break; }
+          // kr (tenuto, più piccolo) è dentro rr (corrente, contenitore)?
+          if (kr.left >= rr.left - 2 && kr.right <= rr.right + 2 &&
+              kr.top >= rr.top - 2 && kr.bottom <= rr.bottom + 2) {
+            if (isSemanticCand(out[i]) && !isSemanticCand(kept[m])) {
+              // contenitore semantico vs interno decorativo: vince il
+              // contenitore, l'interno esce dalla lista tenuta.
+              demoted.add(kept[m]);
+              continue;
+            }
+            inside = true; // contenitore non semantico: vince l'interno
+            break;
+          }
         }
         if (!inside) kept.push(out[i]);
+      }
+      if (demoted.size) {
+        var keptF = [];
+        for (i = 0; i < kept.length; i++) {
+          if (demoted.has(kept[i])) continue;
+          keptF.push(kept[i]);
+        }
+        kept = keptF;
       }
       // B9: dedup per IoU su coppie SENZA contenimento (il numero gigante
       // "TOP 10" sopra la card): prima restavano entrambi e si navigava anche
@@ -945,13 +1029,17 @@
     }
 
     function pickByX(row, x) {
-      var ms = row.members, best = ms[0], bd = Infinity;
+      var ms = row.members, best = null, bd = Infinity;
       for (var i = 0; i < ms.length; i++) {
-        var c = ms[i].r.left + ms[i].r.width / 2;
+        // P0 (QA G/D): salta i membri morti (preview smontata tra scan e
+        // focus): nodo staccato o rect zero-size = anello invisibile.
+        var elV = ms[i].el, rV = ms[i].r;
+        if (!elV || !document.contains(elV) || rV.width < 4 || rV.height < 4) continue;
+        var c = rV.left + rV.width / 2;
         var d = Math.abs(c - x);
         if (d < bd) { bd = d; best = ms[i]; }
       }
-      return best;
+      return best || ms[0];
     }
 
     // ---- Scroll di messa a fuoco -------------------------------------------
@@ -1056,6 +1144,35 @@
       return !!cur && isFieldEl(cur) && document.activeElement === cur;
     }
 
+    // B14: SINISTRA/DESTRA in un campo di testo muovono il caret
+    // (selectionStart ± 1 con setSelectionRange). Guard: i type senza caret
+    // manipolabile (number/email/date/time: setSelectionRange lancia
+    // InvalidStateError) e i campi senza API selection (select) restano
+    // come prima (false). Ai bordi il tasto è comunque consumato (true):
+    // in isTyping le frecce appartengono al campo, mai all'anello.
+    function caretMove(dir) {
+      try {
+        var t = (cur.type || '').toLowerCase();
+        if (t === 'number' || t === 'email' || t === 'date' || t === 'time' ||
+            t === 'month' || t === 'week' || t === 'datetime-local') return false;
+        var s = cur.selectionStart, e = cur.selectionEnd;
+        if (typeof s !== 'number' || typeof e !== 'number') return false;
+        var len = (cur.value || '').length;
+        if (dir === 'left') {
+          if (s !== e) { cur.setSelectionRange(s, s); return true; } // collassa a inizio selezione
+          if (s <= 0) return true;
+          cur.setSelectionRange(s - 1, s - 1);
+          return true;
+        }
+        if (s !== e) { cur.setSelectionRange(e, e); return true; } // collassa a fine selezione
+        if (e >= len) return true;
+        cur.setSelectionRange(e + 1, e + 1);
+        return true;
+      } catch (eCaret) {
+        return false;
+      }
+    }
+
     // Mappa §3: la preview NON è CSS-hover. L'apertura è un listener Vue su
     // mouseenter DIRETTO di img.cover-image (rail normali) o .box-7x10 (top10)
     // → setTimeout(300ms) → POST → Teleport su <body> (.preview-wrap).
@@ -1074,6 +1191,21 @@
     }
 
     function setFocus(el) {
+      // P0 (QA G/D): il nodo può MORIRE tra scan e focus (il sito smonta/
+      // ri-teleporta la preview al cambio hover): fuoco su nodo staccato o
+      // rect zero-size = anello invisibile e loc=null. Ri-ancora sul
+      // candidato valido più vicino all'ultima posizione vista.
+      if (el) {
+        var elOk = false;
+        try {
+          var vr = el.getBoundingClientRect();
+          elOk = document.contains(el) && vr.width > 3 && vr.height > 3;
+        } catch (eV0) { elOk = false; }
+        if (!elOk) {
+          el = nearestTo(lastCenter ? lastCenter.x : innerWidth / 2,
+                         lastCenter ? lastCenter.y : innerHeight / 2) || null;
+        }
+      }
       if (cur && cur !== el) {
         cur.classList.remove(RING);
         // mouseout solo se il nuovo fuoco NON è dentro il vecchio: muoversi
@@ -1100,6 +1232,9 @@
       // annulla ogni ricentro SPA pendente (observer + timer di sicurezza).
       pendingCenter = false;
       clearTimeout(spaTimer);
+      // B8: il fuoco è cambiato — la catena di verifica/click-fallback
+      // dell'attivazione precedente non deve più scattare.
+      actToken++;
       cur.classList.add(RING);
       navScrollStart(); // prima dello scroll: il guard deve lasciarlo passare
       scrollFix(cur);
@@ -1177,9 +1312,16 @@
     function move(dir) {
       // Zona morta watch (mappa §6.6): prima di ogni altra cosa, zero lavoro.
       if (isWatchDoc()) return false;
-      // Campi di testo attivi: SINISTRA/DESTRA appartengono al cursore testo,
-      // non all'anello (SU/GIÙ escono dal campo normalmente).
-      if (isTyping() && (dir === 'left' || dir === 'right')) return false;
+      // B14: campi di testo attivi. SINISTRA/DESTRA muovono il caret
+      // (caretMove); SU/GIÙ escono dal campo (blur + true: il fuoco resta
+      // sul campo col suo anello, il prossimo movimento naviga l'anello).
+      if (isTyping()) {
+        if (dir === 'left' || dir === 'right') return caretMove(dir);
+        if (dir === 'up' || dir === 'down') {
+          try { cur.blur(); } catch (eBlur) {}
+          return true;
+        }
+      }
 
       var rows = buildRows(candidates());
 
@@ -1209,12 +1351,27 @@
       var colX = row.members[idx].r.left + row.members[idx].r.width / 2;
 
       if (dir === 'left') {
-        if (idx > 0) { setFocus(row.members[idx - 1].el); return true; }
+        // P0: cammina ai membri VIVI (i morti si saltano, non bloccano).
+        for (var jl = idx - 1; jl >= 0; jl--) {
+          var mL = row.members[jl].el;
+          if (mL && document.contains(mL) &&
+              row.members[jl].r.width > 3 && row.members[jl].r.height > 3) {
+            setFocus(mL); return true;
+          }
+        }
         // Primo elemento della riga: 'edge' solo dal bordo sinistro del
         // contenuto reale (padding dinamico, vedi pagePadX).
         return row.members[0].r.left <= pagePadX(rows) + 8 ? 'edge' : false;
       }
       if (dir === 'right') {
+        for (var jr = idx + 1; jr < row.members.length; jr++) {
+          var mR = row.members[jr].el;
+          if (mR && document.contains(mR) &&
+              row.members[jr].r.width > 3 && row.members[jr].r.height > 3) {
+            setFocus(mR);
+            return true;
+          }
+        }
         if (idx < row.members.length - 1) {
           setFocus(row.members[idx + 1].el);
           return true;
@@ -1278,6 +1435,157 @@
       return 'top';
     }
 
+    // ---- B8: attivazione robusta ----------------------------------------------
+    // Alcune card hanno il click agganciato a un ANTENATO senza semantica né
+    // cursor:pointer (zona morta per OK): il click sul candidato non produce
+    // alcun effetto. Sequenza dopo il click primario (real || cur):
+    //   1. verifica a ~400ms e poi ~1300ms: successo se il pathname è
+    //      cambiato, il body è in fade (playVideo anima document.body per
+    //      750ms PRIMA di navigare), classe/style del target mutate, nuova
+    //      .preview-wrap o nuovi nodi in `recent` (dropdown v-if, toggle
+    //      watchlist, qualunque re-render Vue con nodi nuovi);
+    //   2. nessun effetto ⇒ cammina su max 4 antenati e clicka il primo con
+    //      rect più grande e handler plausibile (on* attribute, __vue__ o
+    //      _vei su di sé o sul padre). MAI seguire gli href (bugiardi sulle
+    //      righe episodi, mappa §7.4): solo dispatch di eventi, il navigate
+    //      di default resta agli handler del sito;
+    //   3. anche questo senza effetto ⇒ tap sintetico completo al CENTRO del
+    //      target via elementFromPoint (colpisce l'elemento più profondo del
+    //      punto — può essere il portatore reale dell'handler).
+    // Ogni setFocus/reset/hide/nuovo activate() invalida la catena (token):
+    // nessun click fantasma su elementi che l'utente ha già lasciato.
+    var actToken = 0;
+
+    function dispatchFullClick(t) {
+      var cr = t.getBoundingClientRect();
+      var opts = {
+        bubbles: true, cancelable: true, view: window,
+        clientX: cr.left + cr.width / 2,
+        clientY: cr.top + cr.height / 2
+      };
+      try { t.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (e1) {}
+      try { t.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e2) {}
+      try { t.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (e3) {}
+      try { t.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e4) {}
+      try { t.click(); } catch (e5) {}
+    }
+
+    // Handler "plausibile" su un nodo: attributi on*, istanza Vue 2
+    // (__vue__) o registro dei listener Vue 3 (_vei) su di sé o sul padre.
+    function plausibleHandler(el) {
+      try {
+        if (!el || el.nodeType !== 1) return false;
+        var at = el.attributes;
+        for (var i = 0; i < at.length; i++) {
+          if (/^on[a-z]+$/i.test(at[i].name || '')) return true;
+        }
+        if (el.__vue__) return true;
+        if (el._vei) { for (var k in el._vei) return true; }
+        var p = el.parentElement;
+        if (p) {
+          if (p.__vue__) return true;
+          if (p._vei) { for (var k2 in p._vei) return true; }
+        }
+      } catch (eH) { /* no-op */ }
+      return false;
+    }
+
+    // Primo antenato (max 4 salti) con rect più grande e handler plausibile.
+    // nav.tab-nav escluso: è la root Vue di TabNav e porta il listener
+    // onTabswitch — cliccarla emette tab "undefined" e nasconde tutti i
+    // contenuti (mappa §7.2). Esclusi anche i nodi blacklisted/animati.
+    function findPlausibleAncestor(tgt) {
+      var tr = tgt.getBoundingClientRect();
+      var ta = tr.width * tr.height;
+      var n = tgt.parentElement;
+      for (var hops = 0; n && hops < 4; hops++) {
+        if (n === document.body || n === document.documentElement) break;
+        var isTabNav = false;
+        try { isTabNav = !!(n.matches && n.matches('nav.tab-nav')); } catch (eM) {}
+        if (!isTabNav && !blacklisted(n) && !inAnimating(n) && plausibleHandler(n)) {
+          var nr = n.getBoundingClientRect();
+          if (nr.width >= tr.width && nr.height >= tr.height &&
+              nr.width * nr.height > ta) return n;
+        }
+        n = n.parentElement;
+      }
+      return null;
+    }
+
+    // Ultimo tentativo: tap sintetico COMPLETO al centro del target.
+    // elementFromPoint restituisce l'elemento più profondo al centro — può
+    // essere un discendente (img dentro l'anchor): il click bubbla alla
+    // catena giusta anche quando il target "logico" non riceve gli eventi.
+    function syntheticCenterTap(tgt) {
+      var hit = tgt;
+      try {
+        var r = tgt.getBoundingClientRect();
+        hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) || tgt;
+      } catch (eP) { /* no-op */ }
+      dispatchFullClick(hit);
+    }
+
+    function newRecentSince(ts) {
+      var found = false;
+      recent.forEach(function (t) { if (t >= ts) found = true; });
+      return found;
+    }
+
+    function bodyStyleAttr() {
+      try { return document.body.getAttribute('style') || ''; } catch (eB) { return ''; }
+    }
+
+    // Qualunque effetto visibile dell'attivazione (vedi sequenza B8 sopra).
+    function activationHasEffect(sig, tgt) {
+      if (location.pathname !== sig.p) return true;
+      if (bodyStyleAttr() !== sig.bs) return true;
+      try {
+        var cls = (typeof tgt.className === 'string') ? tgt.className : '';
+        if (cls !== sig.cls) return true;
+        if ((tgt.getAttribute('style') || '') !== sig.sty) return true;
+      } catch (eC) { /* no-op */ }
+      var pv = false;
+      try { pv = !!document.querySelector('.preview-wrap'); } catch (eP2) {}
+      if (pv !== sig.pv) return true;
+      return newRecentSince(sig.at);
+    }
+
+    // Captura classe/style correnti del target di questa fase: la verifica
+    // confronta lo stato PRE-click del nodo cliccato in quella fase (tgt al
+    // primo giro, l'antenato al secondo).
+    function beginStageSig(sig, el) {
+      try { sig.cls = (typeof el.className === 'string') ? el.className : ''; } catch (eS1) {}
+      try { sig.sty = el.getAttribute('style') || ''; } catch (eS2) {}
+    }
+
+    // Doppio controllo (400ms poi +1300ms): il secondo copre le nav SPA
+    // lente (fetch del component Inertia) prima di dichiarare il click
+    // "morto" — senza di lui una card lenta ma funzionante prenderrebbe il
+    // fallback e navigherebbe due volte.
+    function verifyActivation(token, sig, tgt, stage) {
+      if (token !== actToken) return;
+      setTimeout(function () {
+        if (token !== actToken) return;
+        if (activationHasEffect(sig, tgt)) return;
+        setTimeout(function () {
+          if (token !== actToken) return;
+          if (activationHasEffect(sig, tgt)) return;
+          if (stage === 0) {
+            var anc = findPlausibleAncestor(tgt);
+            if (anc) {
+              beginStageSig(sig, anc);
+              dispatchFullClick(anc);
+              verifyActivation(token, sig, anc, 1);
+            } else {
+              syntheticCenterTap(tgt);
+            }
+          } else {
+            syntheticCenterTap(tgt);
+          }
+        }, 1300);
+      }, 400);
+    }
+
     function activate() {
       if (isWatchDoc()) return;
       if (!cur) {
@@ -1298,22 +1606,21 @@
       // il click reale sta sull'antenato attivabile.
       var real = cur.closest ? cur.closest('a[href],button,[role="button"]') : null;
       var tgt = real || cur;
-      // Mappa §5.2: click REALE — sequenza completa pointer/mouse + click con
-      // le coordinate del centro dell'elemento. Le righe episodi hanno
-      // onClick=playVideo che parte PRIMA della navigazione e gli href sono
-      // bugiardi (puntano alla pagina titolo, non al player): mai usare
-      // location=href, il default navigate va lasciato agli handler del sito.
-      var cr5 = tgt.getBoundingClientRect();
-      var copts = {
-        bubbles: true, cancelable: true, view: window,
-        clientX: cr5.left + cr5.width / 2,
-        clientY: cr5.top + cr5.height / 2
+      // Mappa §5.2: click REALE — sequenza completa pointer/mouse + click
+      // (dispatchFullClick). Gli href NON vengono mai seguiti direttamente
+      // (bugiardi sulle righe episodi): il navigate di default resta agli
+      // handler del sito.
+      var myToken = ++actToken;
+      var sig = {
+        p: location.pathname,
+        bs: bodyStyleAttr(),
+        cls: '', sty: '', pv: false,
+        at: Date.now()
       };
-      try { tgt.dispatchEvent(new PointerEvent('pointerdown', copts)); } catch (e5a) {}
-      try { tgt.dispatchEvent(new MouseEvent('mousedown', copts)); } catch (e5b) {}
-      try { tgt.dispatchEvent(new PointerEvent('pointerup', copts)); } catch (e5c) {}
-      try { tgt.dispatchEvent(new MouseEvent('mouseup', copts)); } catch (e5d) {}
-      try { tgt.click(); } catch (e5e) {}
+      beginStageSig(sig, tgt);
+      try { sig.pv = !!document.querySelector('.preview-wrap'); } catch (eS3) {}
+      dispatchFullClick(tgt);
+      verifyActivation(myToken, sig, tgt, 0);
     }
 
     // Reset esplicito (documentato nell'header del modulo): azzera fuoco e
@@ -1322,6 +1629,7 @@
       pendingCenter = false;
       spaAnchor = false;
       clearTimeout(spaTimer);
+      actToken++; // B8: nessuna catena di attivazione attraverso il reset
       centerFocus();
     }
 
@@ -1388,6 +1696,7 @@
     function hide() {
       if (cur) { cur.classList.remove(RING); cur = null; }
       hideFrame();
+      actToken++; // B8: nessuna catena di attivazione a modulo nascosto
     }
 
     // Drena la coda dei comandi D-pad arrivati prima dell'iniezione
@@ -1440,6 +1749,11 @@
   // First load: report quickly, then again in case the router settled late.
   setTimeout(reportPageInfo, 500);
   setTimeout(reportPageInfo, 2500);
+  // Trailer hero: l'iframe può essere montato dall'hydration o dal timer
+  // "show-after" del sito dopo l'iniezione — doppio passaggio garantito
+  // (il MutationObserver sopra copre tutte le montature successive).
+  setTimeout(tameHeroTrailerIframes, 600);
+  setTimeout(tameHeroTrailerIframes, 2000);
 
   // SPA navigation: Inertia drives history.pushState/replaceState — hook
   // them (plus popstate) and re-report after the new page settles. The same
@@ -1471,7 +1785,9 @@
 
   // Re-run the cosmetic hide on DOM mutations (the site is a SPA), debounced.
   // hideAds() no longer mutates the DOM on no-op calls (see above), so the
-  // observer cannot feed back into itself.
+  // observer cannot feed back into itself. Nella stessa finestra va rilanciata
+  // la rimozione degli iframe trailer vixcloud: l'hero li può ri-montare a
+  // ogni swap/re-render (idempotente).
   var hidePending = false;
   var observer = new MutationObserver(function () {
     if (hidePending) return;
@@ -1479,6 +1795,7 @@
     setTimeout(function () {
       hidePending = false;
       hideAds();
+      tameHeroTrailerIframes();
     }, 250);
   });
   try {
