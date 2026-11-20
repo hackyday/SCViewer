@@ -58,12 +58,6 @@
 
         <!-- Interfaccia TV nativa (prototipo): avvio diretto via adb, non è
              ancora il launcher principale. -->
-        <activity
-            android:name=".TvBrowseActivity"
-            android:exported="true"
-            android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
-            android:theme="@style/Theme.SCViewer" />
 
         <!-- Schermata di streaming SCtv: watch URL reale + controlli nativi. -->
         <activity
