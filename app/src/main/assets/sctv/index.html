@@ -1352,13 +1352,30 @@
     }
 
     // Fix TV #13: aggiornamento MIRATO della rail "Continua a guardare" su
-    // progressChanged — solo il contenuto dello scroller #row-continue.
+    // progressChanged — solo il contenuto dello scroller #row-continue,
+    // MAI renderCurrentView integrale (il fuoco resta dove è).
     function renderContinueRail() {
-      const el = document.getElementById('row-continue');
-      if (!el) return;
       const items = getScopedCatalog().filter(i => state.watchProgress[i.id] && !i.comingSoon);
-      const section = el.closest('section');
+      const el = document.getElementById('row-continue');
+      if (!el) {
+        // Rail non renderizzata (boot senza CW: primo titolo guardato). Su
+        // home si inserisce SOLO la section prima delle rail esistenti; gli
+        // altri tab non hanno la rail — niente da fare.
+        if (!items.length || state.activeTab !== 'home') return;
+        const wrap = document.querySelector('#view-container > div.-mt-6');
+        if (!wrap) return;
+        const row = (state.rows.home || []).find(r => /continua|continue/i.test(r.label || ''));
+        const html = renderCarouselRow(
+          'row-continue', (row && row.label) || 'Continua a guardare', items,
+          { showProgress: true }
+        );
+        if (!html) return;
+        wrap.insertAdjacentHTML('afterbegin', html);
+        refreshFocusableElements();
+        return;
+      }
       if (!items.length) {
+        const section = el.closest('section');
         if (section) section.remove();
         return;
       }
@@ -2161,7 +2178,7 @@
     // Fix TV #3/#7: niente player HTML5; startPlayback passa dal bridge e
     // azzera il fuoco corrente (la WebView va in onPause: un anello
     // congelato su video nativo sembrerebbe un bug).
-    function startPlayback(titleId, season = 1, episode = 1) {
+    function startPlayback(titleId, season = null, episode = null) {
       const item = getTitleById(titleId);
       if (!item) return;
 
@@ -2173,8 +2190,17 @@
         currentFocusedEl = null;
       }
 
+      // Il bridge vuole l'id NUMERICO del titolo ("site-123" → 123): passare
+      // la stringa dell'id item produrrebbe una conversione fallita (0).
+      // Chiamata senza stagione/episodio espliciti (card, hero): se il titolo
+      // è in "Continua a guardare" si riprende la puntata salvata, altrimenti
+      // S1E1 (per i film i due valori sono irrilevanti).
+      const wp = state.watchProgress[item.id];
+      const s = season || (wp && wp.season) || 1;
+      const e = episode || (wp && wp.episode) || 1;
+
       if (Native && Native.play) {
-        Native.play(titleId, season || 1, episode || 1);
+        Native.play(numericTitleId(item), s, e);
       } else {
         showToast('Playback requires the native app (browser preview only)');
       }

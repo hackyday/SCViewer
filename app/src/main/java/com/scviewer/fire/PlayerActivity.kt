@@ -10,6 +10,8 @@ import android.view.View
 import android.view.WindowManager
 import android.util.Log
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.serialization.json.Json
@@ -22,7 +24,14 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
+import com.scviewer.fire.data.PosterCache
+import com.scviewer.fire.data.ProgressStore
+import com.scviewer.fire.data.SiteUrl
+import com.scviewer.fire.data.WatchProgress
+import com.scviewer.fire.network.AdBlocker
+import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.web.JsInterface
 
 /**
@@ -65,6 +74,9 @@ class PlayerActivity : Activity() {
     private var watchUrl = ""
     private var titleText = ""
     private var episodeText = ""
+    /** Id del titolo dall'extra: fallback per i salvataggi quando il report
+     *  Inertia della watch page non espone il titleId. */
+    private var titleId = 0
 
     /** Ordine di fuoco tra i controlli visibili. */
     private val focusOrder: List<View>
@@ -81,6 +93,23 @@ class PlayerActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var stage2Started = false
     private var resolvedUrl = ""
+
+    // -- Resume seek (M3) -------------------------------------------------------
+    /** Posizione di ripresa (extra startPositionSec). Si attiva SOLO al primo
+     *  onVideoState(active=true) — prima il video potrebbe non esistere — e
+     *  converge in onProgress (±20s). Attivo il push immediato con retry a
+     *  3.5s e 8s (schema pushPendingResumeSeek di MainActivity). */
+    private var pendingSeek = 0
+    private var resumeSeekArmed = false
+
+    /** Info Inertia dell'ultima navigazione: serve ai salvataggi in onProgress. */
+    private var pageInfo: PageInfo? = null
+
+    private val resumeSeekRetry = Runnable {
+        if (pendingSeek > 0 && resumeSeekArmed) jsBridge.requestSeekTo(pendingSeek)
+    }
+
+    private val adBlocker by lazy { AdBlocker.get(this) }
 
     private fun DomainHome(): String =
         com.scviewer.fire.data.DomainRepository.get(this).currentDomain()
@@ -109,6 +138,8 @@ class PlayerActivity : Activity() {
 
         titleText = intent.getStringExtra("title") ?: ""
         watchUrl = intent.getStringExtra("url") ?: ""
+        titleId = intent.getIntExtra("titleId", 0)
+        pendingSeek = intent.getIntExtra("startPositionSec", 0)
         titleView.text = titleText
         backBtn.setOnClickListener { finish() }
         playBtn.setOnClickListener {
@@ -157,6 +188,12 @@ class PlayerActivity : Activity() {
                     playing = active
                     updatePlayIcon()
                     scheduleHide()
+                    // Il video esiste: SOLO ora il resume seek può partire
+                    // (prima requestSeekTo finirebbe consumata senza target).
+                    if (active && !resumeSeekArmed) {
+                        resumeSeekArmed = true
+                        if (pendingSeek > 0) pushPendingResumeSeek()
+                    }
                 } },
                 onPageInfo = { json -> runOnUiThread { onPageInfo(json) } },
                 onProgress = { pos, dur -> runOnUiThread { onProgress(pos, dur) } },
@@ -167,20 +204,49 @@ class PlayerActivity : Activity() {
             web.addJavascriptInterface(jsBridge, "AndroidJs")
             web.webChromeClient = WebChromeClient()
             web.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                // Stage 2: la home ha stabilito cookie/JS → vai alla watch.
-                if (!stage2Started && url != null && !url.contains("/watch/") &&
-                    url.startsWith("http")) {
-                    stage2Started = true
-                    scope.launch {
-                        resolvedUrl = withContext(Dispatchers.IO) { resolveWatchUrl(watchUrl) }
-                        Log.i("Player", "load stage2: $resolvedUrl")
-                        runOnUiThread { web.loadUrl(resolvedUrl) }
+                // Stesso blocco di SCWebViewClient (AdBlocker + HlsRewriter +
+                // anti-popunder): il player vixcloud senza questo filtro perde
+                // la variante FHD della master playlist e lascia passare ads.
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): WebResourceResponse? {
+                    if (request == null) return null
+                    if (adBlocker.shouldBlock(request)) {
+                        return adBlocker.blockedResponse()
+                    }
+                    HlsRewriter.intercept(request)?.let { return it }
+
+                    val url = request.url
+                    val path = (url.path ?: "").lowercase()
+                    val query = (url.query ?: "").lowercase()
+                    val isLikelyPopunder = path.contains("/pop") ||
+                            path.contains("/redirect") ||
+                            path.contains("/pu/") ||
+                            path.contains("/popunder") ||
+                            query.contains("pop=") ||
+                            query.contains("popunder=") ||
+                            query.contains("redirect=")
+                    if (isLikelyPopunder && !request.isForMainFrame) {
+                        return adBlocker.blockedResponse()
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    // Stage 2: la home ha stabilito cookie/JS → vai alla watch.
+                    if (!stage2Started && url != null && !url.contains("/watch/") &&
+                        url.startsWith("http")) {
+                        stage2Started = true
+                        scope.launch {
+                            resolvedUrl = withContext(Dispatchers.IO) { resolveWatchUrl(watchUrl) }
+                            Log.i("Player", "load stage2: $resolvedUrl")
+                            runOnUiThread { web.loadUrl(resolvedUrl) }
+                        }
                     }
                 }
             }
-        }
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     val agent = assets.open("video_agent.js").bufferedReader().use { it.readText() }
@@ -208,7 +274,10 @@ class PlayerActivity : Activity() {
             val props = com.scviewer.fire.data.SiteCatalog.fetchProps(raw, "") ?: return raw
             props.optJSONObject("episode")?.optInt("id")?.takeIf { it > 0 }?.let {
                 Log.i("Player", "resolveWatchUrl: episodio diretto $it")
-                return raw + "?e=" + it
+                // raw può già portare ?s= (riprese per stagione): usa il
+                // separatore giusto, mai "?...?e=".
+                val sep = if (raw.contains("?")) "&" else "?"
+                return raw + sep + "e=" + it
             }
             // Redirect a Titles/Title: è una serie senza stagione →
             // aggiungi ?s=<numero> (formato collaudato da Riprendi).
@@ -224,6 +293,9 @@ class PlayerActivity : Activity() {
         val info = runCatching {
             pageJson.decodeFromString<PageInfo>(json)
         }.getOrNull() ?: return
+        // Conservata per i salvataggi in onProgress (anche per report senza
+        // titleId, che qui vanno comunque riconosciuti come watch page).
+        pageInfo = info
         if (info.titleId == 0) return
         titleText = info.name
         titleView.text = info.name
@@ -234,16 +306,87 @@ class PlayerActivity : Activity() {
         nextEpisodeId = info.nextEpisodeId ?: 0
     }
 
+    /** Schema pushPendingResumeSeek di MainActivity: push immediato del seek
+     *  + retry a 3.5s e 8s (l'agent consuma la coda ogni 80ms, il TTL del
+     *  comando è 12s). La conferma arriva da onProgress: convergenza ±20s →
+     *  pendingSeek=0 e i retry pendenti diventano no-op. */
+    private fun pushPendingResumeSeek() {
+        val target = pendingSeek
+        if (target <= 0 || !resumeSeekArmed) return
+        jsBridge.requestSeekTo(target)
+        handler.removeCallbacks(resumeSeekRetry)
+        handler.postDelayed(resumeSeekRetry, 3500)
+        handler.postDelayed(resumeSeekRetry, 8000)
+        // Desistenza: se a 15s il seek non è MAI confluito (sito che ignora il
+        // comando), si desiste e si torna a salvare la posizione reale del
+        // video invece di restare appesi sul target irraggiungibile.
+        handler.postDelayed({
+            if (pendingSeek > 0) {
+                Log.w("Player", "resume seek non confluito a $target — desisto")
+                pendingSeek = 0
+            }
+        }, RESUME_SEEK_DESIST_MS)
+    }
+
     private fun onProgress(pos: Int, dur: Int) {
         posSec = pos; durSec = dur
         scrubber.max = dur.coerceAtLeast(1)
         scrubber.progress = pos
         timeCur.text = fmt(pos)
         timeTot.text = fmt(dur)
+
+        // -- Resume seek: convergenza (±20s) o ripush -------------------------
+        if (pendingSeek > 0) {
+            if (kotlin.math.abs(pos - pendingSeek) < 20) {
+                pendingSeek = 0                          // già a punto
+            } else if (pos > pendingSeek + 20) {
+                pendingSeek = 0                          // oltre (es. seek utente)
+            } else if (pos < pendingSeek - 20) {
+                // Video vivo ma ancora prima del punto salvato: ripusha e
+                // ritenta a 3.5s e 8s (schema di MainActivity).
+                jsBridge.requestSeekTo(pendingSeek)
+                handler.removeCallbacks(resumeSeekRetry)
+                handler.postDelayed(resumeSeekRetry, 3500)
+                handler.postDelayed(resumeSeekRetry, 8000)
+            }
+        }
+
         // Prossimo episodio: card negli ultimi 90 s (solo serie).
         val showNext = nextEpisodeId > 0 && dur > 0 && dur - pos < 90 && pos > dur / 2
         nextCard.visibility = if (showNext) View.VISIBLE else View.GONE
         if (showNext) showControls()
+
+        // -- Salvataggi (M3): idempotenti con la modalità sito -----------------
+        // Solo da video attivo su watch page; finché il resume seek non è
+        // confluito NON si salva: la posizione pre-seek (≈0) non deve
+        // regredire il punto di ripresa già in ProgressStore (save ignora
+        // comunque gli snapshot più vecchi, ma qui updatedAt sarebbe fresco).
+        val info = pageInfo
+        if (info == null || !info.isWatchPage || dur <= 60 || pendingSeek > 0) return
+        val tid = if (info.titleId != 0) info.titleId else titleId
+        if (tid <= 0) return
+        val url = web.url ?: return
+        val poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, tid)
+        ProgressStore.get(this).save(
+            WatchProgress(
+                titleId = tid,
+                name = info.name.ifBlank { titleText },
+                slug = info.slug,
+                type = info.type,
+                season = info.season,
+                episode = info.episode,
+                episodeName = info.episodeName,
+                positionSec = pos,
+                durationSec = dur,
+                // URL RELATIVO (path+query): il dominio corrente non resta
+                // congelato nel record — stessa convenzione della modalità sito.
+                url = SiteUrl.relativeOf(url) ?: "",
+                poster = poster,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        HistoryStore.get(this).add(url, info.displayLabel(), poster)
+        info.poster?.takeIf { it.isNotBlank() }?.let { PosterCache.put(this, tid, it) }
     }
 
     private fun fmt(sec: Int): String =
@@ -316,5 +459,10 @@ class PlayerActivity : Activity() {
         // eccezione: i bottoni bianchi (play/skip/next-play) mantengono il fondo bianco
         // e mostrano il ring via outline — gestito dal layer-list del drawable.
         list[focusIdx].requestFocus()
+    }
+
+    private companion object {
+        /** Oltre questo timeout il resume seek si considera non eseguibile. */
+        private const val RESUME_SEEK_DESIST_MS = 15_000L
     }
 }

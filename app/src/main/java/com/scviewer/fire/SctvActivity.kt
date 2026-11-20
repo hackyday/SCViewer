@@ -12,11 +12,12 @@ import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Toast
 import com.scviewer.fire.bridge.SctvBridge
 import com.scviewer.fire.bridge.SctvRepository
 import com.scviewer.fire.data.DomainRepository
+import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SettingsStore
+import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.SettingsDialog
 import com.scviewer.fire.work.DomainRefreshScheduler
@@ -26,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -48,8 +50,10 @@ import org.json.JSONObject
  * ([loadCandidate]); se il mirror risponde viene promosso a primario
  * ([promoteRedirect]) e pushato `domainChanged` al JS.
  *
- * Player NATIVO delegato: startPlayback (JS) → AndroidJs.play → stub toast
- * in M2, PlayerActivity in M3. NIENTE player HTML5 nella WebView.
+ * Player NATIVO delegato: startPlayback (JS) → AndroidJs.play → qui si
+ * risolve il watch URL (detail cache → episodeId, fallback ?s=) e si apre
+ * PlayerActivity con titleId + startPositionSec (ripresa da ProgressStore).
+ * NIENTE player HTML5 nella WebView.
  */
 class SctvActivity : Activity() {
 
@@ -274,15 +278,92 @@ class SctvActivity : Activity() {
 
     // -- Handler bridge ------------------------------------------------------------
 
-    /** M2 stub: il player nativo arriva in M3 — per ora confermiamo solo che
-     *  il flusso JS→nativo funziona, con i parametri giusti. */
+    /** M3 — player nativo: risolve il watch URL dalla puntata richiesta e
+     *  apre PlayerActivity con titleId/startPositionSec per la ripresa.
+     *
+     *  Risoluzione episodeId, in ordine:
+     *   1. episodi già nel dettaglio in cache (stagione di default del sito);
+     *   2. stagione richiesta via [SctvRepository.seasonEpisodes] (cache dei
+     *      partial reload del modal, altrimenti fetch ~10KB) → id ESATTO;
+     *   3. fallback: episodio introvabile e season>1 → ?s=<season> sul watch
+     *      URL (il sito apre la stagione richiesta); per season<=1 il watch
+     *      nudo lascia a PlayerActivity.resolveWatchUrl (prima stagione).
+     *  Un film va direttamente a /it/watch/<id>.
+     */
     private fun onPlayRequested(titleId: Int, season: Int, episode: Int) {
-        val what = if (season > 0 && episode > 0) " S$season:E$episode" else ""
-        Toast.makeText(
-            this,
-            "Riproduzione titolo #$titleId$what (player nativo in arrivo — M3)",
-            Toast.LENGTH_SHORT
-        ).show()
+        if (titleId <= 0) {
+            pushError("Titolo non valido")
+            return
+        }
+        scope.launch {
+            val item = withRecovery("play($titleId)") { dom -> repo.detailPayload(titleId, dom) }
+            if (item == null) {
+                pushError("Titolo non raggiungibile: controlla la connessione")
+                return@launch
+            }
+            val type = item.optString("type", "movie")
+            val name = item.optString("title")
+            val domain = domainRepo.currentDomain()
+
+            var episodeId = 0
+            if (type == "tv" && episode > 0) {
+                episodeId = episodeIdIn(item.optJSONArray("episodes"), season, episode)
+                if (episodeId == 0 && season > 0) {
+                    val eps = withContext(Dispatchers.IO) {
+                        runCatching { repo.seasonEpisodes(titleId, season, domain) }.getOrNull()
+                    }?.second
+                    episodeId = episodeIdIn(eps, season, episode)
+                }
+            }
+
+            val watchPath = when {
+                type != "tv" -> "/it/watch/$titleId"
+                episodeId > 0 -> "/it/watch/$titleId?e=$episodeId"
+                season > 1 -> "/it/watch/$titleId?s=$season"
+                else -> "/it/watch/$titleId"
+            }
+            // URL ASSOLUTO sul dominio corrente (SiteUrl.resolve rimonta il
+            // path, come fa la modalità sito per i link salvati).
+            val url = SiteUrl.resolve(watchPath, domain)
+                ?: domain.trimEnd('/') + watchPath
+
+            // Ripresa SOLO se il progresso salvato riguarda QUESTA puntata:
+            // su serie si confrontano stagione e episodio (un progresso di
+            // S1E3 non deve ripartire dentro S2E3 col medesimo numero); su
+            // film season/episode valgono 1 (i null del record diventano 1).
+            val p = withContext(Dispatchers.IO) {
+                ProgressStore.get(this@SctvActivity).get(titleId)
+            }
+            val startPositionSec = if (p != null && p.isResumeable() &&
+                (p.episode ?: 1) == episode && (p.season ?: 1) == season.coerceAtLeast(1)
+            ) p.positionSec else 0
+
+            Log.i(TAG, "play titleId=$titleId → $watchPath (start=${startPositionSec}s)")
+            startActivity(
+                Intent(this@SctvActivity, PlayerActivity::class.java).apply {
+                    putExtra("url", url)
+                    putExtra("title", name)
+                    putExtra("titleId", titleId)
+                    putExtra("startPositionSec", startPositionSec)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }
+    }
+
+    /** Id della puntata richiesta dentro un array episodes del repository
+     *  (shape {ep, id, season, ...}): match sul numero episodio, con confronto
+     *  sulla stagione quando entrambi i valori sono significativi. */
+    private fun episodeIdIn(eps: JSONArray?, season: Int, episode: Int): Int {
+        if (eps == null) return 0
+        for (i in 0 until eps.length()) {
+            val e = eps.optJSONObject(i) ?: continue
+            if (e.optInt("ep") != episode) continue
+            val es = e.optInt("season", 1)
+            if (season > 0 && es > 0 && season != es) continue
+            return e.optInt("id")
+        }
+        return 0
     }
 
     private fun openNativeSettings() {
