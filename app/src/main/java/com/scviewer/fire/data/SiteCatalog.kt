@@ -8,7 +8,11 @@ import java.util.concurrent.TimeUnit
 
 /** Un titolo per l'interfaccia TV nativa: i campi serviti dalle righe
  *  di poster e dall'hero. I dati vengono dal JSON Inertia (data-page)
- *  delle pagine del sito — stesso reverse engineering del PageInfo JS. */
+ *  delle pagine del sito — stesso reverse engineering del PageInfo JS.
+ *
+ *  I campi con default (M2) sono popolati SOLO quando il JSON di origine li
+ *  contiene: i titoli degli slider sono "lean" (senza genres/dub/quality),
+ *  quelli della pagina dettaglio hanno i metadati completi. */
 data class TvTitle(
     val id: Int,
     val slug: String,
@@ -20,7 +24,21 @@ data class TvTitle(
     val year: Int?,
     val posterUrl: String?,
     val backgroundUrl: String?,
-    val url: String            // percorso relativo della pagina titolo
+    val url: String,           // percorso relativo della pagina titolo
+    // -- Metadati estesi (M2) ------------------------------------------------
+    val genres: List<String> = emptyList(),
+    val cast: List<String> = emptyList(),
+    val creator: String? = null,
+    val maturity: String? = null,      // "12+", "T"
+    val badges: List<String> = emptyList(),  // ["HD", "DUB", "SUB"]
+    val durationLabel: String? = null, // "1h 58min" | "2 stagioni"
+    val match: Int? = null,            // score 0-10 → percentuale 0-100
+    val top10Rank: Int? = null,        // top10_index della slider top10 (1-based)
+    val comingSoon: Boolean = false,
+    val releaseDate: String? = null,   // data di uscita formattata (coming soon)
+    val isKids: Boolean = false,       // euristica età/generi (il sito non ha flag)
+    val runtimeMin: Int? = null,
+    val hasFullMeta: Boolean = false   // true se parsato dalla pagina dettaglio
 )
 
 /** Una riga orizzontale della home TV. */
@@ -72,6 +90,86 @@ object SiteCatalog {
         .replace("&lt;", "<").replace("&gt;", ">")
         .replace("&amp;", "&")
 
+    /** Busta Inertia COMPLETA (component + version + props): serve a M2 per
+     *  leggere `version`, indispensabile per i partial reload del cambio
+     *  stagione (header X-Inertia-Version). */
+    fun fetchEnvelope(path: String, domain: String): JSONObject? {
+        val url = if (path.startsWith("http")) path else domain.trimEnd('/') + path
+        return runCatching {
+            client.newCall(
+                Request.Builder().url(url)
+                    .header("User-Agent", DESKTOP_UA)
+                    .header("Accept", "text/html")
+                    .build()
+            ).execute().use { resp ->
+                Log.i(TAG, "fetchEnvelope: HTTP ${resp.code} url=${resp.request.url}")
+                if (!resp.isSuccessful) return@use null
+                val html = resp.body?.string() ?: return@use null
+                val m = Regex("data-page=\"([^\"]+)\"").find(html) ?: return@use null
+                JSONObject(htmlUnescaped(m.groupValues[1]))
+            }
+        }.onFailure { Log.w(TAG, "fetchEnvelope($path) failed", it) }.getOrNull()
+    }
+
+    /** Esito del partial reload Inertia del cambio stagione. */
+    data class SeasonPartial(
+        val code: Int,
+        /** props.loadedSeason della stagione richiesta (null su 409/versione scaduta). */
+        val loadedSeason: JSONObject?,
+        /** Nuova versione della busta, se la risposta l'ha rivelata. */
+        val version: String?
+    )
+
+    /** GET `<path>/season-<N>` con gli header di partial reload Inertia:
+     *  risposta ~10KB JSON {props:{loadedSeason}} invece della pagina intera.
+     *  Su versione scaduta il server risponde 409 (corpo vuoto): il chiamante
+     *  deve ri-fetchare la busta per aggiornare la version e riprovare. */
+    fun fetchSeasonPartial(
+        titlePath: String,
+        season: Int,
+        domain: String,
+        inertiaVersion: String
+    ): SeasonPartial {
+        val url = domain.trimEnd('/') + titlePath.trimEnd('/') + "/season-$season"
+        return runCatching {
+            client.newCall(
+                Request.Builder().url(url)
+                    .header("User-Agent", DESKTOP_UA)
+                    .header("Accept", "text/html")
+                    .header("X-Inertia", "true")
+                    .header("X-Inertia-Version", inertiaVersion)
+                    .header("X-Inertia-Partial-Component", "Titles/Title")
+                    .header("X-Inertia-Partial-Data", "loadedSeason")
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .build()
+            ).execute().use { resp ->
+                Log.i(TAG, "fetchSeasonPartial(s=$season): HTTP ${resp.code}")
+                val code = resp.code
+                if (code != 200) return@use SeasonPartial(code, null, null)
+                val body = resp.body?.string() ?: return@use SeasonPartial(code, null, null)
+                // Per prudenza accettiamo anche l'HTML intero (alcuni proxy
+                // rispondono 200 con la pagina completa): riparsiamo data-page.
+                if (!body.trimStart().startsWith("{")) {
+                    val m = Regex("data-page=\"([^\"]+)\"").find(body) ?: return@use SeasonPartial(code, null, null)
+                    val env = JSONObject(htmlUnescaped(m.groupValues[1]))
+                    return@use SeasonPartial(
+                        code,
+                        env.optJSONObject("props")?.optJSONObject("loadedSeason"),
+                        env.optString("version").takeIf { it.isNotBlank() }
+                    )
+                }
+                val env = JSONObject(body)
+                SeasonPartial(
+                    code,
+                    env.optJSONObject("props")?.optJSONObject("loadedSeason"),
+                    env.optString("version").takeIf { it.isNotBlank() }
+                )
+            }
+        }.onFailure {
+            Log.w(TAG, "fetchSeasonPartial(s=$season) failed", it)
+        }.getOrDefault(SeasonPartial(0, null, null))
+    }
+
     private fun imagesUrl(props: JSONObject, filename: String?) =
         if (filename.isNullOrBlank()) null
         else props.optString("cdn_url", "").trimEnd('/') + "/images/" + filename
@@ -84,7 +182,8 @@ object SiteCatalog {
         return null
     }
 
-    /** JSONObject di un singolo titolo → TvTitle. */
+    /** JSONObject di un singolo titolo → TvTitle. Popola anche i metadati
+     *  estesi quando presenti (pagina dettaglio = completo; slider = lean). */
     fun parseTitle(t: JSONObject, props: JSONObject, domain: String): TvTitle? {
         val id = t.optInt("id", 0)
         val slug = t.optString("slug")
@@ -98,22 +197,104 @@ object SiteCatalog {
                 }
             }
             null
+        } ?: t.optString("plot").takeIf { it.isNotBlank() && it != "null" }
+        val lastAir = t.optString("last_air_date_it").ifBlank { t.optString("last_air_date") }
+            .ifBlank { t.optString("release_date_it").ifBlank { t.optString("release_date") } }
+        val year = lastAir.take(4).toIntOrNull()?.takeIf { it > 1900 }
+
+        // -- Metadati estesi ---------------------------------------------------
+        val hasFullMeta = t.has("genres") && t.has("main_actors")
+        val genres = t.optJSONArray("genres")?.let { gs ->
+            (0 until gs.length()).mapNotNull { gs.optJSONObject(it)?.optString("name") }
+                .filter { it.isNotBlank() }
+        } ?: emptyList()
+        val cast = t.optJSONArray("main_actors")?.let { acts ->
+            (0 until acts.length())
+                .mapNotNull { acts.optJSONObject(it) }
+                .sortedBy { it.optJSONObject("pivot")?.optInt("order", 0) ?: 0 }
+                .mapNotNull { it.optString("name").takeIf { n -> n.isNotBlank() } }
+                .take(8)
+        } ?: emptyList()
+        val creator = t.optJSONArray("main_directors")?.let { ds ->
+            (0 until ds.length()).mapNotNull { ds.optJSONObject(it)?.optString("name") }
+                .filter { it.isNotBlank() }
+                .joinToString(", ")
+                .takeIf { it.isNotBlank() }
         }
-        val lastAir = t.optString("last_air_date")
+        val age = t.optInt("age", -1)
+        val maturity = when {
+            age > 0 -> "$age+"
+            age == 0 -> "T"
+            else -> null
+        }
+        val quality = t.optString("quality").takeIf { it.isNotBlank() && it != "null" }?.uppercase()
+        val badges = buildList {
+            quality?.let { add(it) }
+            if (t.optInt("dub_ita", 0) == 1) add("DUB")
+            if (t.optInt("sub_ita", 0) == 1) add("SUB")
+        }
+        val runtime = t.optInt("runtime", 0).takeIf { it > 0 }
+        val seasonsCount = t.optInt("seasons_count", 0).takeIf { it > 0 }
+        val type = t.optString("type").ifBlank {
+            // L'hero della home non ha il campo type: lo si deduce.
+            if ((seasonsCount ?: 0) > 0) "tv" else "movie"
+        }
+        val durationLabel = when {
+            type == "tv" && (seasonsCount ?: 0) > 0 ->
+                if (seasonsCount == 1) "1 stagione" else "$seasonsCount stagioni"
+            runtime != null && runtime > 0 ->
+                if (runtime >= 60) "${runtime / 60}h ${runtime % 60}min" else "${runtime}min"
+            else -> null
+        }
+        val match = t.optString("score").toDoubleOrNull()
+            ?.takeIf { it in 0.0..10.0 }?.let { Math.round(it * 10).toInt() }
+        val top10Rank = t.optInt("top10_index", 0).takeIf { it > 0 }
+        val comingSoon = t.optBoolean("coming_soon", false)
+        val releaseDate = t.optString("release_date_it").ifBlank { t.optString("release_date") }
+            .takeIf { it.isNotBlank() && it != "null" }?.let { formatReleaseDate(it) }
+        val isKids = age in 0..6 || genres.any { it in KIDS_GENRES }
+
         return TvTitle(
             id = id,
             slug = slug,
             name = t.optString("name"),
-            type = t.optString("type"),
+            type = type,
             score = t.optString("score").takeIf { it.isNotBlank() && it != "null" },
             plot = plot,
-            seasonsCount = t.optInt("seasons_count", 0).takeIf { it > 0 },
-            year = lastAir.toIntOrNull()?.takeIf { it > 1900 }
-                ?: lastAir.take(4).toIntOrNull()?.takeIf { it > 1900 },
+            seasonsCount = seasonsCount,
+            year = year,
             posterUrl = imagesUrl(props, images?.let { pickImage(it, "poster") }),
             backgroundUrl = imagesUrl(props, images?.let { pickImage(it, "background") }),
-            url = "/it/titles/$id-$slug"
+            url = "/it/titles/$id-$slug",
+            genres = genres,
+            cast = cast,
+            creator = creator,
+            maturity = maturity,
+            badges = badges,
+            durationLabel = durationLabel,
+            match = match,
+            top10Rank = top10Rank,
+            comingSoon = comingSoon,
+            releaseDate = releaseDate,
+            isKids = isKids,
+            runtimeMin = runtime,
+            hasFullMeta = hasFullMeta
         )
+    }
+
+    /** Generi che attivano il profilo kids sull'interfaccia SCtv. */
+    private val KIDS_GENRES = setOf(
+        "Animation", "Animazione", "Family", "Famiglia", "Kids", "Bambini"
+    )
+
+    /** "2025-12-10" → "10 dic 2025" (null su formati inattesi). */
+    private fun formatReleaseDate(iso: String): String? {
+        val m = Regex("(\\d{4})-(\\d{2})-(\\d{2})").find(iso) ?: return iso
+        val months = listOf("gen", "feb", "mar", "apr", "mag", "giu",
+            "lug", "ago", "set", "ott", "nov", "dic")
+        val monthIdx = m.groupValues[2].toIntOrNull()?.let { it - 1 } ?: return iso
+        if (monthIdx !in months.indices) return iso
+        return "${m.groupValues[3].toInt()} ${months[monthIdx]} ${m.groupValues[1]}"
     }
 
     private fun titlesArray(obj: JSONObject, key: String): List<org.json.JSONArray> {

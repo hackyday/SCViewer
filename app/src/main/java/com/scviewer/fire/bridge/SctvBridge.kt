@@ -29,6 +29,11 @@ class SctvBridge(
     private val onLoadDetail: (titleId: Int, req: Int) -> Unit,
     /** Ricerca server: `searchResults` push con `req` (M2). */
     private val onSearch: (query: String, req: Int) -> Unit,
+    /** Cambio stagione nel modal dettaglio: partial reload Inertia (~10KB) e
+     *  push `titleSeason` {req, season, episodes} (M2 — metodo EXTRA rispetto
+     *  al contratto piano §2, che non copriva il season switch; documentato
+     *  come unica aggiunta al contratto). */
+    private val onLoadDetailSeason: (titleId: Int, season: Int, req: Int) -> Unit,
     /** My List ↔ FavoritesStore (M2; in M1 il JS aggiorna in locale). */
     private val onToggleMyList: (titleId: Int) -> Unit,
     /** Rail "Continua a guardare": `progressChanged` push (M2). */
@@ -63,6 +68,13 @@ class SctvBridge(
     @JavascriptInterface
     fun search(query: String, req: Int) {
         onSearch(query, req)
+    }
+
+    /** EXTRA rispetto al piano §2: cambio stagione nel modal (partial reload
+     *  Inertia) → push evento `titleSeason` {req, season, episodes}. */
+    @JavascriptInterface
+    fun loadDetailSeason(titleId: Int, season: Int, req: Int) {
+        onLoadDetailSeason(titleId, season, req)
     }
 
     @JavascriptInterface

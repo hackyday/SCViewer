@@ -429,6 +429,7 @@
 
     let bootReceived = false;
     let pendingDetail = null; // { titleId, req } — correlazione titleDetail (M2)
+    let pendingSeason = null; // { titleId, req } — correlazione titleSeason (M2)
 
     function numericTitleId(item) {
       if (!item) return 0;
@@ -440,6 +441,52 @@
     function replaceCatalog(list) {
       CATALOG.length = 0;
       for (const it of (list || [])) CATALOG.push(it);
+    }
+
+    /** Upsert di un item nel catalogo. Con fieldsOverride (es. top10Rank del
+     *  tab "new") aggiorna SOLO quei campi sui titoli già noti. Senza, il
+     *  nuovo item vince solo se più ricco (episodi/genres): un item lean
+     *  (slider/search) non deve cancellare i metadati completi già arrivati
+     *  dal dettaglio — in ogni caso una synopsis vuota si riempie. Ritorna
+     *  l'item inserito/aggiornato, o null. */
+    function upsertCatalogItem(item, fieldsOverride = null) {
+      if (!item || !item.id) return null;
+      const idx = CATALOG.findIndex(c => c.id === item.id);
+      if (idx >= 0) {
+        const cur = CATALOG[idx];
+        if (fieldsOverride) {
+          Object.assign(cur, fieldsOverride);
+          return cur;
+        }
+        if (metaScore(item) > metaScore(cur)) {
+          // Il dettaglio (più ricco) non porta il rank top10: conservalo.
+          if (cur.top10Rank !== undefined && item.top10Rank === undefined) {
+            item.top10Rank = cur.top10Rank;
+          }
+          CATALOG[idx] = item;
+        } else if (!cur.synopsis && item.synopsis) {
+          cur.synopsis = item.synopsis;
+        }
+        return CATALOG[idx];
+      }
+      if (fieldsOverride) Object.assign(item, fieldsOverride);
+      CATALOG.push(item);
+      return item;
+    }
+
+    /** Ricchezza di metadati: 2 = episodi, 1 = genres (il dettaglio vince
+     *  sempre sugli item lean degli slider/search). */
+    function metaScore(it) {
+      return ((it.episodes || []).length > 0 ? 2 : 0) + ((it.genres || []).length > 0 ? 1 : 0);
+    }
+
+    /** Merge degli episodi di una stagione nell'item: sostituisce quelli
+     *  della stagione richiesta e li tiene ordinati (stagione, numero). */
+    function upsertEpisodes(item, season, episodes) {
+      const kept = (item.episodes || []).filter(ep => (ep.season || 1) !== season);
+      item.episodes = kept.concat(
+        (episodes || []).map(ep => Object.assign({ season }, ep))
+      ).sort((a, b) => (a.season || 1) - (b.season || 1) || (a.ep || 0) - (b.ep || 0));
     }
 
     /** Applica l'elenco cw (continue watching): item sintetico se il titolo
@@ -510,13 +557,23 @@
           }
 
           case 'catalog': {
-            // Righe/tab reali (M2): catalogo sostituito + re-render del tab attivo.
+            // Righe/tab reali (M2): per home/tv/movie il catalogo si SOSTITUISCE
+            // e le righe vengono assegnate SOLO al tab richiesto (boot già le
+            // contiene tutte); per "new" il top10 si MERGE (upsert) così i
+            // metadati più ricchi già noti restano intatti.
             bootReceived = true;
             hideViewLoading();
-            if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
-            if (d.rows) state.rows = d.rows;
-            // d.tab === 'new' con top10 dedicato: gestito in M2.
-            if (state.currentProfile) renderCurrentView();
+            if (d.tab === 'new') {
+              const top10 = Array.isArray(d.top10) ? d.top10 : (Array.isArray(d.catalog) ? d.catalog : []);
+              top10.forEach(it => {
+                // Rank solo se presente: mai sovrascriverlo con undefined.
+                upsertCatalogItem(it, it.top10Rank ? { top10Rank: it.top10Rank } : null);
+              });
+            } else {
+              if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
+              if (Array.isArray(d.rows)) state.rows[d.tab] = d.rows;
+            }
+            if (state.currentProfile) renderCurrentView(false);
             break;
           }
 
@@ -528,7 +585,28 @@
             if (pendingDetail && ev.req === pendingDetail.req) {
               pendingDetail = null;
               state.detailModalTitleId = it.id;
+              // La stagione servita dal sito può non essere la 1: allinea il
+              // selettore ai dati reali.
+              if (it.currentSeason) state.detailSelectedSeason = it.currentSeason;
               renderDetailModalContent();
+            }
+            break;
+          }
+
+          case 'titleSeason': {
+            // Cambio stagione via partial reload (AndroidJs.loadDetailSeason):
+            // episodi merged nel modal + re-render mirato.
+            const it = CATALOG.find(c => pendingSeason && c.id === pendingSeason.titleId);
+            if (pendingSeason && ev.req === pendingSeason.req && it) {
+              pendingSeason = null;
+              state.seasonLoading = false;
+              upsertEpisodes(it, d.season || state.detailSelectedSeason, Array.isArray(d.episodes) ? d.episodes : []);
+              state.detailSelectedSeason = d.season || state.detailSelectedSeason;
+              renderDetailModalContent();
+              // Fuoco sul selettore stagione, come fa changeDetailSeason.
+              refreshFocusableElements();
+              const prev = document.getElementById('season-prev');
+              setTVFocus(prev && focusableList.includes(prev) ? prev : focusableList[0]);
             }
             break;
           }
@@ -540,8 +618,16 @@
               if (d.query != null) state.searchQuery = d.query;
               const inp = document.getElementById('tv-search-input');
               if (inp && inp.value !== state.searchQuery) inp.value = state.searchQuery;
+              // I risultati vengono FUSI nel catalogo (upsert, senza rimpiazzare
+              // titoli più ricchi già noti) e ricordati per la query corrente.
+              const ids = [];
+              (Array.isArray(d.catalog) ? d.catalog : []).forEach(it => {
+                const merged = upsertCatalogItem(it);
+                if (merged) ids.push(merged.id);
+              });
+              state.remoteResults = { query: state.searchQuery, ids };
               const wrap = document.getElementById('search-results-wrap');
-              if (wrap) wrap.innerHTML = renderSearchResultsInner(Array.isArray(d.catalog) ? d.catalog : null);
+              if (wrap) wrap.innerHTML = renderSearchResultsInner();
             }
             break;
           }
@@ -571,6 +657,13 @@
           case 'error': {
             if (!bootReceived) renderErrorCard(d.message || 'Errore di connessione');
             else showToast(d.message || 'Errore');
+            // Rilascia le attese correlate al req fallito (spinner stagione).
+            if (pendingSeason && ev.req === pendingSeason.req) {
+              pendingSeason = null;
+              state.seasonLoading = false;
+              renderDetailModalContent();
+            }
+            if (pendingDetail && ev.req === pendingDetail.req) pendingDetail = null;
             break;
           }
         }
@@ -605,22 +698,30 @@
         Native.retryConnection();
       } else {
         showViewLoading();
-        setTimeout(() => window.__sctvReceive(localDemoBoot()), 400);
+        setTimeout(() => {
+          if (!bootReceived) {
+            renderErrorCard("Bridge nativo non attivo (anteprima browser): i dati reali arrivano solo dall'app Android.");
+          }
+        }, 400);
       }
     }
 
     /** Chiamata a fine window.onload: con bridge il nativo risponde col push
-     *  dell'evento boot; senza bridge (anteprima browser) parte il demo locale. */
+     *  dell'evento boot. Se entro 8s non è arrivato (rete giù, bridge morto)
+     *  si mostra la error-card "Connessione al sito…" col bottone Riprova:
+     *  niente dati finti come fallback. */
     function bootReady() {
       if (Native && Native.bootReady) {
         Native.bootReady();
-        // Fallback di sicurezza: se il boot non arriva (bridge morto), il
-        // demo locale evita lo spinner infinito.
         setTimeout(() => {
-          if (!bootReceived) window.__sctvReceive(localDemoBoot());
+          if (!bootReceived) {
+            renderErrorCard("Connessione al sito… Il catalogo non risponde. Controlla la rete e Riprova.");
+          }
         }, 8000);
       } else {
-        window.__sctvReceive(localDemoBoot());
+        // Anteprima browser (nessun AndroidJs): i dati reali non possono
+        // arrivare — stessa error-card, coerente con il fallback nativo.
+        renderErrorCard("Bridge nativo non attivo (anteprima browser): apri l'app per il catalogo reale.");
       }
     }
 
@@ -635,247 +736,11 @@
      * }
      */
 
-    // -- DATI DEMO (M1): 13 titoli completi per popolare TUTTE le rail. ------
-    // Copertine generate come SVG inline (offline-safe). M2: dati reali via
-    // evento boot (il dispatcher sostituisce il catalogo).
-    const DEMO_ART_PALETTE = [
-      ['#E50914', '#3B0A0D'], ['#2563EB', '#111B45'], ['#059669', '#052E24'],
-      ['#D97706', '#3B1F04'], ['#7C3AED', '#2A0D45'], ['#DB2777', '#450A26'],
-      ['#0EA5E9', '#0B2540'], ['#84CC16', '#1F2B06']
-    ];
+    // M2: il catalogo DEMO e' stato rimosso. I dati arrivano SOLO dal bridge
+    // (evento boot con payload reale di SctvRepository); il fallback visuale
+    // quando il boot non arriva e' la error-card "Connessione al sito..." con
+    // il bottone Riprova (renderErrorCard + retryConnection), non dati finti.
 
-    function demoArt(seed, label, w, h) {
-      let hash = 2166136261;
-      for (let i = 0; i < seed.length; i++) {
-        hash ^= seed.charCodeAt(i);
-        hash = Math.imul(hash, 16777619) >>> 0;
-      }
-      const [c1, c2] = DEMO_ART_PALETTE[(hash >>> 16) % DEMO_ART_PALETTE.length];
-      const fs = Math.max(18, Math.min(w > 800 ? 96 : 52, Math.floor(w * 1.7 / Math.max(4, label.length))));
-      const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
-        `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
-        `<stop offset='0' stop-color='${c1}'/><stop offset='1' stop-color='${c2}'/>` +
-        `</linearGradient></defs>` +
-        `<rect width='${w}' height='${h}' fill='url(#g)'/>` +
-        `<text x='6%' y='88%' font-family='sans-serif' font-weight='800' font-size='${fs}' fill='rgba(255,255,255,0.88)'>${label}</text></svg>`;
-      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
-    }
-
-    const DEMO_STREAM = (file) =>
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/' + file + '.mp4';
-
-    const DEMO_CATALOG = [
-      {
-        id: 'site-4101', titleId: 4101, title: 'Ombra di Sangue', type: 'tv',
-        isOriginal: true, isKids: false, top10Rank: 1, match: 97, year: 2025,
-        maturity: '16+', durationLabel: '2 stagioni', badges: ['4K', 'DUB'],
-        genres: ['Thriller', 'Crime', 'Drama'], creator: 'Sara Donati',
-        cast: ['Aurora Vecchi', 'Marco Rinaldi', 'Elena Bruni'],
-        synopsis: 'Una detective della squadra mobile torna in città dopo dieci anni per indagare su una serie di omicidi che replicano un caso mai chiuso: quello che l\'ha costretta a andarsene.',
-        posterUrl: demoArt('site-4101', 'Ombra di Sangue', 400, 600),
-        backdropUrl: demoArt('site-4101', 'Ombra di Sangue', 1280, 720),
-        url: '/it/titles/4101-ombra-di-sangue', comingSoon: false, seasons: 2,
-        episodes: [
-          { ep: 1, id: 410111, season: 1, title: 'Il primo scomparso', duration: '52min', desc: 'Il ritorno in città coincide con un caso che ha l\'odore del vecchio diario.', streamUrl: DEMO_STREAM('BigBuckBunny'), thumb: demoArt('4101-s1e1', 'S1:E1', 640, 360) },
-          { ep: 2, id: 410112, season: 1, title: 'Sangue freddo', duration: '48min', desc: 'La lista dei sospetti si accorcia di un nome troppo presto.', streamUrl: DEMO_STREAM('ElephantsDream'), thumb: demoArt('4101-s1e2', 'S1:E2', 640, 360) },
-          { ep: 3, id: 410113, season: 1, title: 'La talpa', duration: '47min', desc: 'Chiunque consegni le foto alla stampa è dentro la squadra.', streamUrl: DEMO_STREAM('ForBiggerBlazes'), thumb: demoArt('4101-s1e3', 'S1:E3', 640, 360) },
-          { ep: 4, id: 410114, season: 1, title: 'Fuori dal buio', duration: '55min', desc: 'Il caso del 2015 si chiude su se stesso: tutto torna, perfino l\'errore.', streamUrl: DEMO_STREAM('ForBiggerEscapes'), thumb: demoArt('4101-s1e4', 'S1:E4', 640, 360) },
-          { ep: 1, id: 410121, season: 2, title: 'Nuova linfa', duration: '50min', desc: 'Una nuova recluta porta con sé un fascicolo che doveva restare chiuso.', streamUrl: DEMO_STREAM('ForBiggerFun'), thumb: demoArt('4101-s2e1', 'S2:E1', 640, 360) },
-          { ep: 2, id: 410122, season: 2, title: 'Il patto', duration: '46min', desc: 'Il sindaco offre la verità in cambio di un silenzio di tre mesi.', streamUrl: DEMO_STREAM('ForBiggerJoyrides'), thumb: demoArt('4101-s2e2', 'S2:E2', 640, 360) },
-          { ep: 3, id: 410123, season: 2, title: 'Conto alla rovescia', duration: '58min', desc: 'L\'ultimo atto si gioca in centrale: ormai chi è la talpa lo sanno tutti.', streamUrl: DEMO_STREAM('ForBiggerMeltdowns'), thumb: demoArt('4101-s2e3', 'S2:E3', 640, 360) }
-        ]
-      },
-      {
-        id: 'site-4102', titleId: 4102, title: 'Ferro e Velluto', type: 'movie',
-        isOriginal: false, isKids: false, top10Rank: 2, match: 91, year: 2024,
-        maturity: '14+', durationLabel: '1h 58min', badges: ['HD'],
-        genres: ['Drama', 'Romance'],
-        cast: ['Giulia Ferrero', "Paolo Sant'Elia"],
-        synopsis: 'Due famiglie di allenatori, un cavallo solo: al palio di settembre una rivalità decennale si trasforma in qualcosa di più pericoloso dell\'ambizione.',
-        posterUrl: demoArt('site-4102', 'Ferro e Velluto', 400, 600),
-        backdropUrl: demoArt('site-4102', 'Ferro e Velluto', 1280, 720),
-        url: '/it/titles/4102-ferro-e-velluto', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4103', titleId: 4103, title: 'Astral Express', type: 'tv',
-        isOriginal: true, isKids: true, top10Rank: 3, match: 95, year: 2025,
-        maturity: 'T', durationLabel: '2 stagioni', badges: ['4K', 'DUB'],
-        genres: ['Animation', 'Adventure', 'Family'],
-        synopsis: 'Un treno che viaggia tra le stelle, un equipaggio di bambini coraggiosi e una mappa di galassie da salvare, una stazione alla volta.',
-        posterUrl: demoArt('site-4103', 'Astral Express', 400, 600),
-        backdropUrl: demoArt('site-4103', 'Astral Express', 1280, 720),
-        url: '/it/titles/4103-astral-express', comingSoon: false, seasons: 2,
-        episodes: [
-          { ep: 1, id: 410311, season: 1, title: 'Partenza!', duration: '22min', desc: 'La Express riceve il primo biglietto a bordo di un passeggero fantasma.', streamUrl: DEMO_STREAM('Sintel'), thumb: demoArt('4103-s1e1', 'S1:E1', 640, 360) },
-          { ep: 2, id: 410312, season: 1, title: 'La stazione lunare', duration: '21min', desc: 'Una deviazione imprevista porta l\'equipaggio dentro una tempesta di polvere.', streamUrl: DEMO_STREAM('TearsOfSteel'), thumb: demoArt('4103-s1e2', 'S1:E2', 640, 360) },
-          { ep: 3, id: 410313, season: 1, title: 'Il passeggero senza nome', duration: '24min', desc: 'Il biglietto si rinnova da solo e la mappa cresce di una galassia.', streamUrl: DEMO_STREAM('VolkswagenGTIReview'), thumb: demoArt('4103-s1e3', 'S1:E3', 640, 360) },
-          { ep: 1, id: 410321, season: 2, title: 'Rotazione imprevista', duration: '23min', desc: 'Il treno impara a tornare indietro nel tempo di una fermata.', streamUrl: DEMO_STREAM('WeAreGoingOnBullrun'), thumb: demoArt('4103-s2e1', 'S2:E1', 640, 360) },
-          { ep: 2, id: 410322, season: 2, title: 'La cometa blu', duration: '22min', desc: 'La cometa blu chiede un aiuto che l\'equipaggio non sa ancora dare.', streamUrl: DEMO_STREAM('WhatCarCanYouGetForAGrand'), thumb: demoArt('4103-s2e2', 'S2:E2', 640, 360) }
-        ]
-      },
-      {
-        id: 'site-4104', titleId: 4104, title: "L'Ultima Fiamma", type: 'movie',
-        isOriginal: true, isKids: false, top10Rank: 4, match: 88, year: 2025,
-        maturity: '16+', durationLabel: '2h 04min', badges: ['4K'],
-        genres: ['Action', 'Thriller'],
-        cast: ['Riccardo Fanti', 'Serena Lupi'],
-        synopsis: 'Un pompiere in congedo riconosce l\'incendiarista che ha distrutto la sua squadra: adesso la caccia è personale, e la città brucia di nuovo.',
-        posterUrl: demoArt('site-4104', "L'Ultima Fiamma", 400, 600),
-        backdropUrl: demoArt('site-4104', "L'Ultima Fiamma", 1280, 720),
-        url: '/it/titles/4104-l-ultima-fiamma', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4105', titleId: 4105, title: 'Neviche Stagioni', type: 'movie',
-        isOriginal: false, isKids: false, top10Rank: 5, match: 84, year: 2023,
-        maturity: 'T', durationLabel: '1h 47min', badges: ['HD'],
-        genres: ['Comedy', 'Romance'],
-        cast: ['Marta Cei', 'Luca Vanni'],
-        synopsis: 'Due sconosciuti bloccati da una bufera in un rifugio di montagna scoprono di essere, ognuno per conto proprio, il motivo per cui l\'altro è lì.',
-        posterUrl: demoArt('site-4105', 'Neviche Stagioni', 400, 600),
-        backdropUrl: demoArt('site-4105', 'Neviche Stagioni', 1280, 720),
-        url: '/it/titles/4105-neviche-stagioni', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4106', titleId: 4106, title: 'Il Sarto di Palermo', type: 'movie',
-        isOriginal: false, isKids: false, top10Rank: 6, match: 90, year: 2024,
-        maturity: '14+', durationLabel: '2h 11min', badges: ['HD'],
-        genres: ['Crime', 'Drama'],
-        cast: ['Vito Arena', 'Chiara Lupo', 'Nino Ferrara'],
-        synopsis: 'Il miglior sarto della città cuce abiti per la mafia finché una giornalista non gli chiede di scegliere: il silenzio o il testimone.',
-        posterUrl: demoArt('site-4106', 'Il Sarto di Palermo', 400, 600),
-        backdropUrl: demoArt('site-4106', 'Il Sarto di Palermo', 1280, 720),
-        url: '/it/titles/4106-il-sarto-di-palermo', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4107', titleId: 4107, title: 'Deep Circle', type: 'tv',
-        isOriginal: true, isKids: false, match: 86, year: 2024,
-        maturity: '16+', durationLabel: '1 stagione', badges: ['4K'],
-        genres: ['Sci-Fi', 'Mystery'], creator: 'Marco Petti',
-        cast: ['Irene Bassi', 'Tommaso Riva'],
-        synopsis: 'Una stazione subacquea privata smette di rispondere: i sei sopravvissuti scoprono che il cerchio di dosti che li proteggeva è stato chiuso dall\'interno.',
-        posterUrl: demoArt('site-4107', 'Deep Circle', 400, 600),
-        backdropUrl: demoArt('site-4107', 'Deep Circle', 1280, 720),
-        url: '/it/titles/4107-deep-circle', comingSoon: false, seasons: 1,
-        episodes: [
-          { ep: 1, id: 410711, season: 1, title: 'Immersione', duration: '45min', desc: 'La Base Cerchio perde i contatti con la superficie a 3.100 metri.', streamUrl: DEMO_STREAM('BigBuckBunny'), thumb: demoArt('4107-s1e1', 'S1:E1', 640, 360) },
-          { ep: 2, id: 410712, season: 1, title: 'Il cerchio', duration: '43min', desc: 'Il sistema di bordo riconosce un equipaggio che non è mai salito.', streamUrl: DEMO_STREAM('ElephantsDream'), thumb: demoArt('4107-s1e2', 'S1:E2', 640, 360) },
-          { ep: 3, id: 410713, season: 1, title: 'Superficie', duration: '47min', desc: 'L\'unico modo per uscire è diventare quello che il cerchio aspetta.', streamUrl: DEMO_STREAM('ForBiggerBlazes'), thumb: demoArt('4107-s1e3', 'S1:E3', 640, 360) }
-        ]
-      },
-      {
-        id: 'site-4108', titleId: 4108, title: 'Risata Criminale', type: 'movie',
-        isOriginal: false, isKids: false, match: 79, year: 2022,
-        maturity: '14+', durationLabel: '1h 39min', badges: ['HD'],
-        genres: ['Comedy', 'Crime'],
-        cast: ['Bruno Meli', 'Sofia Renda'],
-        synopsis: 'Un comico fallito viene scambiato per un killer in fuga e scopre che lo stand-up nella malavita è molto più semplice: lì il pubblico non fischietta.',
-        posterUrl: demoArt('site-4108', 'Risata Criminale', 400, 600),
-        backdropUrl: demoArt('site-4108', 'Risata Criminale', 1280, 720),
-        url: '/it/titles/4108-risata-criminale', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4109', titleId: 4109, title: 'Piccoli Eroi', type: 'movie',
-        isOriginal: false, isKids: true, match: 92, year: 2025,
-        maturity: 'T', durationLabel: '1h 32min', badges: ['4K', 'DUB'],
-        genres: ['Family', 'Adventure'],
-        synopsis: 'Quando il parco del quartiere viene chiuso, quattro amici di dieci anni organizzano la più disordinata (e efficace) campagna civica della storia.',
-        posterUrl: demoArt('site-4109', 'Piccoli Eroi', 400, 600),
-        backdropUrl: demoArt('site-4109', 'Piccoli Eroi', 1280, 720),
-        url: '/it/titles/4109-piccoli-eroi', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4110', titleId: 4110, title: 'La Torre Silente', type: 'tv',
-        isOriginal: true, isKids: false, match: 93, year: 2025,
-        maturity: '16+', durationLabel: '1 stagione', badges: ['4K'],
-        genres: ['Mystery', 'Drama'], creator: 'Elena Grasso',
-        cast: ['Noemi Dati', 'Andrea Villoresi'],
-        synopsis: 'In un grattacielo dove nessuno si parla da vent\'anni, una ragazza inizia a ricevere biglietti che descrivono la sua giornata… un giorno prima che accada.',
-        posterUrl: demoArt('site-4110', 'La Torre Silente', 400, 600),
-        backdropUrl: demoArt('site-4110', 'La Torre Silente', 1280, 720),
-        url: '/it/titles/4110-la-torre-silente', comingSoon: false, seasons: 1,
-        episodes: [
-          { ep: 1, id: 411011, season: 1, title: 'Apertura', duration: '44min', desc: 'Il primo biglietto descrive una giornata che non è ancora successa.', streamUrl: DEMO_STREAM('Sintel'), thumb: demoArt('4110-s1e1', 'S1:E1', 640, 360) },
-          { ep: 2, id: 411012, season: 1, title: 'Piano dopo piano', duration: '42min', desc: 'Le videocamere della torre mostrano sempre lo stesso corridoio.', streamUrl: DEMO_STREAM('TearsOfSteel'), thumb: demoArt('4110-s1e2', 'S1:E2', 640, 360) },
-          { ep: 3, id: 411013, season: 1, title: "L'ultima porta", duration: '49min', desc: 'Il piano che non esiste nelle planimetrie risponde al citofono.', streamUrl: DEMO_STREAM('VolkswagenGTIReview'), thumb: demoArt('4110-s1e3', 'S1:E3', 640, 360) }
-        ]
-      },
-      {
-        id: 'site-4111', titleId: 4111, title: 'Velocità Estrema', type: 'movie',
-        isOriginal: false, isKids: false, match: 77, year: 2021,
-        maturity: '16+', durationLabel: '1h 52min', badges: ['HD'],
-        genres: ['Action'],
-        cast: ['Dario Costa', 'Mila Renzi'],
-        synopsis: 'Un pilota ritirato accetta una corsa attraverso tre confini in una notte: il carico è illegale, il passeggero è peggio.',
-        posterUrl: demoArt('site-4111', 'Velocità Estrema', 400, 600),
-        backdropUrl: demoArt('site-4111', 'Velocità Estrema', 1280, 720),
-        url: '/it/titles/4111-velocita-estrema', comingSoon: false, seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4112', titleId: 4112, title: 'Dopo il Silenzio', type: 'movie',
-        isOriginal: false, isKids: false, match: 0, year: 2026,
-        maturity: '16+', durationLabel: 'TBA', badges: [],
-        genres: ['Thriller'],
-        synopsis: 'Dodici anni dopo la scomparsa della sorella, un\'ingegnere acustica riceve una registrazione dove la voce di lei chiama per nome la sua città.',
-        posterUrl: demoArt('site-4112', 'Dopo il Silenzio', 400, 600),
-        backdropUrl: demoArt('site-4112', 'Dopo il Silenzio', 1280, 720),
-        url: '/it/titles/4112-dopo-il-silenzio', comingSoon: true,
-        releaseDate: '5 Dic 2025', seasons: 0, episodes: []
-      },
-      {
-        id: 'site-4113', titleId: 4113, title: 'Astral Express: Il Film', type: 'movie',
-        isOriginal: true, isKids: true, match: 0, year: 2026,
-        maturity: 'T', durationLabel: '1h 36min', badges: ['4K'],
-        genres: ['Animation', 'Family'],
-        synopsis: 'Il viaggio più lungo della Express: oltre l\'ultima stazione della mappa c\'è il mondo che ha costruito il treno.',
-        posterUrl: demoArt('site-4113', 'Astral Express: Il Film', 400, 600),
-        backdropUrl: demoArt('site-4113', 'Astral Express: Il Film', 1280, 720),
-        url: '/it/titles/4113-astral-express-il-film', comingSoon: true,
-        releaseDate: '12 Gen 2026', seasons: 0, episodes: []
-      }
-    ];
-
-    // Rail fake per i tre tab browse (contratto boot.rows: {label, ids, isTop10}).
-    const DEMO_ROWS = {
-      home: [
-        { label: 'Continua a guardare', ids: ['site-4101', 'site-4103'] },
-        { label: 'Trending adesso', ids: ['site-4101', 'site-4104', 'site-4102', 'site-4110', 'site-4106'] },
-        { label: 'Top 10 oggi', isTop10: true, ids: ['site-4101', 'site-4102', 'site-4103', 'site-4104', 'site-4105', 'site-4106'] },
-        { label: 'SCtv Originals', ids: ['site-4101', 'site-4103', 'site-4104', 'site-4107', 'site-4110', 'site-4113'] },
-        { label: 'Tutto il catalogo', ids: ['site-4101', 'site-4102', 'site-4103', 'site-4104', 'site-4105', 'site-4106', 'site-4107', 'site-4108', 'site-4109', 'site-4110', 'site-4111'] }
-      ],
-      tv: [
-        { label: 'Top 10 Serie oggi', isTop10: true, ids: ['site-4101', 'site-4103'] },
-        { label: 'Tutte le serie', ids: ['site-4101', 'site-4103', 'site-4107', 'site-4110'] }
-      ],
-      movie: [
-        { label: 'Top 10 Film oggi', isTop10: true, ids: ['site-4102', 'site-4104', 'site-4105', 'site-4106'] },
-        { label: 'Tutti i film', ids: ['site-4102', 'site-4104', 'site-4105', 'site-4106', 'site-4108', 'site-4109', 'site-4111'] }
-      ]
-    };
-
-    const DEMO_CONTINUE = [
-      { id: 'site-4101', titleId: 4101, name: 'Ombra di Sangue', tag: 'S1:E3', progress: 0.42, label: 'S1:E3 · 28 min rimasti', poster: demoArt('site-4101', 'Ombra di Sangue', 400, 600), season: 1, episode: 3, positionSec: 1180, durationSec: 2030, url: '/it/watch/4101' },
-      { id: 'site-4103', titleId: 4103, name: 'Astral Express', tag: 'S1:E2', progress: 0.65, label: 'S1:E2 · 8 min rimasti', poster: demoArt('site-4103', 'Astral Express', 400, 600), season: 1, episode: 2, positionSec: 850, durationSec: 1290, url: '/it/watch/4103' }
-    ];
-
-    /** Evento boot sintetico per l'anteprima browser (senza bridge nativo). */
-    function localDemoBoot() {
-      return {
-        t: 'boot',
-        req: null,
-        d: {
-          bridgeVersion: BRIDGE_VERSION,
-          uiMode: 'sctv',
-          domainHost: 'demo.sctv.local',
-          myList: ['site-4101', 'site-4106'],
-          continueWatching: DEMO_CONTINUE,
-          catalog: DEMO_CATALOG,
-          rows: DEMO_ROWS,
-          heroTitleId: 'site-4101',
-          settings: { uiAudio: AudioEngine.enabled }
-        }
-      };
-    }
 
     const CATALOG = [];
 
@@ -920,6 +785,10 @@
 
       detailModalTitleId: null,
       detailSelectedSeason: 1,
+      seasonLoading: false,
+
+      // Risultati della ricerca server per la query corrente: {query, ids}.
+      remoteResults: null,
 
       virtualRemoteOpen: false,
     };
@@ -1021,7 +890,7 @@
       container.innerHTML = `
         <div class="pt-32 px-6 sm:px-10 max-w-2xl mx-auto text-center">
           <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 shadow-xl">
-            <h2 class="text-2xl font-bold mb-2">Impossibile raggiungere il catalogo</h2>
+            <h2 class="text-2xl font-bold mb-2">Connessione al sito…</h2>
             <p class="text-sm text-zinc-400 mb-6">${msg}</p>
             <button onclick="retryConnection()" class="tv-focusable px-6 py-3 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-sm">Riprova</button>
           </div>
@@ -1330,6 +1199,19 @@
       const navMeta = NAV_ITEMS.find(n => n.id === tabId);
       document.getElementById('view-breadcrumb').textContent = navMeta ? navMeta.label : 'Browse';
       renderSidebarNav();
+      // M2: il boot copre le righe di home/tv/movie; "new" renderizza subito
+      // dai top10Rank già in CATALOG (sliders top10 del boot) e in background
+      // chiede comunque un refresh. Tab senza righe → spinner finché
+      // l'evento catalog non sostituisce la vista (fix TV #12).
+      const rowsKey = tabId === 'movies' ? 'movie' : tabId;
+      const hasRows = Array.isArray(state.rows[rowsKey]) && state.rows[rowsKey].length > 0;
+      if (Native && Native.loadTab && (tabId === 'new' || !hasRows)) {
+        Native.loadTab(rowsKey);
+      }
+      if (!hasRows && tabId !== 'new') {
+        showViewLoading();
+        return;
+      }
       renderCurrentView();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1748,10 +1630,15 @@
     }
 
     /** Blocco destro del tab search (heading + griglia/empty): viene
-     *  sostituito MIRATAMENTE ad ogni tasto (fix TV #14). */
-    function renderSearchResultsInner(itemsOverride) {
+     *  sostituito MIRATAMENTE ad ogni tasto (fix TV #14). Con risultati
+     *  remoti per la query corrente si mostrano quelli (match del server,
+     *  pertinenza su cast/plot), altrimenti il filtro locale sul catalogo. */
+    function renderSearchResultsInner() {
       const q = state.searchQuery.trim();
-      const results = itemsOverride || searchPool();
+      const remote = state.remoteResults;
+      const results = (remote && remote.query === state.searchQuery)
+        ? remote.ids.map(id => CATALOG.find(c => c.id === id)).filter(Boolean)
+        : searchPool();
       return `
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-bold tracking-tight">
@@ -1829,22 +1716,46 @@
       AudioEngine.playTick(600);
       state.searchQuery += ch;
       updateSearchView();
+      scheduleRemoteSearch();
     }
     function backspaceSearchChar() {
       AudioEngine.playTick(420);
       state.searchQuery = state.searchQuery.slice(0, -1);
       updateSearchView();
+      scheduleRemoteSearch();
     }
     function clearSearchQuery() {
       AudioEngine.playSelect();
       state.searchQuery = '';
       updateSearchView();
+      cancelRemoteSearch();
     }
     // Typing reale (IME/desktop): solo griglia, niente render integrale né
     // rubafuoco — l'input conserva il suo focus.
     function handleSearchInput(val) {
       state.searchQuery = val;
       updateSearchView();
+      scheduleRemoteSearch();
+    }
+
+    /** Ricerca SERVER (M2): la tastiera a schermo genera una lettera per
+     *  pressione — la query va al bridge con debounce (650ms, min 2 caratteri)
+     *  per non martellare il sito; la risposta (`searchResults`) aggiorna la
+     *  griglia in modo mirato. Filtri e griglia restano reattivi in locale. */
+    let searchTimer = null;
+    function scheduleRemoteSearch() {
+      clearTimeout(searchTimer);
+      state.remoteResults = null;
+      const q = state.searchQuery.trim();
+      if (q.length < 2 || !(Native && Native.search)) return;
+      searchTimer = setTimeout(() => {
+        const req = nextReq();
+        Native.search(q, req);
+      }, 650);
+    }
+    function cancelRemoteSearch() {
+      clearTimeout(searchTimer);
+      state.remoteResults = null;
     }
 
     /**
@@ -2036,11 +1947,14 @@
       if (!item) return;
       AudioEngine.playSelect();
       state.detailModalTitleId = titleId;
-      state.detailSelectedSeason = 1;
-      // M2: episodi reali via bridge quando il catalogo li ha vuoti (serie).
+      state.detailSelectedSeason = item.currentSeason || 1;
+      state.seasonLoading = false;
+      pendingSeason = null;
+      // M2: gli item degli slider sono "lean" (senza genres/cast/episodi):
+      // il dettaglio reale arriva SEMPRE via bridge (LRU nativo = risposta
+      // immediata sui titoli già visti) e sostituisce l'item al ricevimento.
       pendingDetail = null;
-      if (Native && Native.loadDetail && item.type === 'tv' &&
-          (!item.episodes || item.episodes.length === 0)) {
+      if (Native && Native.loadDetail) {
         const req = nextReq();
         pendingDetail = { titleId: item.id, req };
         Native.loadDetail(numericTitleId(item), req);
@@ -2058,6 +1972,8 @@
       AudioEngine.playTick(400);
       state.detailModalTitleId = null;
       pendingDetail = null;
+      pendingSeason = null;
+      state.seasonLoading = false;
       const modal = document.getElementById('detail-modal');
       modal.classList.add('hidden');
       modal.classList.remove('flex');
@@ -2096,7 +2012,12 @@
 
           ${eps.length === 0 ? `
             <div class="bg-[#18181B] border border-white/10 rounded-xl p-6 text-center">
-              <p class="text-sm text-zinc-400">Nessun episodio disponibile per la stagione ${state.detailSelectedSeason}.</p>
+              ${state.seasonLoading ? `
+                <div class="w-8 h-8 mx-auto rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin"></div>
+                <p class="mt-3 text-sm text-zinc-400">Carico la stagione ${state.detailSelectedSeason}…</p>
+              ` : `
+                <p class="text-sm text-zinc-400">Nessun episodio disponibile per la stagione ${state.detailSelectedSeason}.</p>
+              `}
             </div>
           ` : `
             <div class="space-y-3">
@@ -2209,11 +2130,23 @@
     // Fix TV #4: il selettore stagione è una coppia di bottoni ◀/▶.
     function changeDetailSeason(n) {
       const item = getTitleById(state.detailModalTitleId);
+      if (!item) return;
       const max = (item && item.seasons) || 1;
       const next = Math.min(max, Math.max(1, parseInt(n, 10) || 1));
       if (next === state.detailSelectedSeason) return;
       AudioEngine.playTick();
       state.detailSelectedSeason = next;
+      // Stagione già in cache locale → filtro diretto; altrimenti partial
+      // reload via bridge (titleSeason → re-render) con spinner di attesa.
+      const cached = (item.episodes || []).some(ep => (ep.season || 1) === next);
+      if (Native && Native.loadDetailSeason && !cached) {
+        state.seasonLoading = true;
+        const req = nextReq();
+        pendingSeason = { titleId: item.id, req };
+        Native.loadDetailSeason(numericTitleId(item), next, req);
+      } else {
+        state.seasonLoading = false;
+      }
       renderDetailModalContent();
       // Riporta il fuoco sul selettore stagione (restare in pagina invece di
       // saltare al primo elemento del modal dopo ogni ◀/▶).
