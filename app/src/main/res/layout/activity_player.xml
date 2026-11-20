@@ -11,6 +11,18 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Copertura nera anti-flash (M4b): lo stage1 del player carica la HOME
+         del sito per stabilire i cookie — senza questo overlay l'utente vede
+         per un attimo l'interfaccia del sito. È una VIEW sopra la WebView
+         (non visibility=INVISIBLE sulla WebView) perché il video deve
+         continuare a rendersi quando l'overlay viene rimosso; viene tolta
+         solo quando il watch URL / l'embed inizia davvero a caricarsi. -->
+    <View
+        android:id="@+id/playerBlackout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/black" />
+
     <!-- Vignette superiore -->
     <View
         android:layout_width="match_parent"
@@ -258,6 +270,24 @@
                 android:paddingStart="18dp"
                 android:paddingEnd="18dp"
                 android:text="10 ⟳"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <!-- M4b: cambio lingua audio (parametro lang dell'embed vixcloud).
+                 Gli SOTTOTITOLI non hanno supporto parametrico nell'embed
+                 (verificato nei bundle vixcloud: solo lang/canPlayFHD/scz/
+                 minute/nextEpisode/referer) → restano nel menu ⚙ del player. -->
+            <TextView
+                android:id="@+id/playerLang"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginStart="18dp"
+                android:background="@drawable/player_focus"
+                android:gravity="center"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="LINGUA"
                 android:textColor="@color/white"
                 android:textSize="16sp"
                 android:textStyle="bold" />

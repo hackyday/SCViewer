@@ -115,4 +115,23 @@ object SettingsStore {
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_ALTERNATE_UA, value).apply()
     }
+
+    // -- Lingua audio del player SCtv (M4b) -----------------------------------
+
+    private const val KEY_SCTV_AUDIO_LANG = "sctv_audio_lang"
+
+    /** Parametro `lang` dell'embed vixcloud: "it" (default del sito) o "en"
+     *  (dove il titolo ha una traccia inglese). Gli sottotitoli NON hanno un
+     *  parametro equivalente (bundle vixcloud verificato: l'unico parametro
+     *  gestito è lang) — restano nel menu del player web. */
+    fun getSctvAudioLang(context: Context): String =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_SCTV_AUDIO_LANG, "it") ?: "it"
+
+    fun setSctvAudioLang(context: Context, value: String) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_SCTV_AUDIO_LANG, if (value == "en") "en" else "it").apply()
+    }
 }

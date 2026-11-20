@@ -63,16 +63,20 @@ object SiteCatalog {
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     /** GET path (relativo, es. "/it/movies") sul dominio corrente e parse
-     *  del JSON data-page → JSONObject completo di props. */
-    fun fetchProps(path: String, domain: String): JSONObject? {
+     *  del JSON data-page → JSONObject completo di props.
+     *
+     *  [cookieHeader] (M4b, opzionale): cookie della WebView (CookieManager)
+     *  per i fetch che devono condividere la sessione del sito — senza i
+     *  cookie la watch page a sessione fredda viene rimandata alla pagina
+     *  titolo e props.embedUrl non è disponibile. */
+    fun fetchProps(path: String, domain: String, cookieHeader: String? = null): JSONObject? {
         val url = if (path.startsWith("http")) path else domain.trimEnd('/') + path
         return runCatching {
-            client.newCall(
-                Request.Builder().url(url)
-                    .header("User-Agent", DESKTOP_UA)
-                    .header("Accept", "text/html")
-                    .build()
-            ).execute().use { resp ->
+            val b = Request.Builder().url(url)
+                .header("User-Agent", DESKTOP_UA)
+                .header("Accept", "text/html")
+            cookieHeader?.takeIf { it.isNotBlank() }?.let { b.header("Cookie", it) }
+            client.newCall(b.build()).execute().use { resp ->
                 Log.i(TAG, "fetchProps: HTTP ${resp.code} url=${resp.request.url}")
                 if (!resp.isSuccessful) return@use null
                 val html = resp.body?.string() ?: return@use null

@@ -114,9 +114,19 @@
   // Guard: su /it/watch/ l'iframe vixcloud È il player (mappa §1.5) — mai
   // toccato. Solo il path /embed/: playlist e segmenti (/playlist/,
   // /download/) non passano di qui (l'iframe non li referenzia come src).
+  //
+  // M4b — anche /it/iframe/ è exento. Il wrapper del player del sito è la
+  // PAGINA /it/iframe/<id> che contiene l'iframe vixcloud vero e proprio:
+  // nel player nativo (PlayerActivity) page_inject viene iniettato in OGNI
+  // frame (addDocumentStartJavaScript, includes "*"), quindi gira anche
+  // dentro quel wrapper, dove pathname=/it/iframe/<id> non passa la vecchia
+  // guardia → l'iframe vixcloud veniva RIMOSSO e il player nativo non
+  // partiva mai (in modalità sito il guard reggeva solo perché page_inject
+  // lì gira SOLO nel main frame). Stesso motivo del guard /it/watch/.
   function tameHeroTrailerIframes() {
     try {
       if (location.pathname.indexOf('/it/watch/') === 0) return;
+      if (location.pathname.indexOf('/it/iframe/') === 0) return;
       var ifr = document.querySelectorAll('iframe[src*="vixcloud.cc/embed"]');
       for (var i = 0; i < ifr.length; i++) {
         try {

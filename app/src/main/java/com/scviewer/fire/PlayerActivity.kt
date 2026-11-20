@@ -2,6 +2,8 @@ package com.scviewer.fire
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -9,6 +11,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.util.Log
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -28,11 +31,16 @@ import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
 import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
+import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.WatchProgress
 import com.scviewer.fire.network.AdBlocker
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.web.JsInterface
+import com.scviewer.fire.web.SCWebViewClient
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * Schermata di streaming dell'interfaccia SCtv: il player reale del sito
@@ -61,9 +69,14 @@ class PlayerActivity : Activity() {
     private lateinit var playBtn: TextView
     private lateinit var rewBtn: TextView
     private lateinit var ffwBtn: TextView
+    private lateinit var langBtn: TextView
     private lateinit var scrubber: ProgressBar
     private lateinit var timeCur: TextView
     private lateinit var timeTot: TextView
+    /** Copertura nera sopra la WebView: copre lo stage1 (home del sito per i
+     *  cookie) e qualunque pagina intermedia finché il contenuto vero non
+     *  inizia a caricarsi — elimina il flash dell'interfaccia del sito. */
+    private lateinit var blackout: View
 
     private var controlsVisible = true
     private var playing = false
@@ -82,7 +95,7 @@ class PlayerActivity : Activity() {
     private val focusOrder: List<View>
         get() = listOfNotNull(
             backBtn,
-            playBtn, rewBtn, ffwBtn,
+            playBtn, rewBtn, ffwBtn, langBtn,
             skipBtn.takeIf { it.visibility == View.VISIBLE },
             nextPlay.takeIf { nextCard.visibility == View.VISIBLE },
             nextCancel.takeIf { nextCard.visibility == View.VISIBLE }
@@ -93,6 +106,20 @@ class PlayerActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var stage2Started = false
     private var resolvedUrl = ""
+
+    // -- Sessione + fallback embed (M4b) ---------------------------------------
+    /** Cookie della WebView catturati a fine stage1: li riusano le fetch
+     *  OkHttp (props.embedUrl / wrapper) per condividere la sessione del
+     *  sito — senza cookie la watch viene rimandata alla pagina titolo. */
+    private var cookieHeader: String? = null
+    /** Fallback embed già tentato: single-shot, mai in loop. */
+    private var embedFallbackTried = false
+    /** Watch URL RELATIVO dell'episodio in riproduzione, per i salvataggi:
+     *  quando il main frame è il wrapper /it/iframe o l'embed vixcloud,
+     *  web.url NON è una pagina watch e non va salvata. */
+    private var saveUrlRel: String? = null
+    /** Lingua audio corrente (parametro lang dell'embed vixcloud). */
+    private var currentLang = "it"
 
     // -- Resume seek (M3) -------------------------------------------------------
     /** Posizione di ripresa (extra startPositionSec). Si attiva SOLO al primo
@@ -120,6 +147,7 @@ class PlayerActivity : Activity() {
         setContentView(R.layout.activity_player)
 
         web = findViewById(R.id.playerWeb)
+        blackout = findViewById(R.id.playerBlackout)
         topBar = findViewById(R.id.playerTopBar)
         bottomBar = findViewById(R.id.playerBottomBar)
         backBtn = findViewById(R.id.playerBack)
@@ -140,6 +168,8 @@ class PlayerActivity : Activity() {
         watchUrl = intent.getStringExtra("url") ?: ""
         titleId = intent.getIntExtra("titleId", 0)
         pendingSeek = intent.getIntExtra("startPositionSec", 0)
+        saveUrlRel = SiteUrl.relativeOf(watchUrl)
+        currentLang = SettingsStore.getSctvAudioLang(this)
         titleView.text = titleText
         backBtn.setOnClickListener { finish() }
         playBtn.setOnClickListener {
@@ -150,6 +180,8 @@ class PlayerActivity : Activity() {
         }
         rewBtn.setOnClickListener { seekBy(-10) }
         ffwBtn.setOnClickListener { seekBy(10) }
+        langBtn = findViewById(R.id.playerLang)
+        langBtn.setOnClickListener { showLanguageDialog() }
         skipBtn.setOnClickListener {
             skipAvailable = false
             skipBtn.visibility = View.GONE
@@ -174,6 +206,16 @@ class PlayerActivity : Activity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
+                // M4b: lo UA DESKTOP è parte del fingerprint con cui il sito
+                // serve catalogo e player (la MainActivity lo imposta da
+                // sempre). Senza, dal player SCtv il WebView presenta lo UA
+                // di default (mobile/TV del Fire TV Stick) e la watch page
+                // viene trattata diversamente → rimanda alla pagina titolo.
+                // Se l'utente ha scelto l'UA alternativo anti-blocco, il
+                // player lo rispetta (stesso fingerprint della sessione sito).
+                userAgentString =
+                    if (SettingsStore.getAlternateUa(this@PlayerActivity)) SCWebViewClient.ALTERNATE_UA
+                    else SCWebViewClient.DESKTOP_UA
             }
             jsBridge = JsInterface(
                 onSkipIntro = { available -> runOnUiThread {
@@ -233,17 +275,62 @@ class PlayerActivity : Activity() {
                     return super.shouldInterceptRequest(view, request)
                 }
 
+                override fun onPageStarted(
+                    view: WebView?,
+                    url: String?,
+                    favicon: android.graphics.Bitmap?
+                ) {
+                    super.onPageStarted(view, url, favicon)
+                    if (url == null) return
+                    // Il contenuto VERO (watch page, wrapper /it/iframe o embed
+                    // vixcloud) sta entrando → togli la copertura nera. La home
+                    // dello stage1 e le pagine intermedie restano coperte.
+                    if (isPlayerContentUrl(url)) {
+                        hideBlackout()
+                        if (url.contains("/watch/")) {
+                            saveUrlRel = SiteUrl.relativeOf(url) ?: saveUrlRel
+                        }
+                    }
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    if (url != null && isPlayerContentUrl(url)) {
+                        // Caso redirect server-side che salta onPageStarted.
+                        if (url.contains("/watch/")) {
+                            saveUrlRel = SiteUrl.relativeOf(url) ?: saveUrlRel
+                        }
+                        hideBlackout()
+                    }
                     // Stage 2: la home ha stabilito cookie/JS → vai alla watch.
                     if (!stage2Started && url != null && !url.contains("/watch/") &&
                         url.startsWith("http")) {
                         stage2Started = true
+                        // Verifica dei cookie stabiliti dallo stage1: senza,
+                        // la watch può venire rimandata alla pagina titolo —
+                        // in quel caso scatta il fallback deterministico.
+                        cookieHeader = runCatching {
+                            CookieManager.getInstance().getCookie(url)
+                        }.getOrNull()
+                        Log.i("Player", "stage1 cookies: " +
+                            if (cookieHeader.isNullOrBlank()) "ASSENTI" else "ok")
                         scope.launch {
-                            resolvedUrl = withContext(Dispatchers.IO) { resolveWatchUrl(watchUrl) }
+                            resolvedUrl = withContext(Dispatchers.IO) {
+                                resolveWatchUrl(watchUrl, cookieHeader)
+                            }
                             Log.i("Player", "load stage2: $resolvedUrl")
                             runOnUiThread { web.loadUrl(resolvedUrl) }
                         }
+                        return
+                    }
+                    // Bounce (M4b): la watch è atterrata sulla PAGINA TITOLO
+                    // (sessione fredda / fingerprint non accettati). Fallback
+                    // deterministico single-shot: risolvi l'embed via OkHttp
+                    // e caricalo direttamente nel player.
+                    if (stage2Started && !embedFallbackTried && url != null &&
+                        url.contains("/it/titles/") && !url.contains("/watch/")) {
+                        embedFallbackTried = true
+                        tryEmbedFallback()
                     }
                 }
             }
@@ -257,6 +344,10 @@ class PlayerActivity : Activity() {
         }
         setup()
         showControls()
+        // Copertura nera ON finché il contenuto vero non entra (anti-flash
+        // dello stage1). Rete di sicurezza: mai nero oltre BLACKOUT_MAX_MS.
+        blackout.visibility = View.VISIBLE
+        handler.postDelayed({ hideBlackout() }, BLACKOUT_MAX_MS)
         // Carico prima la HOME del sito: stabilisce cookie/sessione JS —
         // la watch page a cookie freddi viene rimandata alla pagina titolo.
         web.loadUrl(DomainHome())
@@ -267,11 +358,14 @@ class PlayerActivity : Activity() {
 
     /** Serie: il watch senza ?e= viene rimandato (302) alla pagina titolo
      *  da alcune reti. Risolvi: se il fetch atterra su Titles/Title, prendi
-     *  la prima stagione e carica /it/watch/<id>?e=<prima puntata>. */
-    private fun resolveWatchUrl(raw: String): String {
+     *  la prima stagione e carica /it/watch/<id>?e=<prima puntata>.
+     *  M4b: [cookies] dalla WebView (stage1) — con la sessione del sito il
+     *  server risponde con la watch page vera e props.episode è corretto. */
+    private fun resolveWatchUrl(raw: String, cookies: String?): String {
         if (raw.contains("e=") || raw.startsWith("file:")) return raw
         return runCatching {
-            val props = com.scviewer.fire.data.SiteCatalog.fetchProps(raw, "") ?: return raw
+            val props = com.scviewer.fire.data.SiteCatalog
+                .fetchProps(raw, "", cookies) ?: return raw
             props.optJSONObject("episode")?.optInt("id")?.takeIf { it > 0 }?.let {
                 Log.i("Player", "resolveWatchUrl: episodio diretto $it")
                 // raw può già portare ?s= (riprese per stagione): usa il
@@ -285,8 +379,190 @@ class PlayerActivity : Activity() {
             val firstSeason = t.optJSONArray("seasons")?.optJSONObject(0)?.optInt("number")
                 ?: return raw
             Log.i("Player", "resolveWatchUrl: serie → ?s=$firstSeason")
-            raw + "?s=" + firstSeason
+            // M4b: separatore giusto anche qui — raw può già portare ?s=
+            // (riprese per stagione); "?...?s=" produceva URL malformati.
+            val sep = if (raw.contains("?")) "&" else "?"
+            raw + sep + "s=" + firstSeason
         }.getOrDefault(raw)
+    }
+
+    // -- Copertura nera + fallback embed (M4b) ---------------------------------
+
+    /** Il main frame sta caricando contenuto del player (non l'home dello
+     *  stage1 né pagine del sito navigabili): watch page, wrapper del sito
+     *  (/it/iframe) o embed vixcloud (fallback / cambio lingua). */
+    private fun isPlayerContentUrl(url: String): Boolean {
+        val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull() ?: ""
+        return url.contains("/it/watch/") || url.contains("/it/iframe/") ||
+                host.contains("vixcloud")
+    }
+
+    private fun hideBlackout() {
+        if (::blackout.isInitialized && blackout.visibility != View.GONE) {
+            blackout.visibility = View.GONE
+            handler.removeCallbacks(blackoutSafety)
+        }
+    }
+
+    /** Safety della copertura nera: qualunque cosa succeda, mai schermo nero
+     *  oltre il timeout (es. rete morta prima dello stage2). */
+    private val blackoutSafety = Runnable { hideBlackout() }
+
+    /** La watch page è rimandata alla pagina titolo (sessione/fingerprint
+     *  rifiutati dal server). Fallback deterministico: risolvi l'embed con
+     *  OkHttp CON i cookie della WebView e caricalo DIRETTAMENTE nel player
+     *  con il Referer del sito. Il token vixcloud dentro il wrapper è
+     *  monouso e scade in ~10s: la resolve OkHttp e il loadUrl restano in
+     *  sequenza immediata, senza delay intermedi (se il token fosse già
+     *  scaduto, il wrapper viene ri-renderizzato rifacendo la resolve).
+     *  Inerte nel percorso normale: scatta SOLO sul bounce a /it/titles/,
+     *  che nella modalità sito (cookie già caldi) non si verifica mai. */
+    private fun tryEmbedFallback() {
+        Log.w("Player", "watch rimandata alla pagina titolo → fallback embed diretto")
+        scope.launch {
+            val embed = withContext(Dispatchers.IO) { resolveEmbedUrl(watchUrl, cookieHeader) }
+            if (embed == null) {
+                Log.w("Player", "fallback: props.embedUrl non disponibile — mostro la pagina")
+                runOnUiThread { hideBlackout() }
+                return@launch
+            }
+            Log.i("Player", "fallback → $embed")
+            runOnUiThread {
+                saveUrlRel = SiteUrl.relativeOf(watchUrl) ?: saveUrlRel
+                web.loadUrl(embed, mapOf("Referer" to DomainHome().trimEnd('/') + "/"))
+            }
+        }
+    }
+
+    /** props.embedUrl della watch URL (per il fallback e il cambio lingua).
+     *  Le serie la portano già con ?episode_id= e next_episode=1. Se il
+     *  fetch atterra comunque sulla pagina titolo (nessun embedUrl) e il
+     *  watch non porta né e= né s=, prova il formato ?s=1 collaudato. */
+    private fun resolveEmbedUrl(watchSrc: String, cookies: String?): String? {
+        var embed = com.scviewer.fire.data.SiteCatalog
+            .fetchProps(watchSrc, "", cookies)
+            ?.optString("embedUrl")?.takeIf { it.isNotBlank() }
+        if (embed == null && !watchSrc.contains("e=") && !watchSrc.contains("s=")) {
+            embed = com.scviewer.fire.data.SiteCatalog
+                .fetchProps(watchSrc + "?s=1", "", cookies)
+                ?.optString("embedUrl")?.takeIf { it.isNotBlank() }
+        }
+        return embed
+    }
+
+    // -- Lingua audio (M4b) ----------------------------------------------------
+
+    /** Dialog lingua AUDIO (Italiano / Inglese). Gli SOTTOTITOLI non hanno
+     *  supporto parametrico nell'embed (bundle vixcloud verificato: i soli
+     *  parametri URL gestiti sono lang, canPlayFHD, scz, t, d, minute,
+     *  nextEpisode, referer) — restano nel menu ⚙ del player web, non
+     *  raggiungibile col D-pad; opzione futura: ExoPlayer con i file
+     *  #EXT-X-MEDIA della master m3u8. */
+    private fun showLanguageDialog() {
+        val labels = arrayOf("Italiano", "Inglese")
+        val checked = if (currentLang == "en") 1 else 0
+        AlertDialog.Builder(this, R.style.SCOverlay)
+            .setTitle("Lingua audio")
+            .setSingleChoiceItems(labels, checked) { dlg, which ->
+                dlg.dismiss()
+                val lang = if (which == 1) "en" else "it"
+                if (lang == currentLang) return@setSingleChoiceItems
+                SettingsStore.setSctvAudioLang(this, lang)
+                reloadWithLang(lang)
+            }
+            .setNegativeButton("Annulla", null)
+            .show()
+    }
+
+    /** Ricarica il player con il parametro lang nuovo PRESERVANDO la
+     *  posizione: la posizione corrente (onProgress → posSec) riparte con la
+     *  meccanica pendingSeek del resume (si riarma su onVideoState e
+     *  converge in onProgress, ±20s). Il reload serve l'embed VIXCLOUD
+     *  (il bundle inoltra lang alla master playlist): se il main frame è
+     *  già vixcloud basta patchare il parametro; altrimenti si risolve
+     *  l'src dell'iframe vixcloud dal wrapper (props.embedUrl → GET → src).
+     *  Token monouso ~10s: resolve e loadUrl in sequenza immediata. */
+    private fun reloadWithLang(lang: String) {
+        val resumePos = posSec
+        currentLang = lang
+        scope.launch {
+            val target = withContext(Dispatchers.IO) { vixcloudEmbedUrl(lang) }
+            if (target == null) {
+                Log.w("Player", "cambio lingua: embed vixcloud non risolvibile")
+                return@launch
+            }
+            Log.i("Player", "cambio lingua lang=$lang pos=$resumePos → $target")
+            withContext(Dispatchers.Main) {
+                if (resumePos > 0) {
+                    pendingSeek = resumePos
+                    resumeSeekArmed = false
+                }
+                web.loadUrl(target, mapOf("Referer" to DomainHome().trimEnd('/') + "/"))
+            }
+        }
+    }
+
+    /** URL dell'embed vixcloud con [lang] impostato, a partire dallo stato
+     *  corrente del WebView (thread IO). */
+    private fun vixcloudEmbedUrl(lang: String): String? {
+        val url = web.url ?: return null
+        // 1. Main frame già sull'embed vixcloud: patch diretta del parametro.
+        if (Uri.parse(url).host?.contains("vixcloud") == true) {
+            return patchLangParam(url, lang)
+        }
+        // 2. Main frame = wrapper /it/iframe (fallback attivo): scarica il
+        //    wrapper e prendi l'src dell'iframe vixcloud (token fresco).
+        if (url.contains("/it/iframe/")) {
+            return fetchWrapperVixSrc(url)?.let { patchLangParam(it, lang) }
+        }
+        // 3. Watch page come main frame: props.embedUrl (con i cookie di
+        //    sessione) → wrapper → src vixcloud.
+        val watchSrc = saveUrlRel?.let { DomainHome().trimEnd('/') + it }
+            ?: url.takeIf { it.contains("/watch/") }
+            ?: return null
+        val wrapper = resolveEmbedUrl(watchSrc, cookieHeader) ?: return null
+        return fetchWrapperVixSrc(wrapper)?.let { patchLangParam(it, lang) }
+    }
+
+    /** GET del wrapper /it/iframe/<id> e estrazione dell'src dell'iframe
+     *  vixcloud (token monouso generato al render della pagina). */
+    private fun fetchWrapperVixSrc(wrapperUrl: String): String? {
+        return runCatching {
+            val b = Request.Builder().url(wrapperUrl)
+                .header("User-Agent", SCWebViewClient.DESKTOP_UA)
+                .header("Accept", "text/html")
+                .header("Referer", DomainHome().trimEnd('/') + "/")
+            cookieHeader?.takeIf { it.isNotBlank() }?.let { b.header("Cookie", it) }
+            embedClient.newCall(b.build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.i("Player", "wrapper fetch HTTP ${resp.code}")
+                    return@use null
+                }
+                val html = resp.body?.string() ?: return@use null
+                Regex("src=\"(https://vixcloud[^\"]+)\"").find(html)
+                    ?.groupValues?.get(1)
+                    ?.replace("&amp;", "&")
+            }
+        }.onFailure { Log.w("Player", "wrapper fetch failed", it) }.getOrNull()
+    }
+
+    /** Sostituisce/aggiunge il parametro lang preservando tutti gli altri
+     *  (token monouso, expires, t, d, episode_id, next_episode...). */
+    private fun patchLangParam(raw: String, lang: String): String? {
+        return runCatching {
+            val u = Uri.parse(raw)
+            if (u.host.isNullOrBlank()) return@runCatching null
+            val b = Uri.Builder()
+                .scheme(u.scheme ?: "https")
+                .authority(u.authority)
+                .path(u.path ?: "")
+            for (n in u.queryParameterNames) {
+                if (n.equals("lang", ignoreCase = true)) continue
+                b.appendQueryParameter(n, u.getQueryParameter(n) ?: "")
+            }
+            b.appendQueryParameter("lang", lang)
+            b.build().toString()
+        }.getOrNull()
     }
 
     private fun onPageInfo(json: String) {
@@ -365,7 +641,12 @@ class PlayerActivity : Activity() {
         if (info == null || !info.isWatchPage || dur <= 60 || pendingSeek > 0) return
         val tid = if (info.titleId != 0) info.titleId else titleId
         if (tid <= 0) return
-        val url = web.url ?: return
+        // M4b: nei salvataggi va SEMPRE il watch URL. Quando il main frame è
+        // il wrapper /it/iframe o l'embed vixcloud (fallback / cambio lingua),
+        // web.url non è una pagina watch e non deve finire nei record.
+        val url = SiteUrl.relativeOf(web.url ?: "")?.takeIf { it.contains("/watch/") }
+            ?: saveUrlRel
+            ?: return
         val poster = info.poster?.takeIf { it.isNotBlank() } ?: PosterCache.get(this, tid)
         ProgressStore.get(this).save(
             WatchProgress(
@@ -380,7 +661,7 @@ class PlayerActivity : Activity() {
                 durationSec = dur,
                 // URL RELATIVO (path+query): il dominio corrente non resta
                 // congelato nel record — stessa convenzione della modalità sito.
-                url = SiteUrl.relativeOf(url) ?: "",
+                url = url,
                 poster = poster,
                 updatedAt = System.currentTimeMillis()
             )
@@ -464,5 +745,18 @@ class PlayerActivity : Activity() {
     private companion object {
         /** Oltre questo timeout il resume seek si considera non eseguibile. */
         private const val RESUME_SEEK_DESIST_MS = 15_000L
+        /** Massimo tempo coperto dalla schermata nera anti-flash. */
+        private const val BLACKOUT_MAX_MS = 25_000L
+    }
+
+    /** Client HTTP per wrapper/props legati al player (risolve l'embed per
+     *  fallback e cambio lingua). Timeout stretti: il token vixcloud del
+     *  wrapper scade in ~10s. */
+    private val embedClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
     }
 }
