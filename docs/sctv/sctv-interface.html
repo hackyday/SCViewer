@@ -1,0 +1,2143 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCtv</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+            display: ['Bebas Neue', 'Impact', 'sans-serif'],
+          },
+          colors: {
+            sctv: {
+              accent: '#E50914',
+              accentHover: '#FF1E27',
+              dark: '#0E0E10',
+              darker: '#070709',
+              card: '#18181B',
+              surface: '#222226',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: #0E0E10;
+      color: #F4F4F5;
+      overflow-x: hidden;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .tv-focusable {
+      transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+                  box-shadow 0.24s ease,
+                  border-color 0.24s ease,
+                  background-color 0.2s ease;
+    }
+
+    .tv-focused {
+      outline: none;
+      transform: scale(1.05);
+      box-shadow: 0 0 0 2.5px #FFFFFF, 0 20px 44px rgba(0, 0, 0, 0.9);
+      z-index: 30;
+    }
+
+    #tv-sidebar.sidebar-expanded {
+      width: 16rem;
+      box-shadow: 16px 0 48px rgba(0, 0, 0, 0.85);
+    }
+    #tv-sidebar.sidebar-expanded .sidebar-label {
+      opacity: 1;
+    }
+
+    .hero-vignette-left {
+      background: linear-gradient(90deg, #0E0E10 0%, rgba(14, 14, 16, 0.94) 30%, rgba(14, 14, 16, 0.45) 64%, rgba(14, 14, 16, 0.05) 100%);
+    }
+    .hero-vignette-bottom {
+      background: linear-gradient(0deg, #0E0E10 0%, rgba(14, 14, 16, 0.88) 20%, rgba(14, 14, 16, 0) 100%);
+    }
+
+    @keyframes sctvIntro {
+      0% { transform: scale(0.88); opacity: 0; letter-spacing: 0.32em; }
+      40% { transform: scale(1); opacity: 1; letter-spacing: 0.1em; }
+      85% { transform: scale(1.03); opacity: 1; letter-spacing: 0.12em; }
+      100% { transform: scale(1.18); opacity: 0; letter-spacing: 0.18em; }
+    }
+    .animate-sctv-intro {
+      animation: sctvIntro 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes kenBurns {
+      0% { transform: scale(1) translate(0, 0); }
+      50% { transform: scale(1.05) translate(-0.8%, -0.8%); }
+      100% { transform: scale(1) translate(0, 0); }
+    }
+    .animate-ken-burns {
+      animation: kenBurns 24s ease-in-out infinite;
+    }
+
+    input[type="range"].sctv-scrubber {
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      cursor: pointer;
+    }
+    input[type="range"].sctv-scrubber::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 16px;
+      width: 16px;
+      border-radius: 9999px;
+      background: #E50914;
+      border: 2.5px solid #FFFFFF;
+      box-shadow: 0 0 12px rgba(229, 9, 20, 0.85);
+      margin-top: -5px;
+      transition: transform 0.15s ease;
+    }
+    input[type="range"].sctv-scrubber:hover::-webkit-slider-thumb {
+      transform: scale(1.25);
+    }
+    input[type="range"].sctv-scrubber::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-[#0E0E10] text-zinc-100 antialiased selection:bg-[#E50914] selection:text-white">
+
+  <!-- ==================== 1. BOOT SPLASH SCREEN ==================== -->
+  <div id="boot-splash" class="fixed inset-0 z-[100] bg-[#050507] flex flex-col items-center justify-center transition-opacity duration-500">
+    <div class="animate-sctv-intro flex flex-col items-center">
+      <div class="flex items-baseline gap-1">
+        <span class="font-display text-7xl sm:text-9xl text-[#E50914] tracking-wider drop-shadow-[0_0_40px_rgba(229,9,20,0.55)]">SC</span>
+        <span class="font-sans text-4xl sm:text-6xl font-extrabold text-white tracking-tight">tv</span>
+      </div>
+      <div class="w-24 h-0.5 bg-gradient-to-r from-transparent via-[#E50914] to-transparent mt-3"></div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. WHO'S WATCHING (PROFILE GATE) ==================== -->
+  <div id="profile-screen" class="fixed inset-0 z-50 bg-[#0E0E10] hidden flex-col items-center justify-center px-6 py-10 overflow-y-auto">
+    <div class="absolute top-7 left-8 sm:left-12 flex items-center gap-3">
+      <div class="flex items-baseline">
+        <span class="font-display text-3xl sm:text-4xl text-[#E50914] tracking-wider">SC</span>
+        <span class="font-sans text-xl sm:text-2xl font-extrabold text-white tracking-tight">tv</span>
+      </div>
+    </div>
+
+    <div class="absolute top-7 right-8 sm:right-12 flex items-center gap-3">
+      <button id="sound-toggle-profile" onclick="toggleSound()" class="px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold flex items-center gap-2 text-zinc-300 transition">
+        <span id="sound-icon-profile" class="w-4 h-4 flex items-center justify-center"></span>
+        <span id="sound-label-profile">UI Audio: On</span>
+      </button>
+    </div>
+
+    <div class="max-w-5xl w-full text-center my-auto">
+      <h1 id="profile-heading" class="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">Who's watching?</h1>
+      <p id="profile-subheading" class="text-zinc-400 text-sm mb-12">Select or create a profile to continue</p>
+
+      <div id="profiles-grid" class="flex flex-wrap items-center justify-center gap-6 sm:gap-10 mb-14"></div>
+
+      <div class="flex flex-wrap items-center justify-center gap-4">
+        <button id="manage-profiles-btn" onclick="toggleManageProfiles()" class="tv-focusable hidden px-8 py-3 rounded-lg border border-zinc-700 text-zinc-300 hover:text-white hover:border-white font-semibold tracking-wider uppercase text-xs transition">
+          Manage Profiles
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 3. ADD / EDIT PROFILE MODAL ==================== -->
+  <div id="profile-editor-modal" class="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md hidden items-center justify-center p-4">
+    <div class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl">
+      <h2 id="profile-editor-title" class="text-2xl font-bold mb-1">Add Profile</h2>
+      <p class="text-sm text-zinc-400 mb-6">Create a dedicated profile with personalized watchlists.</p>
+
+      <div class="space-y-5">
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Profile Name</label>
+          <input id="profile-name-input" type="text" maxlength="18" placeholder="Enter name" class="w-full bg-[#222226] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium focus:outline-none focus:border-white transition" />
+        </div>
+
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Avatar Style</label>
+          <div id="avatar-color-picker" class="grid grid-cols-5 gap-3"></div>
+        </div>
+
+        <label class="flex items-center justify-between bg-[#222226] border border-white/5 p-4 rounded-xl cursor-pointer">
+          <div>
+            <div class="font-semibold text-sm text-white">Kids Profile</div>
+            <div class="text-xs text-zinc-400">Restrict catalog to PG and family titles</div>
+          </div>
+          <input id="profile-kids-checkbox" type="checkbox" class="w-5 h-5 accent-[#E50914] rounded" />
+        </label>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 mt-8">
+        <button id="delete-profile-btn" onclick="deleteEditingProfile()" class="hidden mr-auto px-4 py-2.5 rounded-xl bg-red-950/60 border border-red-800/40 text-red-400 hover:bg-red-900/60 text-xs font-bold uppercase tracking-wider transition">
+          Delete
+        </button>
+        <button onclick="closeProfileEditor()" class="px-5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-sm font-semibold transition">
+          Cancel
+        </button>
+        <button onclick="saveProfileEditor()" class="px-6 py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white text-sm font-bold transition">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 4. MAIN TV APP SHELL ==================== -->
+  <div id="tv-app-shell" class="hidden min-h-screen bg-[#0E0E10] relative">
+
+    <!-- LEFT EXPANDABLE TV NAVIGATION SIDEBAR -->
+    <aside id="tv-sidebar"
+      onmouseenter="expandSidebar(true)"
+      onmouseleave="handleSidebarMouseLeave()"
+      class="fixed top-0 left-0 bottom-0 z-40 w-20 bg-[#09090B]/95 backdrop-blur-xl border-r border-white/[0.07] flex flex-col justify-between py-6 transition-all duration-300 ease-out group overflow-hidden">
+
+      <div class="px-3.5">
+        <button onclick="openProfileGate()" data-nav="profiles" class="sidebar-item tv-focusable w-full flex items-center gap-3.5 p-2 rounded-xl hover:bg-white/[0.08] transition text-left">
+          <div id="sidebar-avatar" class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base shrink-0 shadow-md bg-gradient-to-br from-red-600 to-red-950 text-white"></div>
+          <div class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden">
+            <div id="sidebar-profile-name" class="font-bold text-sm leading-tight truncate text-white"></div>
+            <div class="text-[11px] text-zinc-400">Switch Profile</div>
+          </div>
+        </button>
+      </div>
+
+      <nav id="sidebar-nav-list" class="flex flex-col gap-1 px-3 my-auto"></nav>
+
+      <div class="px-3.5 flex flex-col gap-3">
+        <button onclick="toggleSound()" class="tv-focusable w-full flex items-center gap-4 p-2.5 rounded-xl hover:bg-white/[0.08] text-zinc-400 hover:text-white transition">
+          <span id="sidebar-sound-icon" class="w-5 h-5 flex items-center justify-center shrink-0"></span>
+          <span id="sidebar-sound-text" class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity text-xs font-semibold whitespace-nowrap">UI Audio: On</span>
+        </button>
+        <div class="flex items-baseline pl-2.5 pt-1 border-t border-white/[0.06]">
+          <span class="font-display text-2xl text-[#E50914] tracking-wider shrink-0">SC</span>
+          <span class="font-sans text-sm font-extrabold text-white shrink-0">tv</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT VIEWPORT -->
+    <main id="tv-main-content" class="pl-20 min-h-screen transition-all duration-300 pb-24">
+
+      <header class="fixed top-0 left-20 right-0 z-30 px-6 sm:px-10 py-4 flex items-center justify-between pointer-events-none bg-gradient-to-b from-[#0E0E10]/90 via-[#0E0E10]/40 to-transparent">
+        <div class="flex items-center gap-3 pointer-events-auto">
+          <div class="flex items-baseline mr-2">
+            <span class="font-display text-2xl text-[#E50914] tracking-wider">SC</span>
+            <span class="font-sans text-base font-extrabold text-white">tv</span>
+          </div>
+          <span id="view-breadcrumb" class="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-300 bg-white/[0.06] backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10">
+            Home
+          </span>
+          <span id="kids-mode-pill" class="hidden text-[11px] font-extrabold uppercase tracking-wider bg-amber-400 text-black px-3 py-1 rounded-md shadow">
+            Kids Mode
+          </span>
+        </div>
+
+        <div class="flex items-center gap-3 pointer-events-auto">
+          <button onclick="switchTab('search')" class="px-3.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] backdrop-blur-md border border-white/10 text-xs font-semibold flex items-center gap-2 text-zinc-200 transition">
+            <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span class="hidden sm:inline">Search</span>
+          </button>
+          <div id="tv-clock" class="text-xs font-semibold text-zinc-300 bg-white/[0.06] backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-white/10 tabular-nums"></div>
+        </div>
+      </header>
+
+      <div id="view-container"></div>
+
+    </main>
+  </div>
+
+  <!-- ==================== 5. TITLE DETAIL MODAL ("MORE INFO") ==================== -->
+  <div id="detail-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden items-center justify-center p-2 sm:p-6 overflow-y-auto">
+    <div id="detail-modal-card" class="relative bg-[#161619] border border-white/10 rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-y-auto no-scrollbar shadow-[0_25px_70px_rgba(0,0,0,0.95)]">
+      <button id="close-detail-btn" onclick="closeDetailModal()" class="tv-focusable absolute top-4 right-4 z-30 w-10 h-10 rounded-full bg-black/75 hover:bg-white hover:text-black text-white flex items-center justify-center border border-white/20 transition" aria-label="Close details">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div id="detail-modal-content"></div>
+    </div>
+  </div>
+
+  <!-- ==================== 6. FULL-SCREEN SCTV VIDEO PLAYER ==================== -->
+  <div id="video-player-overlay" class="fixed inset-0 z-[80] bg-black hidden flex-col justify-between overflow-hidden">
+    <video id="cinema-video" class="absolute inset-0 w-full h-full object-contain bg-black" playsinline></video>
+    <div id="player-empty-stream" class="hidden absolute inset-0 flex flex-col items-center justify-center text-center px-6 pointer-events-none">
+      <p class="text-lg font-bold text-zinc-200 mb-1">No Stream URL Configured</p>
+      <p class="text-xs text-zinc-400">Attach a valid <code class="text-zinc-300">streamUrl</code> property to this catalog item to begin playback.</p>
+    </div>
+    <div class="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/90 via-transparent to-black/75"></div>
+
+    <div id="player-subtitles-box" class="absolute bottom-28 sm:bottom-32 left-1/2 -translate-x-1/2 z-20 max-w-3xl w-[90%] text-center pointer-events-none">
+      <span id="player-subtitle-text" class="hidden inline-block bg-black/80 text-white text-base sm:text-2xl font-medium px-5 py-2 rounded-lg leading-snug shadow-lg"></span>
+    </div>
+
+    <button id="skip-intro-btn" onclick="skipIntro()" class="tv-focusable hidden absolute bottom-32 right-8 z-30 bg-white hover:bg-zinc-200 text-black font-bold px-6 py-3 rounded-lg shadow-2xl items-center gap-2 text-sm tracking-wide transition">
+      <span>Skip Intro</span>
+      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4zm11 0h3v16h-3V4z"/></svg>
+    </button>
+
+    <div id="next-episode-card" class="hidden absolute bottom-32 right-8 z-30 bg-[#161619]/95 border border-white/15 rounded-2xl p-5 max-w-sm shadow-2xl backdrop-blur-xl">
+      <div class="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold mb-1">Up Next in <span id="next-ep-countdown" class="text-white font-bold">10</span>s</div>
+      <div id="next-ep-title" class="font-bold text-base mb-4"></div>
+      <div class="flex items-center gap-2.5">
+        <button onclick="playNextEpisodeNow()" class="flex-1 bg-white text-black font-bold py-2.5 px-4 rounded-lg text-sm hover:bg-zinc-200 transition flex items-center justify-center gap-1.5">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <span>Play Now</span>
+        </button>
+        <button onclick="dismissNextEpisode()" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2.5 px-3.5 rounded-lg text-sm transition">
+          Cancel
+        </button>
+      </div>
+    </div>
+
+    <div id="player-top-bar" class="relative z-20 flex items-center justify-between px-6 sm:px-10 pt-6 transition-opacity duration-300">
+      <button onclick="closeVideoPlayer()" class="tv-focusable flex items-center gap-2.5 text-white hover:text-zinc-300 bg-black/50 backdrop-blur-md px-4 py-2.5 rounded-lg border border-white/15 transition">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        <span class="font-semibold text-sm">Back to Browse</span>
+      </button>
+
+      <div class="text-center">
+        <div id="player-title-heading" class="font-bold text-base sm:text-xl tracking-tight"></div>
+        <div id="player-subtitle-heading" class="text-xs sm:text-sm text-zinc-400"></div>
+      </div>
+
+      <div class="w-24"></div>
+    </div>
+
+    <div id="player-drawer" class="hidden relative z-30 mx-auto mb-3 bg-[#161619]/95 backdrop-blur-xl border border-white/15 rounded-2xl p-5 max-w-2xl w-[92%] shadow-2xl"></div>
+
+    <div id="player-bottom-bar" class="relative z-20 px-6 sm:px-10 pb-7 pt-4 transition-opacity duration-300">
+      <div class="flex items-center gap-4 mb-4">
+        <span id="player-current-time" class="text-xs sm:text-sm font-mono text-zinc-300 w-12 text-right tabular-nums">00:00</span>
+        <div class="relative flex-1 flex items-center">
+          <input id="player-scrubber" type="range" min="0" max="100" value="0" step="0.1"
+            oninput="seekPlayer(this.value)"
+            class="sctv-scrubber w-full z-10" />
+          <div class="absolute inset-x-0 h-1.5 bg-white/25 rounded-full pointer-events-none overflow-hidden">
+            <div id="player-progress-fill" class="h-full bg-[#E50914] w-0"></div>
+          </div>
+        </div>
+        <span id="player-total-time" class="text-xs sm:text-sm font-mono text-zinc-300 w-12 tabular-nums">00:00</span>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3 sm:gap-4">
+          <button id="player-play-btn" onclick="togglePlayerPlay()" class="tv-focusable w-11 h-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition" title="Play/Pause">
+            <svg id="player-play-icon" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>
+          </button>
+
+          <button onclick="skipPlayerSeconds(-10)" class="tv-focusable p-2.5 rounded-full hover:bg-white/15 text-white transition" title="Rewind 10s">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><text x="8.5" y="15" font-size="6.5" fill="currentColor" stroke="none" font-weight="bold">10</text></svg>
+          </button>
+
+          <button onclick="skipPlayerSeconds(10)" class="tv-focusable p-2.5 rounded-full hover:bg-white/15 text-white transition" title="Forward 10s">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><text x="8.5" y="15" font-size="6.5" fill="currentColor" stroke="none" font-weight="bold">10</text></svg>
+          </button>
+
+          <button onclick="togglePlayerMute()" class="tv-focusable p-2.5 rounded-full hover:bg-white/15 text-white transition" title="Mute/Unmute">
+            <span id="player-mute-icon" class="w-5 h-5 flex items-center justify-center"></span>
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-3">
+          <button id="player-episodes-btn" onclick="togglePlayerDrawer('episodes')" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold flex items-center gap-2 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+            <span>Episodes</span>
+          </button>
+
+          <button onclick="togglePlayerDrawer('audio')" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold flex items-center gap-2 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Audio & Subtitles</span>
+          </button>
+
+          <button onclick="togglePlayerDrawer('speed')" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span id="player-speed-label">1x</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 7. FLOATING VIRTUAL TV REMOTE ==================== -->
+  <div class="fixed bottom-5 right-5 z-[70] flex flex-col items-end">
+    <div id="virtual-remote-panel" class="hidden mb-3 bg-[#161619]/95 backdrop-blur-xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.9)] w-52">
+      <div class="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+        <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">SCtv Remote</span>
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <button onclick="handleRemoteAction('back')" class="bg-white/10 hover:bg-white/20 active:scale-95 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+          <span>Back</span>
+        </button>
+        <button onclick="handleRemoteAction('home')" class="bg-white/10 hover:bg-white/20 active:scale-95 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Home</span>
+        </button>
+      </div>
+
+      <div class="relative w-36 h-36 mx-auto bg-[#222226] rounded-full border border-white/10 flex items-center justify-center shadow-inner">
+        <button onclick="handleRemoteAction('up')" class="absolute top-1.5 left-1/2 -translate-x-1/2 w-10 h-9 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Up">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 8l6 6H6z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('down')" class="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-10 h-9 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Down">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 16l-6-6h12z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('left')" class="absolute left-1.5 top-1/2 -translate-y-1/2 w-9 h-10 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Left">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 12l6-6v12z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('right')" class="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-10 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90" aria-label="Right">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M16 12l-6 6V6z"/></svg>
+        </button>
+        <button onclick="handleRemoteAction('ok')" class="w-14 h-14 rounded-full bg-[#E50914] hover:bg-[#FF1E27] active:scale-95 text-white font-bold text-xs shadow-lg transition">OK</button>
+      </div>
+    </div>
+
+    <button onclick="toggleVirtualRemote()" class="px-4 py-2.5 rounded-full bg-[#18181B]/95 hover:bg-[#222226] backdrop-blur-md border border-white/15 shadow-xl text-xs font-semibold flex items-center gap-2 text-zinc-200 transition">
+      <svg class="w-4 h-4 text-[#E50914]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="8" r="2"/><line x1="12" y1="14" x2="12" y2="14.01"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+      <span>Remote</span>
+    </button>
+  </div>
+
+  <!-- ==================== 8. TOAST NOTIFICATION BANNER ==================== -->
+  <div id="tv-toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[95] pointer-events-none opacity-0 translate-y-4 transition-all duration-300">
+    <div class="bg-white text-black font-bold text-xs sm:text-sm px-5 py-3 rounded-full shadow-2xl flex items-center gap-2.5">
+      <span id="tv-toast-dot" class="w-2 h-2 rounded-full bg-[#E50914]"></span>
+      <span id="tv-toast-msg"></span>
+    </div>
+  </div>
+
+  <!-- ==================== JAVASCRIPT APPLICATION LOGIC ==================== -->
+  <script>
+    /**
+     * 0. CRISP VECTOR ICON LIBRARY
+     */
+    const ICONS = {
+      volumeOn: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`,
+      volumeOff: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`,
+      edit: `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`,
+      check: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`,
+      plus: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+      bell: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`,
+      thumbUp: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+      thumbDown: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
+      heart: `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`,
+    };
+
+    /**
+     * 1. PROCEDURAL WEB AUDIO ENGINE (UI Feedback)
+     */
+    const AudioEngine = (() => {
+      let ctx = null;
+      let enabled = true;
+
+      function ensureCtx() {
+        if (!ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) ctx = new AudioCtx();
+        }
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume();
+        }
+      }
+
+      function playTick(freq = 540, duration = 0.03) {
+        if (!enabled) return;
+        try {
+          ensureCtx();
+          if (!ctx) return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(freq * 0.65, ctx.currentTime + duration);
+
+          gain.gain.setValueAtTime(0.05, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + duration);
+        } catch (e) {}
+      }
+
+      function playSelect() {
+        playTick(760, 0.05);
+      }
+
+      function playStartupChord() {
+        if (!enabled) return;
+        try {
+          ensureCtx();
+          if (!ctx) return;
+          const now = ctx.currentTime;
+          const freqs = [65.41, 130.81, 196.00, 261.63];
+          freqs.forEach((f, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = idx === 0 ? 'triangle' : 'sine';
+            osc.frequency.setValueAtTime(f, now + (idx === 0 ? 0 : 0.14));
+            gain.gain.setValueAtTime(0.001, now);
+            gain.gain.linearRampToValueAtTime(idx === 0 ? 0.2 : 0.08, now + (idx === 0 ? 0.03 : 0.2));
+            gain.gain.exponentialRampToValueAtTime(0.0008, now + 1.45);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 1.5);
+          });
+        } catch (e) {}
+      }
+
+      return {
+        get enabled() { return enabled; },
+        setEnabled(val) {
+          enabled = val;
+        },
+        playTick,
+        playSelect,
+        playStartupChord
+      };
+    })();
+
+    /**
+     * 2. SCTV CATALOG DATABASE (Populate with real media items)
+     * Expected item shape:
+     * {
+     *   id, title, type ('tv'|'movie'), isOriginal, isKids, top10Rank,
+     *   match, year, maturity, durationLabel, badges: [], genres: [],
+     *   synopsis, cast: [], creator, posterUrl, backdropUrl, streamUrl,
+     *   comingSoon, releaseDate, seasons, episodes: [{ ep, title, duration, desc, streamUrl }]
+     * }
+     */
+    const CATALOG = [];
+
+    /**
+     * 3. APPLICATION STATE & AVATAR PRESETS
+     */
+    const AVATAR_PRESETS = [
+      { id: 'crimson', bg: 'from-[#E50914] to-[#6B0409]', label: 'Crimson' },
+      { id: 'cobalt', bg: 'from-blue-600 to-indigo-950', label: 'Cobalt' },
+      { id: 'emerald', bg: 'from-emerald-500 to-teal-950', label: 'Emerald' },
+      { id: 'amber', bg: 'from-amber-400 via-orange-500 to-rose-600', label: 'Solar' },
+      { id: 'violet', bg: 'from-violet-600 to-fuchsia-950', label: 'Violet' },
+    ];
+
+    function renderAvatarMark(name, isKids = false) {
+      if (isKids) {
+        return `<span class="font-display text-2xl sm:text-3xl tracking-wider text-white">KIDS</span>`;
+      }
+      const initials = (name || 'SC').trim().slice(0, 2).toUpperCase();
+      return `<span class="font-display text-4xl sm:text-5xl tracking-wider text-white">${initials}</span>`;
+    }
+
+    const state = {
+      profiles: [],
+      currentProfile: null,
+      managingProfiles: false,
+      editingProfileId: null,
+      selectedPresetIdx: 0,
+
+      activeTab: 'home',
+      selectedCategory: 'All',
+      searchQuery: '',
+
+      myList: [],
+      ratings: {},
+      reminders: [],
+      watchProgress: {},
+
+      heroTitleId: null,
+      heroMuted: true,
+
+      detailModalTitleId: null,
+      detailSelectedSeason: 1,
+
+      player: {
+        active: false,
+        titleId: null,
+        season: 1,
+        episode: 1,
+        playing: false,
+        currentTime: 0,
+        duration: 0,
+        muted: false,
+        subtitleLang: 'off',
+        audioLang: 'Default',
+        speed: 1,
+        drawer: null,
+        nextEpDismissed: false,
+      },
+
+      virtualRemoteOpen: false,
+    };
+
+    const NAV_ITEMS = [
+      { id: 'search', label: 'Search', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>` },
+      { id: 'home', label: 'Home', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>` },
+      { id: 'tv', label: 'TV Shows', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>` },
+      { id: 'movies', label: 'Movies', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>` },
+      { id: 'new', label: 'New & Popular', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>` },
+      { id: 'mylist', label: 'My List', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>` },
+      { id: 'categories', label: 'Categories', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>` },
+      { id: 'settings', label: 'Settings', icon: `<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
+    ];
+
+    /**
+     * 4. HELPER UTILITIES
+     */
+    function getScopedCatalog() {
+      if (state.currentProfile && state.currentProfile.isKids) {
+        return CATALOG.filter(item => item.isKids);
+      }
+      return CATALOG;
+    }
+
+    function getTitleById(id) {
+      return CATALOG.find(t => t.id === id) || CATALOG[0] || null;
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const toast = document.getElementById('tv-toast');
+      document.getElementById('tv-toast-msg').textContent = msg;
+      toast.classList.remove('opacity-0', 'translate-y-4');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-4');
+      }, 2400);
+    }
+
+    function syncAudioIcons() {
+      const on = AudioEngine.enabled;
+      const iconHTML = on ? ICONS.volumeOn : ICONS.volumeOff;
+      const profIcon = document.getElementById('sound-icon-profile');
+      const profLabel = document.getElementById('sound-label-profile');
+      const sideIcon = document.getElementById('sidebar-sound-icon');
+      const sideText = document.getElementById('sidebar-sound-text');
+
+      if (profIcon) profIcon.innerHTML = iconHTML;
+      if (profLabel) profLabel.textContent = on ? 'UI Audio: On' : 'UI Audio: Off';
+      if (sideIcon) sideIcon.innerHTML = iconHTML;
+      if (sideText) sideText.textContent = on ? 'UI Audio: On' : 'UI Audio: Off';
+    }
+
+    function toggleSound() {
+      const next = !AudioEngine.enabled;
+      AudioEngine.setEnabled(next);
+      if (next) AudioEngine.playSelect();
+      syncAudioIcons();
+      showToast(next ? 'TV Interface Audio Enabled' : 'TV Interface Audio Muted');
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const str = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const el = document.getElementById('tv-clock');
+      if (el) el.textContent = str;
+    }
+    setInterval(updateClock, 15000);
+
+    /**
+     * 5. PROFILE GATE & MANAGEMENT
+     */
+    function renderProfilesGrid() {
+      const grid = document.getElementById('profiles-grid');
+      const heading = document.getElementById('profile-heading');
+      const manageBtn = document.getElementById('manage-profiles-btn');
+
+      if (state.profiles.length > 0) {
+        manageBtn.classList.remove('hidden');
+      } else {
+        manageBtn.classList.add('hidden');
+        state.managingProfiles = false;
+      }
+
+      heading.textContent = state.managingProfiles ? 'Manage Profiles' : "Who's watching?";
+      manageBtn.textContent = state.managingProfiles ? 'Done' : 'Manage Profiles';
+      manageBtn.className = state.managingProfiles
+        ? 'tv-focusable px-8 py-3 rounded-lg bg-white text-black font-bold tracking-wider uppercase text-xs transition'
+        : 'tv-focusable px-8 py-3 rounded-lg border border-zinc-700 text-zinc-300 hover:text-white hover:border-white font-semibold tracking-wider uppercase text-xs transition';
+
+      let html = state.profiles.map(p => `
+        <button onclick="handleProfileClick('${p.id}')"
+          class="tv-focusable group flex flex-col items-center gap-3.5 p-2 rounded-2xl focus:outline-none">
+          <div class="relative w-28 h-28 sm:w-36 sm:h-36 rounded-2xl bg-gradient-to-br ${p.avatarBg} flex items-center justify-center shadow-2xl border-2 border-white/10 group-hover:border-white transition overflow-hidden">
+            ${renderAvatarMark(p.name, p.isKids)}
+            ${state.managingProfiles ? `
+              <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
+                <div class="w-11 h-11 rounded-full border-2 border-white flex items-center justify-center text-white">
+                  ${ICONS.edit}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <span class="text-zinc-400 group-hover:text-white font-semibold text-base sm:text-lg transition">${p.name}</span>
+        </button>
+      `).join('');
+
+      if (state.profiles.length < 5) {
+        html += `
+          <button onclick="openProfileEditor(null)"
+            class="tv-focusable group flex flex-col items-center gap-3.5 p-2 rounded-2xl focus:outline-none">
+            <div class="w-28 h-28 sm:w-36 sm:h-36 rounded-2xl bg-white/[0.03] group-hover:bg-white/[0.08] border-2 border-dashed border-zinc-700 group-hover:border-white flex items-center justify-center text-zinc-500 group-hover:text-white transition">
+              <svg class="w-9 h-9" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <span class="text-zinc-500 group-hover:text-white font-semibold text-base sm:text-lg transition">Add Profile</span>
+          </button>
+        `;
+      }
+
+      grid.innerHTML = html;
+      refreshFocusableElements();
+    }
+
+    function toggleManageProfiles() {
+      AudioEngine.playSelect();
+      state.managingProfiles = !state.managingProfiles;
+      renderProfilesGrid();
+    }
+
+    function handleProfileClick(id) {
+      const profile = state.profiles.find(p => p.id === id);
+      if (!profile) return;
+
+      if (state.managingProfiles) {
+        AudioEngine.playSelect();
+        openProfileEditor(profile);
+        return;
+      }
+
+      AudioEngine.playStartupChord();
+      state.currentProfile = profile;
+      document.getElementById('profile-screen').classList.add('hidden');
+      document.getElementById('profile-screen').classList.remove('flex');
+      document.getElementById('tv-app-shell').classList.remove('hidden');
+
+      const sideAvatar = document.getElementById('sidebar-avatar');
+      sideAvatar.className = `w-10 h-10 rounded-lg flex items-center justify-center font-display text-lg tracking-wider shrink-0 shadow-md bg-gradient-to-br ${profile.avatarBg} text-white`;
+      sideAvatar.textContent = profile.isKids ? 'KIDS' : profile.name.slice(0, 2).toUpperCase();
+      document.getElementById('sidebar-profile-name').textContent = profile.name;
+
+      const kidsPill = document.getElementById('kids-mode-pill');
+      if (profile.isKids) {
+        kidsPill.classList.remove('hidden');
+      } else {
+        kidsPill.classList.add('hidden');
+      }
+
+      state.activeTab = 'home';
+      renderSidebarNav();
+      renderCurrentView();
+      showToast(`Signed in as ${profile.name}`);
+    }
+
+    function openProfileGate() {
+      AudioEngine.playSelect();
+      state.managingProfiles = false;
+      document.getElementById('tv-app-shell').classList.add('hidden');
+      const screen = document.getElementById('profile-screen');
+      screen.classList.remove('hidden');
+      screen.classList.add('flex');
+      renderProfilesGrid();
+    }
+
+    function openProfileEditor(profile) {
+      state.editingProfileId = profile ? profile.id : null;
+      document.getElementById('profile-editor-title').textContent = profile ? 'Edit Profile' : 'Add Profile';
+      document.getElementById('profile-name-input').value = profile ? profile.name : '';
+      document.getElementById('profile-kids-checkbox').checked = profile ? profile.isKids : false;
+
+      const delBtn = document.getElementById('delete-profile-btn');
+      if (profile) {
+        delBtn.classList.remove('hidden');
+      } else {
+        delBtn.classList.add('hidden');
+      }
+
+      const foundIdx = profile ? AVATAR_PRESETS.findIndex(a => a.bg === profile.avatarBg) : 0;
+      state.selectedPresetIdx = foundIdx >= 0 ? foundIdx : 0;
+      renderAvatarPresets();
+
+      const modal = document.getElementById('profile-editor-modal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function renderAvatarPresets() {
+      const container = document.getElementById('avatar-color-picker');
+      container.innerHTML = AVATAR_PRESETS.map((preset, idx) => `
+        <button type="button" onclick="selectAvatarPreset(${idx})"
+          class="h-12 rounded-xl bg-gradient-to-br ${preset.bg} flex items-center justify-center text-[11px] font-bold uppercase tracking-wider text-white transition ${state.selectedPresetIdx === idx ? 'ring-2 ring-white scale-105' : 'opacity-65 hover:opacity-100'}">
+          ${preset.label}
+        </button>
+      `).join('');
+    }
+
+    function selectAvatarPreset(idx) {
+      AudioEngine.playTick();
+      state.selectedPresetIdx = idx;
+      renderAvatarPresets();
+    }
+
+    function closeProfileEditor() {
+      const modal = document.getElementById('profile-editor-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function saveProfileEditor() {
+      const rawName = document.getElementById('profile-name-input').value.trim();
+      if (!rawName) {
+        showToast('Please enter a profile name');
+        return;
+      }
+      const isKids = document.getElementById('profile-kids-checkbox').checked;
+      const preset = AVATAR_PRESETS[state.selectedPresetIdx];
+
+      if (state.editingProfileId) {
+        const idx = state.profiles.findIndex(p => p.id === state.editingProfileId);
+        if (idx >= 0) {
+          state.profiles[idx] = { ...state.profiles[idx], name: rawName, avatarBg: preset.bg, isKids };
+        }
+        showToast('Profile updated');
+      } else {
+        state.profiles.push({
+          id: 'p-' + Date.now(),
+          name: rawName,
+          avatarBg: preset.bg,
+          isKids
+        });
+        showToast(`Created profile "${rawName}"`);
+      }
+
+      AudioEngine.playSelect();
+      closeProfileEditor();
+      renderProfilesGrid();
+    }
+
+    function deleteEditingProfile() {
+      if (!state.editingProfileId) return;
+      state.profiles = state.profiles.filter(p => p.id !== state.editingProfileId);
+      AudioEngine.playSelect();
+      closeProfileEditor();
+      renderProfilesGrid();
+      showToast('Profile deleted');
+    }
+
+    /**
+     * 6. SIDEBAR NAVIGATION
+     */
+    function expandSidebar(expand) {
+      const sb = document.getElementById('tv-sidebar');
+      if (!sb) return;
+      if (expand) sb.classList.add('sidebar-expanded');
+      else sb.classList.remove('sidebar-expanded');
+    }
+
+    function handleSidebarMouseLeave() {
+      if (currentFocusedEl && currentFocusedEl.closest('#tv-sidebar')) return;
+      expandSidebar(false);
+    }
+
+    function renderSidebarNav() {
+      const nav = document.getElementById('sidebar-nav-list');
+      nav.innerHTML = NAV_ITEMS.map(item => {
+        const active = state.activeTab === item.id;
+        return `
+          <button onclick="switchTab('${item.id}')" data-tab="${item.id}"
+            class="tv-focusable relative flex items-center gap-4 px-3.5 py-3 rounded-xl transition ${active ? 'text-white bg-white/[0.12] font-bold' : 'text-zinc-400 hover:text-white hover:bg-white/[0.06] font-medium'}">
+            ${active ? `<span class="absolute left-0 top-2.5 bottom-2.5 w-1 bg-[#E50914] rounded-r-full"></span>` : ''}
+            ${item.icon}
+            <span class="sidebar-label opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-sm whitespace-nowrap">${item.label}</span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function switchTab(tabId) {
+      AudioEngine.playSelect();
+      state.activeTab = tabId;
+      const navMeta = NAV_ITEMS.find(n => n.id === tabId);
+      document.getElementById('view-breadcrumb').textContent = navMeta ? navMeta.label : 'Browse';
+      renderSidebarNav();
+      renderCurrentView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    /**
+     * 7. CONTENT ROWS & CARD RENDERERS
+     */
+    function renderTop10SVG(rank) {
+      return `
+        <svg viewBox="0 0 110 150" class="w-16 sm:w-24 h-28 sm:h-40 shrink-0 -mr-3 sm:-mr-4 z-0 select-none">
+          <text x="52" y="132" text-anchor="middle"
+            font-family="Bebas Neue, Impact, sans-serif"
+            font-size="${rank === 10 ? '125' : '152'}"
+            font-weight="900"
+            fill="#0E0E10"
+            stroke="#52525B"
+            stroke-width="4"
+            letter-spacing="-6">${rank}</text>
+        </svg>
+      `;
+    }
+
+    function renderPosterCard(item, options = {}) {
+      const inList = state.myList.includes(item.id);
+      const prog = state.watchProgress[item.id];
+      const showProgress = options.showProgress && prog;
+      const topRank = options.topRank;
+
+      return `
+        <div class="flex items-end shrink-0 group">
+          ${topRank ? renderTop10SVG(topRank) : ''}
+          <div tabindex="0"
+            onclick="openDetailModal('${item.id}')"
+            onkeydown="if(event.key==='Enter') openDetailModal('${item.id}')"
+            class="tv-focusable relative z-10 w-36 sm:w-44 md:w-48 aspect-[2/3] rounded-xl overflow-hidden bg-sctv-card cursor-pointer border border-white/10 shadow-xl">
+
+            ${item.posterUrl
+              ? `<img src="${item.posterUrl}" alt="${item.title}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />`
+              : `<div class="w-full h-full bg-zinc-900 flex items-center justify-center p-4 text-center font-display text-2xl text-zinc-300">${item.title}</div>`
+            }
+
+            <div class="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+              ${item.isOriginal ? `<span class="px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm font-display text-[#E50914] text-sm tracking-wider shadow">SC</span>` : '<span></span>'}
+              ${item.top10Rank ? `<span class="bg-[#E50914] text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shadow">TOP 10</span>` : ''}
+            </div>
+
+            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-3">
+              <div class="flex items-center gap-1.5 mb-2.5">
+                <button onclick="event.stopPropagation(); startPlayback('${item.id}')"
+                  class="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition shadow" title="Play">
+                  <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button onclick="event.stopPropagation(); toggleMyList('${item.id}')"
+                  class="w-8 h-8 rounded-full bg-black/75 border border-white/40 text-white flex items-center justify-center hover:border-white transition" title="My List">
+                  ${inList ? ICONS.check : ICONS.plus}
+                </button>
+                <button onclick="event.stopPropagation(); openDetailModal('${item.id}')"
+                  class="ml-auto w-8 h-8 rounded-full bg-black/75 border border-white/40 text-white flex items-center justify-center hover:border-white transition" title="More Info">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+              </div>
+              ${item.match ? `<div class="text-[11px] font-bold text-emerald-400">${item.match}% Match</div>` : ''}
+              <div class="flex items-center gap-1.5 text-[10px] text-zinc-300 mt-0.5">
+                ${item.maturity ? `<span class="border border-zinc-600 px-1 rounded">${item.maturity}</span>` : ''}
+                ${item.durationLabel ? `<span>${item.durationLabel}</span>` : ''}
+              </div>
+            </div>
+
+            ${showProgress ? `
+              <div class="absolute bottom-0 inset-x-0 bg-black/85 backdrop-blur-sm px-2.5 py-1.5">
+                <div class="text-[10px] text-zinc-300 font-medium mb-1 truncate">${prog.label}</div>
+                <div class="w-full h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div class="h-full bg-[#E50914]" style="width: ${Math.round(prog.progress * 100)}%"></div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCarouselRow(rowId, title, items, options = {}) {
+      if (!items || items.length === 0) return '';
+      return `
+        <section class="mb-9 relative group/row">
+          <div class="flex items-center justify-between px-6 sm:px-10 mb-3">
+            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2.5">
+              <span>${title}</span>
+            </h2>
+            <div class="hidden sm:flex items-center gap-1.5">
+              <button onclick="scrollRow('${rowId}', -1)" class="w-8 h-8 rounded-lg bg-white/[0.07] hover:bg-white/[0.16] flex items-center justify-center text-zinc-300 transition" aria-label="Scroll left">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <button onclick="scrollRow('${rowId}', 1)" class="w-8 h-8 rounded-lg bg-white/[0.07] hover:bg-white/[0.16] flex items-center justify-center text-zinc-300 transition" aria-label="Scroll right">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="${rowId}" class="flex items-center gap-3.5 sm:gap-4 overflow-x-auto no-scrollbar px-6 sm:px-10 py-3 scroll-smooth">
+            ${items.map((item, index) => renderPosterCard(item, {
+              ...options,
+              topRank: options.isTop10 ? index + 1 : null
+            })).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    function scrollRow(rowId, dir) {
+      AudioEngine.playTick();
+      const el = document.getElementById(rowId);
+      if (el) el.scrollBy({ left: dir * 560, behavior: 'smooth' });
+    }
+
+    /**
+     * 8. VIEW RENDERERS
+     */
+    function renderEmptyCatalogState(title = 'No Titles Available', subtitle = 'Add media items to the catalog to start browsing.') {
+      return `
+        <div class="pt-32 px-6 sm:px-10 max-w-2xl mx-auto text-center">
+          <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 shadow-xl">
+            <h2 class="text-2xl font-bold mb-2">${title}</h2>
+            <p class="text-sm text-zinc-400">${subtitle}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderHeroBillboard(heroItem) {
+      if (!heroItem) return '';
+      const inList = state.myList.includes(heroItem.id);
+      return `
+        <section class="relative w-full h-[68vh] sm:h-[76vh] min-h-[480px] max-h-[780px] overflow-hidden mb-4">
+          ${heroItem.backdropUrl
+            ? `<img src="${heroItem.backdropUrl}" alt="${heroItem.title}" class="absolute inset-0 w-full h-full object-cover animate-ken-burns" />`
+            : `<div class="absolute inset-0 bg-zinc-950"></div>`
+          }
+          <div class="hero-vignette-left absolute inset-0"></div>
+          <div class="hero-vignette-bottom absolute inset-0"></div>
+
+          <div class="relative z-10 h-full flex flex-col justify-end pb-14 sm:pb-20 px-6 sm:px-10 max-w-3xl">
+            <div class="flex items-center gap-2.5 mb-3">
+              ${heroItem.isOriginal ? `<span class="font-display text-xl sm:text-2xl text-[#E50914] tracking-wider">SCTV</span>` : ''}
+              <span class="text-[11px] uppercase tracking-[0.35em] text-zinc-400 font-bold">
+                ${heroItem.type === 'tv' ? 'SERIES' : 'FILM'}
+              </span>
+              ${heroItem.top10Rank ? `
+                <span class="ml-2 bg-[#E50914] text-white text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider">
+                  # ${heroItem.top10Rank} Today
+                </span>
+              ` : ''}
+            </div>
+
+            <h1 class="font-display text-5xl sm:text-7xl md:text-8xl tracking-wide leading-[0.95] text-white drop-shadow-2xl mb-4">
+              ${heroItem.title}
+            </h1>
+
+            <div class="flex flex-wrap items-center gap-2.5 text-xs sm:text-sm font-semibold mb-4">
+              ${heroItem.match ? `<span class="text-emerald-400 font-bold">${heroItem.match}% Match</span>` : ''}
+              ${heroItem.year ? `<span class="text-zinc-300">${heroItem.year}</span>` : ''}
+              ${heroItem.maturity ? `<span class="border border-zinc-600 px-1.5 py-0.5 rounded text-xs text-zinc-200">${heroItem.maturity}</span>` : ''}
+              ${heroItem.durationLabel ? `<span class="text-zinc-300">${heroItem.durationLabel}</span>` : ''}
+              ${(heroItem.badges || []).map(b => `<span class="bg-white/10 border border-white/15 px-2 py-0.5 rounded text-[11px] text-zinc-200">${b}</span>`).join('')}
+            </div>
+
+            <p class="text-zinc-300 text-sm sm:text-base line-clamp-3 leading-relaxed mb-7 max-w-2xl">
+              ${heroItem.synopsis || ''}
+            </p>
+
+            <div class="flex flex-wrap items-center gap-3.5">
+              <button onclick="startPlayback('${heroItem.id}')"
+                class="tv-focusable bg-white hover:bg-zinc-200 text-black font-extrabold px-7 sm:px-9 py-3.5 rounded-xl flex items-center gap-2.5 text-sm sm:text-base shadow-xl transition">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <span>Play</span>
+              </button>
+
+              <button onclick="openDetailModal('${heroItem.id}')"
+                class="tv-focusable bg-white/[0.14] hover:bg-white/[0.22] backdrop-blur-md text-white font-bold px-6 sm:px-8 py-3.5 rounded-xl flex items-center gap-2.5 text-sm sm:text-base border border-white/15 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>More Info</span>
+              </button>
+
+              <button onclick="toggleMyList('${heroItem.id}')"
+                class="tv-focusable bg-black/50 hover:bg-white/15 backdrop-blur-md text-white font-semibold px-5 py-3.5 rounded-xl border border-white/20 text-sm sm:text-base flex items-center gap-2 transition">
+                ${inList ? ICONS.check : ICONS.plus}
+                <span>${inList ? 'In My List' : 'My List'}</span>
+              </button>
+            </div>
+          </div>
+
+          ${heroItem.maturity ? `
+            <div class="hidden sm:flex items-center gap-3 absolute right-0 bottom-20 z-10">
+              <div class="bg-zinc-900/90 border-l-4 border-white px-5 py-2 text-sm font-bold tracking-wider">
+                ${heroItem.maturity}
+              </div>
+            </div>
+          ` : ''}
+        </section>
+      `;
+    }
+
+    function renderBrowseView(filterType = 'all') {
+      const pool = getScopedCatalog().filter(i => !i.comingSoon);
+      const filteredPool = filterType === 'all' ? pool : pool.filter(i => i.type === filterType);
+
+      if (filteredPool.length === 0) {
+        return renderEmptyCatalogState();
+      }
+
+      const heroItem = filteredPool.find(i => i.id === state.heroTitleId) || filteredPool[0];
+      const continueWatching = filteredPool.filter(i => state.watchProgress[i.id]);
+      const top10TV = pool.filter(i => i.type === 'tv' && i.top10Rank).sort((a, b) => a.top10Rank - b.top10Rank);
+      const top10Movies = pool.filter(i => i.type === 'movie' && i.top10Rank).sort((a, b) => a.top10Rank - b.top10Rank);
+      const originals = filteredPool.filter(i => i.isOriginal);
+
+      return `
+        ${renderHeroBillboard(heroItem)}
+        <div class="-mt-6 relative z-20">
+          ${renderCarouselRow('row-continue', `Continue Watching for ${state.currentProfile.name}`, continueWatching, { showProgress: true })}
+          ${filterType !== 'movie' ? renderCarouselRow('row-top10-tv', 'Top 10 Series Today', top10TV, { isTop10: true }) : ''}
+          ${renderCarouselRow('row-all', filterType === 'tv' ? 'All Series' : filterType === 'movie' ? 'All Films' : 'Catalog', filteredPool)}
+          ${filterType !== 'tv' ? renderCarouselRow('row-top10-movies', 'Top 10 Films Today', top10Movies, { isTop10: true }) : ''}
+          ${renderCarouselRow('row-originals', 'SCtv Originals', originals)}
+        </div>
+      `;
+    }
+
+    function renderNewAndPopularView() {
+      const pool = getScopedCatalog();
+      const comingSoon = pool.filter(i => i.comingSoon);
+      const top10All = pool.filter(i => i.top10Rank && !i.comingSoon).slice(0, 10);
+
+      if (comingSoon.length === 0 && top10All.length === 0) {
+        return renderEmptyCatalogState('No Upcoming or Trending Titles', 'New releases and popular titles will appear here.');
+      }
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-8">New & Popular</h1>
+
+          ${comingSoon.length > 0 ? `
+            <h2 class="text-lg font-bold uppercase tracking-wider text-zinc-300 mb-4">Coming Soon</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+              ${comingSoon.map(item => {
+                const reminded = state.reminders.includes(item.id);
+                return `
+                  <div class="bg-[#18181B] border border-white/10 rounded-2xl overflow-hidden flex flex-col sm:flex-row shadow-xl">
+                    ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" class="sm:w-56 h-44 sm:h-auto object-cover" />` : ''}
+                    <div class="p-5 flex flex-col justify-between flex-1">
+                      <div>
+                        <div class="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 mb-1">${item.releaseDate || 'Coming Soon'}</div>
+                        <h3 class="font-display text-3xl tracking-wide mb-2">${item.title}</h3>
+                        <p class="text-xs text-zinc-400 line-clamp-3 mb-4 leading-relaxed">${item.synopsis || ''}</p>
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <button onclick="toggleReminder('${item.id}')"
+                          class="tv-focusable px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition ${reminded ? 'bg-emerald-500 text-black' : 'bg-white text-black hover:bg-zinc-200'}">
+                          ${reminded ? ICONS.check : ICONS.bell}
+                          <span>${reminded ? 'Reminder Set' : 'Remind Me'}</span>
+                        </button>
+                        <button onclick="openDetailModal('${item.id}')" class="tv-focusable px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold transition">
+                          Details
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : ''}
+
+          ${top10All.length > 0 ? `
+            <h2 class="text-lg font-bold uppercase tracking-wider text-zinc-300 mb-4">Top 10 Most Watched</h2>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+              ${top10All.map(item => renderPosterCard(item)).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function renderMyListView() {
+      const pool = getScopedCatalog();
+      const saved = pool.filter(i => state.myList.includes(i.id));
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <div class="mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight">My List</h1>
+            <p class="text-zinc-400 text-sm mt-1">${saved.length} saved title${saved.length === 1 ? '' : 's'} for ${state.currentProfile.name}</p>
+          </div>
+
+          ${saved.length === 0 ? `
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 text-center max-w-lg mx-auto my-12">
+              <h2 class="text-xl font-bold mb-2">Your watchlist is empty</h2>
+              <p class="text-sm text-zinc-400 mb-6">Save series and films to watch later by selecting "+ My List" on any title.</p>
+              <button onclick="switchTab('home')" class="tv-focusable px-6 py-3 rounded-xl bg-white text-black font-bold text-sm">
+                Explore Catalog
+              </button>
+            </div>
+          ` : `
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+              ${saved.map(item => renderPosterCard(item)).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function renderCategoriesView() {
+      const pool = getScopedCatalog();
+      const dynamicGenres = Array.from(new Set(pool.flatMap(i => i.genres || [])));
+      const allGenres = ['All', ...dynamicGenres];
+      const filtered = state.selectedCategory === 'All'
+        ? pool
+        : pool.filter(i => (i.genres || []).includes(state.selectedCategory));
+
+      if (pool.length === 0) {
+        return renderEmptyCatalogState('No Categories Available', 'Categories are generated automatically from catalog genres.');
+      }
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-6">Categories</h1>
+
+          <div class="flex flex-wrap gap-2.5 mb-8">
+            ${allGenres.map(g => `
+              <button onclick="selectCategory('${g}')"
+                class="tv-focusable px-5 py-2.5 rounded-lg text-xs uppercase tracking-wider font-bold transition ${state.selectedCategory === g ? 'bg-[#E50914] text-white shadow-lg' : 'bg-white/[0.07] text-zinc-300 hover:bg-white/[0.15] hover:text-white'}">
+                ${g}
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+            ${filtered.map(item => renderPosterCard(item)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function selectCategory(genre) {
+      AudioEngine.playSelect();
+      state.selectedCategory = genre;
+      renderCurrentView();
+    }
+
+    /**
+     * 9. TV ON-SCREEN KEYBOARD SEARCH VIEW
+     */
+    function renderSearchView() {
+      const pool = getScopedCatalog();
+      const q = state.searchQuery.trim().toLowerCase();
+      const results = q
+        ? pool.filter(i =>
+            i.title.toLowerCase().includes(q) ||
+            (i.genres || []).some(g => g.toLowerCase().includes(q)) ||
+            (i.cast || []).some(c => c.toLowerCase().includes(q))
+          )
+        : pool.slice(0, 10);
+
+      const keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+            <div class="lg:col-span-5 bg-[#18181B] border border-white/10 rounded-2xl p-5 h-fit">
+              <div class="flex items-center gap-3 bg-black/75 border border-white/15 rounded-xl px-4 py-3 mb-4">
+                <svg class="w-5 h-5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input id="tv-search-input" type="text" value="${state.searchQuery}"
+                  oninput="handleSearchInput(this.value)"
+                  placeholder="Titles, genres, or cast"
+                  class="bg-transparent text-white font-semibold text-sm w-full focus:outline-none" />
+                ${state.searchQuery ? `<button onclick="clearSearchQuery()" class="text-zinc-400 hover:text-white text-xs font-bold uppercase">Clear</button>` : ''}
+              </div>
+
+              <div class="grid grid-cols-3 gap-2 mb-2.5">
+                <button onclick="appendSearchChar(' ')" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Space</button>
+                <button onclick="backspaceSearchChar()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Delete</button>
+                <button onclick="clearSearchQuery()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Reset</button>
+              </div>
+
+              <div class="grid grid-cols-6 gap-1.5">
+                ${keys.map(k => `
+                  <button onclick="appendSearchChar('${k}')"
+                    class="tv-focusable aspect-square rounded-lg bg-[#222226] hover:bg-white hover:text-black font-bold text-sm flex items-center justify-center transition">
+                    ${k}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+
+            <div class="lg:col-span-7">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold tracking-tight">
+                  ${q ? `Results for "${state.searchQuery}" (${results.length})` : 'Browse Catalog'}
+                </h2>
+              </div>
+
+              ${results.length === 0 ? `
+                <div class="bg-[#18181B] rounded-2xl p-10 text-center border border-white/10">
+                  <p class="text-lg font-bold mb-1">${q ? `No matches found for "${state.searchQuery}"` : 'Catalog is empty'}</p>
+                  <p class="text-sm text-zinc-400">${q ? 'Try searching for another title, cast member, or genre.' : 'Add items to the catalog to enable search.'}</p>
+                </div>
+              ` : `
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                  ${results.map(item => renderPosterCard(item)).join('')}
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function appendSearchChar(ch) {
+      AudioEngine.playTick(600);
+      state.searchQuery += ch;
+      renderCurrentView();
+    }
+    function backspaceSearchChar() {
+      AudioEngine.playTick(420);
+      state.searchQuery = state.searchQuery.slice(0, -1);
+      renderCurrentView();
+    }
+    function clearSearchQuery() {
+      AudioEngine.playSelect();
+      state.searchQuery = '';
+      renderCurrentView();
+    }
+    function handleSearchInput(val) {
+      state.searchQuery = val;
+      renderCurrentView();
+      const inp = document.getElementById('tv-search-input');
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    }
+
+    /**
+     * 10. SETTINGS & CONNECTION STATUS VIEW
+     */
+    function renderSettingsView() {
+      const isOnline = navigator.onLine;
+      return `
+        <div class="pt-24 px-6 sm:px-10 max-w-4xl mx-auto">
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2">Settings</h1>
+          <p class="text-zinc-400 text-sm mb-8">Manage active profile, interface audio, and connection status.</p>
+
+          <div class="space-y-5">
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6 flex items-center justify-between">
+              <div class="flex items-center gap-4">
+                <div class="w-14 h-14 rounded-xl bg-gradient-to-br ${state.currentProfile.avatarBg} flex items-center justify-center font-display text-2xl tracking-wider text-white">
+                  ${state.currentProfile.isKids ? 'KIDS' : state.currentProfile.name.slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div class="font-bold text-lg">${state.currentProfile.name}</div>
+                  <div class="text-xs text-zinc-400">${state.currentProfile.isKids ? 'Kids Profile (PG & Below)' : 'Standard Profile'}</div>
+                </div>
+              </div>
+              <button onclick="openProfileGate()" class="tv-focusable px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs uppercase tracking-wider font-bold transition">
+                Switch Profile
+              </button>
+            </div>
+
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6 space-y-4">
+              <h2 class="font-bold text-base uppercase tracking-wider text-zinc-300">Audio</h2>
+              <div class="flex items-center justify-between py-2">
+                <div>
+                  <div class="font-semibold text-sm">TV Interface Audio</div>
+                  <div class="text-xs text-zinc-400">Navigation feedback and startup chord</div>
+                </div>
+                <button onclick="toggleSound(); renderCurrentView();" class="tv-focusable px-4 py-2 rounded-lg bg-white text-black font-bold text-xs uppercase tracking-wider">
+                  ${AudioEngine.enabled ? 'Enabled' : 'Muted'}
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-6">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h2 class="font-bold text-base uppercase tracking-wider text-zinc-300">Network</h2>
+                  <p class="text-xs text-zinc-400">Device connectivity status</p>
+                </div>
+                <button onclick="checkConnectionStatus()" class="tv-focusable px-5 py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-xs uppercase tracking-wider transition">
+                  Refresh Status
+                </button>
+              </div>
+              <div id="network-test-output" class="bg-black/60 border border-white/5 rounded-xl p-4 text-sm text-zinc-300 flex items-center justify-between">
+                <span>Network State: <strong id="network-status-label" class="${isOnline ? 'text-emerald-400' : 'text-red-400'}">${isOnline ? 'Online' : 'Offline'}</strong></span>
+                <span id="network-catalog-count" class="font-mono text-xs text-zinc-400">${CATALOG.length} catalog item${CATALOG.length === 1 ? '' : 's'} loaded</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function checkConnectionStatus() {
+      AudioEngine.playSelect();
+      const online = navigator.onLine;
+      const lbl = document.getElementById('network-status-label');
+      if (lbl) {
+        lbl.textContent = online ? 'Online' : 'Offline';
+        lbl.className = online ? 'text-emerald-400' : 'text-red-400';
+      }
+      showToast(online ? 'Device is online' : 'Device is offline');
+    }
+
+    function renderCurrentView() {
+      const container = document.getElementById('view-container');
+      switch (state.activeTab) {
+        case 'home':
+          container.innerHTML = renderBrowseView('all');
+          break;
+        case 'tv':
+          container.innerHTML = renderBrowseView('tv');
+          break;
+        case 'movies':
+          container.innerHTML = renderBrowseView('movie');
+          break;
+        case 'new':
+          container.innerHTML = renderNewAndPopularView();
+          break;
+        case 'mylist':
+          container.innerHTML = renderMyListView();
+          break;
+        case 'categories':
+          container.innerHTML = renderCategoriesView();
+          break;
+        case 'search':
+          container.innerHTML = renderSearchView();
+          break;
+        case 'settings':
+          container.innerHTML = renderSettingsView();
+          break;
+      }
+      refreshFocusableElements();
+    }
+
+    /**
+     * 11. MY LIST, RATINGS & REMINDERS
+     */
+    function toggleMyList(titleId) {
+      AudioEngine.playSelect();
+      const idx = state.myList.indexOf(titleId);
+      const item = getTitleById(titleId);
+      if (!item) return;
+      if (idx >= 0) {
+        state.myList.splice(idx, 1);
+        showToast(`Removed "${item.title}" from My List`);
+      } else {
+        state.myList.push(titleId);
+        showToast(`Added "${item.title}" to My List`);
+      }
+      renderCurrentView();
+      if (state.detailModalTitleId === titleId) renderDetailModalContent();
+    }
+
+    function setRating(titleId, ratingVal) {
+      AudioEngine.playSelect();
+      if (state.ratings[titleId] === ratingVal) {
+        delete state.ratings[titleId];
+        showToast('Rating removed');
+      } else {
+        state.ratings[titleId] = ratingVal;
+        const labels = { down: 'Marked as not for me', up: 'Rated: Liked', love: 'Rated: Loved' };
+        showToast(labels[ratingVal]);
+      }
+      if (state.detailModalTitleId === titleId) renderDetailModalContent();
+    }
+
+    function toggleReminder(titleId) {
+      AudioEngine.playSelect();
+      const idx = state.reminders.indexOf(titleId);
+      const item = getTitleById(titleId);
+      if (!item) return;
+      if (idx >= 0) {
+        state.reminders.splice(idx, 1);
+        showToast(`Reminder removed for ${item.title}`);
+      } else {
+        state.reminders.push(titleId);
+        showToast(`Reminder set for ${item.title}`);
+      }
+      renderCurrentView();
+    }
+
+    /**
+     * 12. TITLE DETAIL MODAL
+     */
+    function openDetailModal(titleId) {
+      const item = getTitleById(titleId);
+      if (!item) return;
+      AudioEngine.playSelect();
+      state.detailModalTitleId = titleId;
+      state.detailSelectedSeason = 1;
+      renderDetailModalContent();
+
+      const modal = document.getElementById('detail-modal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      refreshFocusableElements();
+    }
+
+    function closeDetailModal() {
+      AudioEngine.playTick(400);
+      state.detailModalTitleId = null;
+      const modal = document.getElementById('detail-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      refreshFocusableElements();
+    }
+
+    function renderDetailModalContent() {
+      const item = getTitleById(state.detailModalTitleId);
+      if (!item) return;
+      const inList = state.myList.includes(item.id);
+      const rating = state.ratings[item.id];
+      const similar = getScopedCatalog().filter(t => t.id !== item.id && (t.genres || []).some(g => (item.genres || []).includes(g))).slice(0, 6);
+
+      const episodesSection = item.type === 'tv' && item.episodes && item.episodes.length > 0 ? `
+        <div class="mt-8 border-t border-white/10 pt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold uppercase tracking-wider text-zinc-200">Episodes</h3>
+            <select onchange="changeDetailSeason(this.value)" class="bg-[#222226] border border-white/15 rounded-lg px-4 py-2 text-sm font-bold focus:outline-none">
+              ${Array.from({ length: item.seasons || 1 }, (_, i) => `
+                <option value="${i + 1}" ${state.detailSelectedSeason === i + 1 ? 'selected' : ''}>Season ${i + 1}</option>
+              `).join('')}
+            </select>
+          </div>
+
+          <div class="space-y-3">
+            ${item.episodes.map(ep => `
+              <div onclick="startPlayback('${item.id}', ${state.detailSelectedSeason}, ${ep.ep})"
+                class="tv-focusable flex items-center gap-4 p-3.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.1] cursor-pointer border border-transparent hover:border-white/15 transition">
+                <div class="text-lg font-bold text-zinc-500 w-7 text-center">${ep.ep}</div>
+                <div class="relative w-32 sm:w-40 aspect-video rounded-lg overflow-hidden shrink-0 bg-black">
+                  ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${ep.title}" class="w-full h-full object-cover opacity-85" />` : ''}
+                  <div class="absolute inset-0 flex items-center justify-center">
+                    <span class="w-9 h-9 rounded-full bg-black/75 border border-white/80 flex items-center justify-center text-white">
+                      <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    </span>
+                  </div>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <h4 class="font-bold text-sm sm:text-base truncate">S${state.detailSelectedSeason}:E${ep.ep} "${ep.title}"</h4>
+                    <span class="text-xs text-zinc-400 shrink-0">${ep.duration || ''}</span>
+                  </div>
+                  <p class="text-xs text-zinc-400 line-clamp-2">${ep.desc || ''}</p>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : '';
+
+      document.getElementById('detail-modal-content').innerHTML = `
+        <div class="relative h-72 sm:h-96 overflow-hidden">
+          ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" class="w-full h-full object-cover" />` : '<div class="w-full h-full bg-zinc-950"></div>'}
+          <div class="absolute inset-0 bg-gradient-to-t from-[#161619] via-[#161619]/45 to-transparent"></div>
+
+          <div class="absolute bottom-6 left-6 sm:left-10 right-6">
+            <div class="flex items-center gap-2 mb-2">
+              ${item.isOriginal ? `<span class="font-display text-xl text-[#E50914] tracking-wider">SCTV</span>` : ''}
+              <span class="text-[11px] uppercase tracking-[0.3em] text-zinc-400 font-bold">${item.type === 'tv' ? 'SERIES' : 'FILM'}</span>
+            </div>
+            <h2 class="font-display text-4xl sm:text-6xl tracking-wide mb-4">${item.title}</h2>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <button onclick="startPlayback('${item.id}')"
+                class="tv-focusable bg-white hover:bg-zinc-200 text-black font-extrabold px-7 py-3 rounded-xl flex items-center gap-2 text-sm sm:text-base transition">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <span>${item.comingSoon ? 'Play Teaser' : 'Play'}</span>
+              </button>
+
+              <button onclick="toggleMyList('${item.id}')"
+                class="tv-focusable px-5 py-3 rounded-xl bg-white/[0.12] hover:bg-white/[0.2] border border-white/20 font-bold text-sm flex items-center gap-2 transition">
+                ${inList ? ICONS.check : ICONS.plus}
+                <span>${inList ? 'In My List' : 'My List'}</span>
+              </button>
+
+              <div class="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl p-1">
+                <button onclick="setRating('${item.id}', 'down')" class="p-2.5 rounded-lg transition ${rating === 'down' ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/15'}" title="Not for me">${ICONS.thumbDown}</button>
+                <button onclick="setRating('${item.id}', 'up')" class="p-2.5 rounded-lg transition ${rating === 'up' ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/15'}" title="I like this">${ICONS.thumbUp}</button>
+                <button onclick="setRating('${item.id}', 'love')" class="p-2.5 rounded-lg transition ${rating === 'love' ? 'bg-[#E50914] text-white' : 'text-zinc-300 hover:bg-white/15'}" title="Love this">${ICONS.heart}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-6 sm:px-10 pb-10">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="md:col-span-2">
+              <div class="flex flex-wrap items-center gap-2.5 text-sm font-semibold mb-3">
+                ${item.match ? `<span class="text-emerald-400 font-bold">${item.match}% Match</span>` : ''}
+                ${item.year ? `<span>${item.year}</span>` : ''}
+                ${item.maturity ? `<span class="border border-zinc-600 px-1.5 py-0.5 rounded text-xs">${item.maturity}</span>` : ''}
+                ${item.durationLabel ? `<span>${item.durationLabel}</span>` : ''}
+                ${(item.badges || []).map(b => `<span class="bg-white/10 px-2 py-0.5 rounded text-xs text-zinc-300">${b}</span>`).join('')}
+              </div>
+              <p class="text-zinc-300 text-sm sm:text-base leading-relaxed">${item.synopsis || ''}</p>
+            </div>
+
+            <div class="text-xs sm:text-sm space-y-2 text-zinc-300">
+              ${item.cast && item.cast.length ? `<div><span class="text-zinc-500">Cast:</span> ${item.cast.join(', ')}</div>` : ''}
+              ${item.genres && item.genres.length ? `<div><span class="text-zinc-500">Genres:</span> ${item.genres.join(', ')}</div>` : ''}
+              ${item.creator ? `<div><span class="text-zinc-500">Creator:</span> ${item.creator}</div>` : ''}
+            </div>
+          </div>
+
+          ${episodesSection}
+
+          ${similar.length > 0 ? `
+            <div class="mt-8 border-t border-white/10 pt-6">
+              <h3 class="text-lg font-bold uppercase tracking-wider text-zinc-200 mb-4">More Like This</h3>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                ${similar.map(sim => `
+                  <div onclick="openDetailModal('${sim.id}')" class="tv-focusable bg-[#222226] rounded-xl overflow-hidden cursor-pointer border border-white/10 hover:border-white/30 transition">
+                    ${sim.backdropUrl ? `<img src="${sim.backdropUrl}" alt="${sim.title}" class="w-full h-28 object-cover" />` : ''}
+                    <div class="p-3.5">
+                      <div class="flex items-center justify-between text-xs mb-1">
+                        ${sim.match ? `<span class="text-emerald-400 font-bold">${sim.match}% Match</span>` : '<span></span>'}
+                        ${sim.maturity ? `<span class="border border-zinc-600 px-1 rounded text-[10px]">${sim.maturity}</span>` : ''}
+                      </div>
+                      <div class="font-bold text-sm truncate mb-1">${sim.title}</div>
+                      <p class="text-xs text-zinc-400 line-clamp-2">${sim.synopsis || ''}</p>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function changeDetailSeason(val) {
+      AudioEngine.playTick();
+      state.detailSelectedSeason = parseInt(val, 10) || 1;
+      renderDetailModalContent();
+    }
+
+    /**
+     * 13. FULL-SCREEN SCTV VIDEO PLAYER (HTML5 <video> backed)
+     */
+    let playerAnimFrame = null;
+
+    function startPlayback(titleId, season = 1, episode = 1) {
+      const item = getTitleById(titleId);
+      if (!item) return;
+
+      AudioEngine.playSelect();
+      closeDetailModal();
+
+      state.player.active = true;
+      state.player.titleId = titleId;
+      state.player.season = season;
+      state.player.episode = episode;
+      state.player.drawer = null;
+      state.player.nextEpDismissed = false;
+
+      document.getElementById('player-title-heading').textContent = item.title;
+      const epObj = item.episodes && item.episodes[episode - 1];
+      document.getElementById('player-subtitle-heading').textContent =
+        item.type === 'tv' && epObj
+          ? `S${season}:E${episode} "${epObj.title}"`
+          : `${item.year || ''} ${item.durationLabel ? '• ' + item.durationLabel : ''}`.trim();
+
+      const epBtn = document.getElementById('player-episodes-btn');
+      if (item.type === 'tv' && item.episodes && item.episodes.length > 0) epBtn.classList.remove('hidden');
+      else epBtn.classList.add('hidden');
+
+      const videoEl = document.getElementById('cinema-video');
+      const emptyStreamEl = document.getElementById('player-empty-stream');
+      const streamUrl = (epObj && epObj.streamUrl) || item.streamUrl || '';
+
+      if (streamUrl) {
+        emptyStreamEl.classList.add('hidden');
+        videoEl.src = streamUrl;
+        videoEl.playbackRate = state.player.speed;
+        videoEl.muted = state.player.muted;
+        videoEl.play().then(() => {
+          state.player.playing = true;
+          updatePlayPauseIcon();
+        }).catch(() => {
+          state.player.playing = false;
+          updatePlayPauseIcon();
+        });
+      } else {
+        videoEl.removeAttribute('src');
+        videoEl.load();
+        state.player.playing = false;
+        state.player.currentTime = 0;
+        state.player.duration = 0;
+        emptyStreamEl.classList.remove('hidden');
+        updatePlayPauseIcon();
+      }
+
+      document.getElementById('player-mute-icon').innerHTML = state.player.muted ? ICONS.volumeOff : ICONS.volumeOn;
+      document.getElementById('player-drawer').classList.add('hidden');
+      const overlay = document.getElementById('video-player-overlay');
+      overlay.classList.remove('hidden');
+      overlay.classList.add('flex');
+
+      runPlayerLoop();
+      refreshFocusableElements();
+    }
+
+    function closeVideoPlayer() {
+      AudioEngine.playTick(380);
+      const videoEl = document.getElementById('cinema-video');
+      if (state.player.titleId && videoEl.duration > 0) {
+        const pct = Math.min(0.95, Math.max(0.05, videoEl.currentTime / videoEl.duration));
+        const item = getTitleById(state.player.titleId);
+        const remMin = Math.max(1, Math.round((videoEl.duration - videoEl.currentTime) / 60));
+        state.watchProgress[state.player.titleId] = {
+          progress: pct,
+          season: state.player.season,
+          episode: state.player.episode,
+          label: item && item.type === 'tv' ? `S${state.player.season}:E${state.player.episode} • ${remMin}m left` : `${remMin}m left`
+        };
+      }
+
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
+
+      state.player.active = false;
+      cancelAnimationFrame(playerAnimFrame);
+
+      const overlay = document.getElementById('video-player-overlay');
+      overlay.classList.add('hidden');
+      overlay.classList.remove('flex');
+      renderCurrentView();
+    }
+
+    function updatePlayPauseIcon() {
+      document.getElementById('player-play-icon').innerHTML = state.player.playing
+        ? '<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>'
+        : '<path d="M8 5v14l11-7z"/>';
+    }
+
+    function togglePlayerPlay() {
+      AudioEngine.playTick();
+      const videoEl = document.getElementById('cinema-video');
+      if (!videoEl.src) return;
+      if (videoEl.paused) {
+        videoEl.play();
+        state.player.playing = true;
+      } else {
+        videoEl.pause();
+        state.player.playing = false;
+      }
+      updatePlayPauseIcon();
+    }
+
+    function skipPlayerSeconds(delta) {
+      AudioEngine.playTick(550);
+      const videoEl = document.getElementById('cinema-video');
+      if (!videoEl.duration) return;
+      videoEl.currentTime = Math.max(0, Math.min(videoEl.duration, videoEl.currentTime + delta));
+    }
+
+    function seekPlayer(percentVal) {
+      const videoEl = document.getElementById('cinema-video');
+      if (!videoEl.duration) return;
+      videoEl.currentTime = (parseFloat(percentVal) / 100) * videoEl.duration;
+    }
+
+    function skipIntro() {
+      AudioEngine.playSelect();
+      const item = getTitleById(state.player.titleId);
+      const videoEl = document.getElementById('cinema-video');
+      if (item && item.introEnd && videoEl.duration) {
+        videoEl.currentTime = item.introEnd;
+        showToast('Skipped Intro');
+      }
+    }
+
+    function togglePlayerMute() {
+      const videoEl = document.getElementById('cinema-video');
+      state.player.muted = !state.player.muted;
+      videoEl.muted = state.player.muted;
+      document.getElementById('player-mute-icon').innerHTML = state.player.muted ? ICONS.volumeOff : ICONS.volumeOn;
+    }
+
+    function togglePlayerDrawer(drawerType) {
+      AudioEngine.playSelect();
+      const drawer = document.getElementById('player-drawer');
+      if (state.player.drawer === drawerType) {
+        state.player.drawer = null;
+        drawer.classList.add('hidden');
+        return;
+      }
+      state.player.drawer = drawerType;
+      drawer.classList.remove('hidden');
+
+      const item = getTitleById(state.player.titleId);
+      const videoEl = document.getElementById('cinema-video');
+
+      if (drawerType === 'audio') {
+        const textTracks = Array.from(videoEl.textTracks || []);
+        drawer.innerHTML = `
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
+              <div class="text-xs uppercase tracking-wider text-zinc-400 font-bold mb-3">Audio Track</div>
+              <div class="text-sm text-zinc-300 px-3 py-2 rounded-lg bg-white/10 font-semibold">${state.player.audioLang}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wider text-zinc-400 font-bold mb-3">Subtitles</div>
+              <div class="space-y-1.5">
+                <button onclick="setPlayerSubtitle('off')" class="w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${state.player.subtitleLang === 'off' ? 'bg-white text-black font-bold' : 'hover:bg-white/10 text-zinc-200'}">
+                  <span>Off</span>
+                  ${state.player.subtitleLang === 'off' ? ICONS.check : ''}
+                </button>
+                ${textTracks.map((tr, i) => `
+                  <button onclick="setPlayerSubtitle('${tr.language || i}')" class="w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${state.player.subtitleLang === (tr.language || String(i)) ? 'bg-white text-black font-bold' : 'hover:bg-white/10 text-zinc-200'}">
+                    <span>${tr.label || tr.language || 'Track ' + (i + 1)}</span>
+                    ${state.player.subtitleLang === (tr.language || String(i)) ? ICONS.check : ''}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (drawerType === 'speed') {
+        const speeds = [0.75, 1, 1.25, 1.5];
+        drawer.innerHTML = `
+          <div class="text-xs uppercase tracking-wider text-zinc-400 font-bold mb-3">Playback Speed</div>
+          <div class="grid grid-cols-4 gap-2.5">
+            ${speeds.map(sp => `
+              <button onclick="setPlayerSpeed(${sp})" class="py-3 rounded-xl text-sm font-bold transition ${state.player.speed === sp ? 'bg-[#E50914] text-white' : 'bg-white/10 hover:bg-white/20'}">
+                ${sp}x
+              </button>
+            `).join('')}
+          </div>
+        `;
+      } else if (drawerType === 'episodes' && item && item.episodes) {
+        drawer.innerHTML = `
+          <div class="text-xs uppercase tracking-wider text-zinc-400 font-bold mb-3">Season ${state.player.season} Episodes</div>
+          <div class="space-y-2 max-h-52 overflow-y-auto no-scrollbar">
+            ${item.episodes.map(ep => `
+              <button onclick="startPlayback('${item.id}', ${state.player.season}, ${ep.ep})"
+                class="w-full text-left p-2.5 rounded-xl flex items-center justify-between ${state.player.episode === ep.ep ? 'bg-white/15 border border-white/30' : 'hover:bg-white/10'}">
+                <div>
+                  <div class="font-bold text-sm">E${ep.ep}: ${ep.title}</div>
+                  <div class="text-xs text-zinc-400 line-clamp-1">${ep.desc || ''}</div>
+                </div>
+                <span class="text-xs text-zinc-300 ml-3">${ep.duration || ''}</span>
+              </button>
+            `).join('')}
+          </div>
+        `;
+      }
+    }
+
+    function setPlayerSubtitle(code) {
+      AudioEngine.playTick();
+      state.player.subtitleLang = code;
+      const videoEl = document.getElementById('cinema-video');
+      Array.from(videoEl.textTracks || []).forEach((tr, i) => {
+        const id = tr.language || String(i);
+        tr.mode = (code !== 'off' && id === code) ? 'showing' : 'hidden';
+      });
+      state.player.drawer = null;
+      togglePlayerDrawer('audio');
+    }
+
+    function setPlayerSpeed(sp) {
+      AudioEngine.playTick();
+      state.player.speed = sp;
+      document.getElementById('cinema-video').playbackRate = sp;
+      document.getElementById('player-speed-label').textContent = `${sp}x`;
+      state.player.drawer = null;
+      document.getElementById('player-drawer').classList.add('hidden');
+      showToast(`Playback speed: ${sp}x`);
+    }
+
+    function playNextEpisodeNow() {
+      const item = getTitleById(state.player.titleId);
+      if (!item || !item.episodes) return;
+      const nextEp = (state.player.episode % item.episodes.length) + 1;
+      startPlayback(item.id, state.player.season, nextEp);
+    }
+
+    function dismissNextEpisode() {
+      state.player.nextEpDismissed = true;
+      document.getElementById('next-episode-card').classList.add('hidden');
+    }
+
+    function formatTime(sec) {
+      if (!isFinite(sec) || sec < 0) return '00:00';
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = Math.floor(sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function runPlayerLoop() {
+      if (!state.player.active) return;
+      const videoEl = document.getElementById('cinema-video');
+      const t = videoEl.currentTime || 0;
+      const dur = videoEl.duration || 0;
+      const pct = dur > 0 ? (t / dur) * 100 : 0;
+
+      document.getElementById('player-scrubber').value = pct;
+      document.getElementById('player-progress-fill').style.width = `${pct}%`;
+      document.getElementById('player-current-time').textContent = formatTime(t);
+      document.getElementById('player-total-time').textContent = formatTime(dur);
+
+      const item = getTitleById(state.player.titleId);
+      const skipBtn = document.getElementById('skip-intro-btn');
+      if (item && item.introStart != null && item.introEnd != null && t >= item.introStart && t <= item.introEnd) {
+        skipBtn.classList.remove('hidden');
+        skipBtn.classList.add('flex');
+      } else {
+        skipBtn.classList.add('hidden');
+        skipBtn.classList.remove('flex');
+      }
+
+      const nextCard = document.getElementById('next-episode-card');
+      if (item && item.type === 'tv' && item.episodes && dur > 0 && t >= dur - 12 && !state.player.nextEpDismissed) {
+        const nextEpNum = (state.player.episode % item.episodes.length) + 1;
+        const nextEpObj = item.episodes[nextEpNum - 1];
+        document.getElementById('next-ep-countdown').textContent = Math.max(1, Math.ceil(dur - t));
+        document.getElementById('next-ep-title').textContent = `S${state.player.season}:E${nextEpNum} "${nextEpObj.title}"`;
+        nextCard.classList.remove('hidden');
+      } else {
+        nextCard.classList.add('hidden');
+      }
+
+      playerAnimFrame = requestAnimationFrame(runPlayerLoop);
+    }
+
+    /**
+     * 14. SMART TV SPATIAL D-PAD NAVIGATION & VIRTUAL REMOTE
+     */
+    let focusableList = [];
+    let currentFocusedEl = null;
+
+    function refreshFocusableElements() {
+      let root = document;
+      if (!document.getElementById('video-player-overlay').classList.contains('hidden')) {
+        root = document.getElementById('video-player-overlay');
+      } else if (!document.getElementById('detail-modal').classList.contains('hidden')) {
+        root = document.getElementById('detail-modal');
+      } else if (!document.getElementById('profile-editor-modal').classList.contains('hidden')) {
+        root = document.getElementById('profile-editor-modal');
+      } else if (!document.getElementById('profile-screen').classList.contains('hidden')) {
+        root = document.getElementById('profile-screen');
+      } else {
+        root = document.getElementById('tv-app-shell');
+      }
+
+      focusableList = Array.from(root.querySelectorAll('.tv-focusable')).filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    }
+
+    function setTVFocus(el) {
+      if (!el) return;
+      if (currentFocusedEl) {
+        currentFocusedEl.classList.remove('tv-focused');
+      }
+      currentFocusedEl = el;
+      el.classList.add('tv-focused');
+
+      const isInSidebar = Boolean(el.closest('#tv-sidebar'));
+      expandSidebar(isInSidebar);
+
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      AudioEngine.playTick();
+    }
+
+    function moveSpatialFocus(direction) {
+      refreshFocusableElements();
+      if (focusableList.length === 0) return;
+
+      if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
+        setTVFocus(focusableList[0]);
+        return;
+      }
+
+      const currInSidebar = Boolean(currentFocusedEl.closest('#tv-sidebar'));
+      const currRect = currentFocusedEl.getBoundingClientRect();
+      const cx = currRect.left + currRect.width / 2;
+      const cy = currRect.top + currRect.height / 2;
+
+      let bestCandidate = null;
+      let bestScore = Infinity;
+
+      for (const cand of focusableList) {
+        if (cand === currentFocusedEl) continue;
+        const candInSidebar = Boolean(cand.closest('#tv-sidebar'));
+
+        if (currInSidebar && direction === 'right' && candInSidebar) continue;
+        if (currInSidebar && (direction === 'up' || direction === 'down') && !candInSidebar) continue;
+
+        const r = cand.getBoundingClientRect();
+        const tx = r.left + r.width / 2;
+        const ty = r.top + r.height / 2;
+        const dx = tx - cx;
+        const dy = ty - cy;
+
+        let valid = false;
+        let primaryDist = 0;
+        let orthoDist = 0;
+
+        if (direction === 'right' && dx > 12) {
+          valid = true; primaryDist = dx; orthoDist = Math.abs(dy);
+        } else if (direction === 'left' && dx < -12) {
+          valid = true; primaryDist = -dx; orthoDist = Math.abs(dy);
+        } else if (direction === 'down' && dy > 12) {
+          valid = true; primaryDist = dy; orthoDist = Math.abs(dx);
+        } else if (direction === 'up' && dy < -12) {
+          valid = true; primaryDist = -dy; orthoDist = Math.abs(dx);
+        }
+
+        if (valid) {
+          const score = primaryDist + orthoDist * 2.6;
+          if (score < bestScore) {
+            bestScore = score;
+            bestCandidate = cand;
+          }
+        }
+      }
+
+      if (bestCandidate) {
+        setTVFocus(bestCandidate);
+      }
+    }
+
+    function toggleVirtualRemote() {
+      AudioEngine.playSelect();
+      state.virtualRemoteOpen = !state.virtualRemoteOpen;
+      const panel = document.getElementById('virtual-remote-panel');
+      if (state.virtualRemoteOpen) panel.classList.remove('hidden');
+      else panel.classList.add('hidden');
+    }
+
+    function handleRemoteAction(action) {
+      if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
+        moveSpatialFocus(action);
+      } else if (action === 'ok') {
+        if (currentFocusedEl) currentFocusedEl.click();
+      } else if (action === 'back') {
+        handleBackNavigation();
+      } else if (action === 'home') {
+        if (state.player.active) closeVideoPlayer();
+        if (state.detailModalTitleId) closeDetailModal();
+        if (state.currentProfile) switchTab('home');
+      }
+    }
+
+    function handleBackNavigation() {
+      if (state.player.active) {
+        if (state.player.drawer) {
+          state.player.drawer = null;
+          document.getElementById('player-drawer').classList.add('hidden');
+        } else {
+          closeVideoPlayer();
+        }
+      } else if (!document.getElementById('detail-modal').classList.contains('hidden')) {
+        closeDetailModal();
+      } else if (!document.getElementById('profile-editor-modal').classList.contains('hidden')) {
+        closeProfileEditor();
+      } else if (state.currentProfile && state.activeTab !== 'home') {
+        switchTab('home');
+      } else if (state.currentProfile) {
+        openProfileGate();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const activeTag = document.activeElement ? document.activeElement.tagName : '';
+      const isTyping = activeTag === 'INPUT' || activeTag === 'SELECT';
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveSpatialFocus('up');
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveSpatialFocus('down');
+      } else if (e.key === 'ArrowLeft') {
+        if (state.player.active && !currentFocusedEl) {
+          skipPlayerSeconds(-10);
+        } else if (!isTyping) {
+          e.preventDefault();
+          moveSpatialFocus('left');
+        }
+      } else if (e.key === 'ArrowRight') {
+        if (state.player.active && !currentFocusedEl) {
+          skipPlayerSeconds(10);
+        } else if (!isTyping) {
+          e.preventDefault();
+          moveSpatialFocus('right');
+        }
+      } else if (e.key === 'Enter' && !isTyping) {
+        if (currentFocusedEl) {
+          e.preventDefault();
+          currentFocusedEl.click();
+        }
+      } else if (e.key === 'Escape' || (e.key === 'Backspace' && !isTyping)) {
+        e.preventDefault();
+        handleBackNavigation();
+      } else if (e.key === ' ' && state.player.active && !isTyping) {
+        e.preventDefault();
+        togglePlayerPlay();
+      }
+    });
+
+    document.addEventListener('mousemove', () => {
+      if (currentFocusedEl) {
+        currentFocusedEl.classList.remove('tv-focused');
+        currentFocusedEl = null;
+        const sb = document.getElementById('tv-sidebar');
+        if (sb && !sb.matches(':hover')) {
+          expandSidebar(false);
+        }
+      }
+    });
+
+    /**
+     * 15. INITIALIZATION ON WINDOW LOAD
+     */
+    window.onload = function () {
+      updateClock();
+      syncAudioIcons();
+      renderProfilesGrid();
+
+      setTimeout(() => {
+        const splash = document.getElementById('boot-splash');
+        splash.classList.add('opacity-0');
+        setTimeout(() => {
+          splash.classList.add('hidden');
+          const profScreen = document.getElementById('profile-screen');
+          profScreen.classList.remove('hidden');
+          profScreen.classList.add('flex');
+          refreshFocusableElements();
+        }, 500);
+      }, 1350);
+    };
+  </script>
+</body>
+</html>
