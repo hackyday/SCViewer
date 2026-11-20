@@ -628,7 +628,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     }
 
     override fun onPageStarted(url: String?) {
-        Log.i("com.scviewer.fire.debug", "onPageStarted url=$url canGoBack=${webView.canGoBack()} hist=${webView.copyBackForwardList().size}")
         recordTrail(url)
         showLoading(true)
         handler.removeCallbacks(loadTimeoutRunnable)
@@ -1274,7 +1273,6 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
-            Log.i("com.scviewer.fire.debug", "BACK canGoBack=${webView.canGoBack()} hist=${webView.copyBackForwardList().size} url=${webView.url} sidebar=${sidebarCtl.isOpen} cinema=$cinemaMode trail=${urlTrail.size}")
             if (!isTouchDevice && sidebarCtl.isOpen) {
                 sidebarCtl.close()
                 webView.requestFocus()
