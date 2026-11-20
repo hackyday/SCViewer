@@ -15,11 +15,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.scviewer.fire.bridge.SctvBridge
 import com.scviewer.fire.bridge.SctvRepository
+import com.scviewer.fire.data.DEFAULT_PROFILE_ID
 import com.scviewer.fire.data.DomainRepository
 import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
+import com.scviewer.fire.data.sanitizeProfileId
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.SettingsDialog
 import com.scviewer.fire.web.SCWebViewClient
@@ -87,6 +89,12 @@ class SctvActivity : Activity() {
      *  verso una pagina che non ha ancora il dispatcher attivo. */
     @Volatile private var booted = false
 
+    /** Profilo SCtv corrente (dati scoped: My List, CW, record player).
+     *  Scritto dal bridge setActiveProfile (binder thread) e letto dalle
+     *  coroutine: volatile, assegnazione SINCRONA sul binder così bootReady —
+     *  chiamato subito dopo dal JS — vede già il profilo giusto. */
+    @Volatile private var currentProfileId = DEFAULT_PROFILE_ID
+
     /** Ultimo host pushato al JS: evita domainChanged ridondanti. */
     @Volatile private var pushedHost = ""
 
@@ -135,7 +143,7 @@ class SctvActivity : Activity() {
             onLoadDetail = { titleId, req ->
                 scope.launch {
                     val item = withRecovery("loadDetail($titleId)") { dom ->
-                        repo.detailPayload(titleId, dom)
+                        repo.detailPayload(titleId, dom, currentProfileId)
                     }
                     if (item != null) {
                         push("titleDetail", JSONObject().put("item", item), req)
@@ -153,10 +161,28 @@ class SctvActivity : Activity() {
                     else pushError("Ricerca non riuscita: controlla la connessione", req)
                 }
             },
+            onLoadCategories = { req ->
+                scope.launch {
+                    val payload = withRecovery("loadCategories") { dom ->
+                        repo.categoriesPayload(dom)
+                    }
+                    if (payload != null) push("categories", payload, req)
+                    else pushError("Categorie non disponibili: controlla la connessione", req)
+                }
+            },
+            onLoadGenre = { genreId, req ->
+                scope.launch {
+                    val payload = withRecovery("loadGenre($genreId)") { dom ->
+                        repo.genrePayload(genreId, dom)
+                    }
+                    if (payload != null) push("genreData", payload, req)
+                    else pushError("Genere non disponibile: controlla la connessione", req)
+                }
+            },
             onLoadDetailSeason = { titleId, season, req ->
                 scope.launch {
                     val result = withRecovery("loadDetailSeason($titleId,S$season)") { dom ->
-                        repo.seasonEpisodes(titleId, season, dom)?.let { (s, eps) ->
+                        repo.seasonEpisodes(titleId, season, dom, currentProfileId)?.let { (s, eps) ->
                             JSONObject().put("season", s).put("episodes", eps)
                         }
                     }
@@ -167,7 +193,7 @@ class SctvActivity : Activity() {
             onToggleMyList = { titleId ->
                 scope.launch {
                     val result = withRecovery("toggleMyList($titleId)") { dom ->
-                        repo.toggleMyList(titleId, dom)
+                        repo.toggleMyList(titleId, dom, currentProfileId)
                     }
                     if (result != null) {
                         push("myListChanged", result)
@@ -178,7 +204,9 @@ class SctvActivity : Activity() {
             },
             onGetContinueWatching = {
                 scope.launch {
-                    val cw = withContext(Dispatchers.IO) { repo.continueWatchingJson() }
+                    val cw = withContext(Dispatchers.IO) {
+                        repo.continueWatchingJson(currentProfileId)
+                    }
                     push("progressChanged", JSONObject().put("continueWatching", cw))
                 }
             },
@@ -190,7 +218,8 @@ class SctvActivity : Activity() {
             },
             onOpenSettings = { scope.launch { openNativeSettings() } },
             onOpenSiteInterface = { scope.launch { switchToSite() } },
-            onRetryConnection = { scope.launch { pushBootPayload() } }
+            onRetryConnection = { scope.launch { pushBootPayload() } },
+            onSetActiveProfile = { pid -> onProfileSelected(pid) }
         )
         web.addJavascriptInterface(bridge, "AndroidJs")
         web.webChromeClient = WebChromeClient()
@@ -213,6 +242,39 @@ class SctvActivity : Activity() {
                 if (booted) {
                     push("domainChanged", JSONObject().put("host", host))
                 }
+            }
+        }
+    }
+
+    // -- Profili (dati scoped per profilo SCtv) -----------------------------------
+
+    /** Bridge setActiveProfile: gate JS al select del profilo, oppure boot JS
+     *  che ripristina il profilo salvato in localStorage PRIMA di bootReady.
+     *
+     *  Il salvataggio dell'id è SINCRONO sul binder thread (volatile): il
+     *  bootReady che segue — sullo stesso thread — vede già il profilo
+     *  giusto e il primo pushBootPayload è scoped senza corse.
+     *
+     *  Se il boot è già stato pushato e il profilo È CAMBIATO, ripusha i
+     *  dati scoped: progressChanged prima (rail "Continua a guardare") e
+     *  myListChanged dopo (re-render della vista corrente col My List nuovo,
+     *  senza rubare il fuoco). */
+    private fun onProfileSelected(profileId: String) {
+        val safe = sanitizeProfileId(profileId)
+        // "p-default" (gate JS) coincide col bucket "default" del nativo:
+        // dati legacy pre-profili e modalità sito restano visibili nel
+        // profilo Predefinito (zero perdita all'aggiornamento).
+        val normalized = if (safe == "p-default") DEFAULT_PROFILE_ID else safe
+        val changed = normalized != currentProfileId
+        currentProfileId = normalized
+        if (booted && changed) {
+            scope.launch {
+                val cw = withContext(Dispatchers.IO) {
+                    repo.continueWatchingJson(normalized)
+                }
+                push("progressChanged", JSONObject().put("continueWatching", cw))
+                val ids = withContext(Dispatchers.IO) { repo.myListIds(normalized) }
+                push("myListChanged", JSONObject().put("ids", ids))
             }
         }
     }
@@ -259,7 +321,9 @@ class SctvActivity : Activity() {
     private fun pushBootPayload() {
         scope.launch {
             val uiMode = SettingsStore.getUiMode(this@SctvActivity)
-            val payload = withRecovery("boot") { dom -> repo.bootPayload(dom, uiMode) }
+            val payload = withRecovery("boot") { dom ->
+                repo.bootPayload(dom, uiMode, currentProfileId)
+            }
             if (payload != null) {
                 booted = true
                 push("boot", payload)
@@ -275,7 +339,7 @@ class SctvActivity : Activity() {
     private fun pushBootFallback(uiMode: String) {
         scope.launch {
             val snap = withContext(Dispatchers.IO) {
-                repo.readSnapshot(domainRepo.currentDomain(), uiMode)
+                repo.readSnapshot(domainRepo.currentDomain(), uiMode, currentProfileId)
             }
             if (snap != null) {
                 booted = true
@@ -316,7 +380,9 @@ class SctvActivity : Activity() {
             return
         }
         scope.launch {
-            val item = withRecovery("play($titleId)") { dom -> repo.detailPayload(titleId, dom) }
+            val item = withRecovery("play($titleId)") { dom ->
+                repo.detailPayload(titleId, dom, currentProfileId)
+            }
             if (item == null) {
                 pushError("Titolo non raggiungibile: controlla la connessione")
                 return@launch
@@ -332,7 +398,9 @@ class SctvActivity : Activity() {
                 episodeId = episodeIdIn(episodesArr, season, episode)
                 if (episodeId == 0 && season > 0) {
                     val eps = withContext(Dispatchers.IO) {
-                        runCatching { repo.seasonEpisodes(titleId, season, domain) }.getOrNull()
+                        runCatching {
+                            repo.seasonEpisodes(titleId, season, domain, currentProfileId)
+                        }.getOrNull()
                     }?.second
                     episodeId = episodeIdIn(eps, season, episode)
                     if (episodeId > 0) episodesArr = eps
@@ -381,8 +449,9 @@ class SctvActivity : Activity() {
             // su serie si confrontano stagione e episodio (un progresso di
             // S1E3 non deve ripartire dentro S2E3 col medesimo numero); su
             // film season/episode valgono 1 (i null del record diventano 1).
+            // Progresso SCOPATO al profilo corrente.
             val p = withContext(Dispatchers.IO) {
-                ProgressStore.get(this@SctvActivity).get(titleId)
+                ProgressStore.get(this@SctvActivity).get(titleId, currentProfileId)
             }
             val startPositionSec = if (p != null && p.isResumeable() &&
                 (p.episode ?: 1) == episode && (p.season ?: 1) == season.coerceAtLeast(1)
@@ -431,6 +500,7 @@ class SctvActivity : Activity() {
                     putExtra("nextEpisodeSeason", nextEpisodeSeason)
                     putExtra("nextEpisodeNumber", nextEpisodeNumber)
                     putExtra("poster", poster)
+                    putExtra("profileId", currentProfileId)   // scope record player
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
                 REQ_PLAYER
@@ -575,10 +645,13 @@ class SctvActivity : Activity() {
         // Mantieni il dominio fresco anche qui (la modalità sito lo fa in
         // onResume): il collector pusha domainChanged se cambia.
         scope.launch { runCatching { domainRepo.refreshOnline() } }
-        // Rail "Continua a guardare" aggiornata a ogni ritorno dal player.
+        // Rail "Continua a guardare" aggiornata a ogni ritorno dal player
+        // (dati del profilo corrente).
         if (booted) {
             scope.launch {
-                val cw = withContext(Dispatchers.IO) { repo.continueWatchingJson() }
+                val cw = withContext(Dispatchers.IO) {
+                    repo.continueWatchingJson(currentProfileId)
+                }
                 push("progressChanged", JSONObject().put("continueWatching", cw))
             }
         }

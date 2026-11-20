@@ -2,6 +2,17 @@ package com.scviewer.fire.data
 
 import kotlinx.serialization.Serializable
 
+/** Profilo di default: tutte le chiamate store SENZA profileId esplicito
+ *  (modalità sito, codice legacy) finiscono qui. È anche il bucket di
+ *  destinazione della migrazione dei dati pre-profili. */
+const val DEFAULT_PROFILE_ID = "default"
+
+/** Sanitizza un id profilo per l'uso come chiave di bucket negli store.
+ *  Gli id reali sono "p-<timestamp>" ma arrivano dal JS: difesa minima. */
+internal fun sanitizeProfileId(raw: String?): String =
+    raw?.trim()?.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+        ?.takeIf { it.isNotBlank() } ?: DEFAULT_PROFILE_ID
+
 /** Compact page state parsed from the site's Inertia [data-page] attribute
  *  (reported by page_inject.js on every navigation). */
 @Serializable

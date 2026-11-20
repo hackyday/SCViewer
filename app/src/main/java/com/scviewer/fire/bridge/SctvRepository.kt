@@ -2,12 +2,14 @@ package com.scviewer.fire.bridge
 
 import android.content.Context
 import android.util.Log
+import com.scviewer.fire.data.DEFAULT_PROFILE_ID
 import com.scviewer.fire.data.FavoritesStore
 import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SiteCatalog
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.TvTitle
+import com.scviewer.fire.data.sanitizeProfileId
 import com.scviewer.fire.data.WatchProgress
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,6 +30,11 @@ import java.io.File
  *  - [detailPayload] /
  *    [seasonEpisodes] = TitleDetailSource: LRU (max 20) + partial reload;
  *  - [continueWatchingJson] / [myListIds] / [toggleMyList] = LocalSources.
+ *
+ * SCOPO PROFILI: i metodi dati che leggono/scrivono store locali (My List,
+ * Continua a guardare) e il boot che li incorpora prendono tutti un
+ * `profileId` (default "default" — modalità sito e dati legacy). Il
+ * snapshot offline è per profilo.
  *
  * SLUG (verificato con curl 2026-11-20): `/it/titles/<id>` SENZA slug → 404,
  * ma `/it/titles/<id>-<qualsiasi-slug>` → 200: la route del sito risolve per
@@ -152,9 +159,10 @@ class SctvRepository(private val context: Context) {
         return rows
     }
 
-    /** Payload dell'evento boot: home + serie + film, hero, righe, CW e My List.
+    /** Payload dell'evento boot: home + serie + film, hero, righe, CW e My List
+     *  (CW e My List SCOPATI al profilo [profileId]).
      *  Null se la home non è raggiungibile (l'Activity gestisce recovery). */
-    fun bootPayload(domain: String, uiMode: String): JSONObject? {
+    fun bootPayload(domain: String, uiMode: String, profileId: String = DEFAULT_PROFILE_ID): JSONObject? {
         val home = getPage("/", domain)
             ?: return null
         val tv = getPage("/it/tv-shows", domain)
@@ -162,7 +170,7 @@ class SctvRepository(private val context: Context) {
 
         val catalog = LinkedHashMap<String, JSONObject>()
         val homeRows = JSONArray()
-        val cw = continueWatchingJson()
+        val cw = continueWatchingJson(profileId)
 
         // Rail "Continua a guardare" sempre in cima alla home.
         if (cw.length() > 0) {
@@ -231,7 +239,7 @@ class SctvRepository(private val context: Context) {
             .put("bridgeVersion", 1)
             .put("uiMode", uiMode)
             .put("domainHost", hostOf(domain))
-            .put("myList", myListIds())
+            .put("myList", myListIds(profileId))
             .put("continueWatching", cw)
             .put("catalog", catalogArr)
             .put("heroTitleId", heroTitleId)
@@ -245,7 +253,7 @@ class SctvRepository(private val context: Context) {
         // La preferenza audio vive SOLO in localStorage lato JS (fix TV #15):
         // il nativo non ha uno store per essa e un valore fisso la resetterebbe
         // a ogni boot, quindi il campo settings non viene inviato.
-        writeSnapshot(payload)
+        writeSnapshot(payload, profileId)
         return payload
     }
 
@@ -304,11 +312,17 @@ class SctvRepository(private val context: Context) {
 
     /** Dettaglio completo (item CATALOG con episodi della stagione di default).
      *  Cache LRU max 20; miss → fetch diretto `/it/titles/<id>-<slug>` con lo
-     *  slug risolto dai cache locali (vedi KDoc della classe). */
-    fun detailPayload(titleId: Int, domain: String): JSONObject? {
+     *  slug risolto dai cache locali (vedi KDoc della classe). Il [profileId]
+     *  serve SOLO alla risoluzione slug dai store locali (cache di rete
+     *  condivisa tra i profili: il catalogo non è un dato per-profilo). */
+    fun detailPayload(
+        titleId: Int,
+        domain: String,
+        profileId: String = DEFAULT_PROFILE_ID
+    ): JSONObject? {
         synchronized(detailCache) { detailCache[titleId] }?.let { return it.item }
 
-        val slug = resolveSlug(titleId) ?: "t"
+        val slug = resolveSlug(titleId, profileId) ?: "t"
         val path = "/it/titles/$titleId-$slug"
         throttle()
         val env = SiteCatalog.fetchEnvelope(path, domain) ?: return null
@@ -351,13 +365,18 @@ class SctvRepository(private val context: Context) {
      *  Su 409 (versione scaduta) si ri-fetcha la busta per aggiornare la
      *  version e si riprova UNA volta; se arriva HTML intero viene riparsato
      *  il data-page (gestito dentro [SiteCatalog.fetchSeasonPartial]). */
-    fun seasonEpisodes(titleId: Int, season: Int, domain: String): Pair<Int, JSONArray>? {
+    fun seasonEpisodes(
+        titleId: Int,
+        season: Int,
+        domain: String,
+        profileId: String = DEFAULT_PROFILE_ID
+    ): Pair<Int, JSONArray>? {
         val entry = synchronized(detailCache) { detailCache[titleId] }
         entry?.seasons?.get(season)?.let { return season to it }
 
         // Senza versione Inertia il partial risponde 409 a colpo sicuro:
         // prima si riporta il dettaglio in cache (aggiorna anche slug/version).
-        val freshEntry = entry ?: detailPayload(titleId, domain)?.let {
+        val freshEntry = entry ?: detailPayload(titleId, domain, profileId)?.let {
             synchronized(detailCache) { detailCache[titleId] }
         } ?: return null
 
@@ -396,11 +415,11 @@ class SctvRepository(private val context: Context) {
     // -- LocalSources -----------------------------------------------------------------
 
     /** "Continua a guardare" dal ProgressStore (scritto da ENTRAMBE le
-     *  modalità): cw-item del contratto §2, poster da ProgressStore o
-     *  [PosterCache]. */
-    fun continueWatchingJson(): JSONArray {
+     *  modalità), SCOPATO al profilo [profileId]: cw-item del contratto §2,
+     *  poster da ProgressStore o [PosterCache]. */
+    fun continueWatchingJson(profileId: String = DEFAULT_PROFILE_ID): JSONArray {
         val cw = JSONArray()
-        for (p in ProgressStore.get(context).resumeable()) cw.put(cwJson(p))
+        for (p in ProgressStore.get(context).resumeable(profileId)) cw.put(cwJson(p))
         return cw
     }
 
@@ -433,32 +452,38 @@ class SctvRepository(private val context: Context) {
             .put("url", p.url)
     }
 
-    /** Ids My List ("site-<id>") dai preferiti salvati (url → titleId). */
-    fun myListIds(): JSONArray {
+    /** Ids My List ("site-<id>") dai preferiti salvati (url → titleId),
+     *  SCOPATI al profilo [profileId]. */
+    fun myListIds(profileId: String = DEFAULT_PROFILE_ID): JSONArray {
         val ids = JSONArray()
-        for (f in FavoritesStore.get(context).all()) {
+        for (f in FavoritesStore.get(context).all(profileId)) {
             val id = SiteUrl.titleIdOf(f.url) ?: continue
             ids.put("site-$id")
         }
         return ids
     }
 
-    /** Toggle My List ↔ FavoritesStore. Ritorna {ids:[...]} aggiornato, o
-     *  null se il titolo è ignoto e nemmeno la fetch di dettaglio risponde. */
-    fun toggleMyList(titleId: Int, domain: String): JSONObject? {
+    /** Toggle My List ↔ FavoritesStore (bucket del profilo [profileId]).
+     *  Ritorna {ids:[...]} aggiornato, o null se il titolo è ignoto e
+     *  nemmeno la fetch di dettaglio risponde. */
+    fun toggleMyList(
+        titleId: Int,
+        domain: String,
+        profileId: String = DEFAULT_PROFILE_ID
+    ): JSONObject? {
         val favorites = FavoritesStore.get(context)
-        val existing = favorites.all().firstOrNull {
+        val existing = favorites.all(profileId).firstOrNull {
             SiteUrl.titleIdOf(it.url) == titleId
         }
         if (existing != null) {
-            favorites.remove(existing.url)
+            favorites.remove(existing.url, profileId)
         } else {
-            val t = knownTitles[titleId] ?: detailPayload(titleId, domain)?.let {
+            val t = knownTitles[titleId] ?: detailPayload(titleId, domain, profileId)?.let {
                 knownTitles[titleId]
             } ?: return null
-            favorites.add(t.url, t.name, t.posterUrl)
+            favorites.add(t.url, t.name, t.posterUrl, profileId)
         }
-        return JSONObject().put("ids", myListIds())
+        return JSONObject().put("ids", myListIds(profileId))
     }
 
     /** Ricerca server: /it/search?q= → Titles/Browse titles[] (60, pertinenza). */
@@ -475,6 +500,85 @@ class SctvRepository(private val context: Context) {
             .put("catalog", catalog)
     }
 
+    // -- CategoriesSource (tab Categorie — dati reali dall'archivio) ----------------
+
+    /** Titoli di una pagina Browse (props.titles): può essere [ ... ] oppure
+     *  { data: [ ... ] } (paginato, Laravel ?page=N). */
+    private fun browseTitles(props: JSONObject): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        when (val v = props.opt("titles")) {
+            is org.json.JSONArray -> {
+                for (i in 0 until v.length()) v.optJSONObject(i)?.let { out.add(it) }
+            }
+            is JSONObject -> v.optJSONArray("data")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { out.add(it) }
+            }
+        }
+        return out
+    }
+
+    /** Titoli Browse → item CATALOG (dedup per id, memorizzati in knownTitles
+     *  per toggleMyList/risoluzione slug). Il merge lato JS fa l'upsert nel
+     *  CATALOG come per search. */
+    private fun browseTitlesToCatalog(props: JSONObject, domain: String): JSONArray {
+        val catalog = JSONArray()
+        val seen = HashSet<Int>()
+        for (raw in browseTitles(props)) {
+            val t = SiteCatalog.parseTitle(raw, props, domain) ?: continue
+            if (!seen.add(t.id)) continue
+            rememberTitle(t)
+            catalog.put(itemJson(t))
+        }
+        return catalog
+    }
+
+    /** Tab Categorie (dati REALI — i generi non esistono nelle card della
+     *  home, solo nel dettaglio): GET /it/archive → props.genres[] (26, campi
+     *  id/name) + props.titles (le prime 60) per il genere "All".
+     *
+     *  L'archivio è una pagina Inertia (component Titles/Browse): la busta
+     *  arriva nel data-page dell'HTML shell (verificato con curl 2026-11-21)
+     *  e [SiteCatalog.fetchProps] la parsa come sulle altre pagine. La
+     *  variante Accept: application/json della stessa route risponde invece
+     *  col paginatore Laravel puro (senza generi) — non usata qui.
+     *
+     *  Risposta evento `categories`: {req, genres:[{id,name}], catalog:[item]}.
+     *  Null = sito irraggiungibile (l'Activity pusha error). */
+    fun categoriesPayload(domain: String): JSONObject? {
+        throttle()
+        val props = SiteCatalog.fetchProps("/it/archive?lang=it", domain) ?: return null
+        val genres = JSONArray()
+        val rawGenres = props.optJSONArray("genres")
+        if (rawGenres != null) {
+            for (i in 0 until rawGenres.length()) {
+                val g = rawGenres.optJSONObject(i) ?: continue
+                val id = g.optInt("id", 0)
+                val name = g.optString("name").takeIf { it.isNotBlank() } ?: continue
+                if (id <= 0 || g.optInt("hidden", 0) != 0) continue
+                genres.put(JSONObject().put("id", id).put("name", name))
+            }
+        }
+        return JSONObject()
+            .put("genres", genres)
+            .put("catalog", browseTitlesToCatalog(props, domain))
+    }
+
+    /** Filtro genere dell'archivio (pagina 1 basta per v1): GET
+     *  /it/archive?lang=it&genre[]=<id>&page=1 → Titles/Browse → props.titles
+     *  (60 titoli, paginazione Laravel ?page=N).
+     *
+     *  Risposta evento `genreData`: {req, genreId, catalog:[item]}. */
+    fun genrePayload(genreId: Int, domain: String): JSONObject? {
+        // genre[] pre-encodato (%5B%5D): lato Laravel è un parametro array.
+        throttle()
+        val props = SiteCatalog.fetchProps(
+            "/it/archive?lang=it&genre%5B%5D=$genreId&page=1", domain
+        ) ?: return null
+        return JSONObject()
+            .put("genreId", genreId)
+            .put("catalog", browseTitlesToCatalog(props, domain))
+    }
+
     // -- Helper interni -----------------------------------------------------------------
 
     private fun rememberTitle(t: TvTitle) {
@@ -487,18 +591,20 @@ class SctvRepository(private val context: Context) {
         }
     }
 
-    /** Risoluzione slug: LRU dettaglio → titoli noti → preferiti → progress.
+    /** Risoluzione slug: LRU dettaglio → titoli noti → preferiti → progress
+     *  (preferiti/progress del profilo [profileId]; la cache di rete è
+     *  condivisa — il catalogo non è un dato per-profilo).
      *  Null = usa il placeholder (il sito risolve per id, vedi KDoc classe). */
-    private fun resolveSlug(titleId: Int): String? {
+    private fun resolveSlug(titleId: Int, profileId: String = DEFAULT_PROFILE_ID): String? {
         synchronized(detailCache) { detailCache[titleId] }?.slug?.takeIf { it.isNotBlank() }
             ?.let { return it }
         synchronized(knownTitles) { knownTitles[titleId] }?.slug?.takeIf { it.isNotBlank() }
             ?.let { return it }
-        for (f in FavoritesStore.get(context).all()) {
+        for (f in FavoritesStore.get(context).all(profileId)) {
             val m = SLUG_REGEX.find(f.url) ?: continue
             if (m.groupValues[1].toIntOrNull() == titleId) return m.groupValues[2]
         }
-        ProgressStore.get(context).get(titleId)?.slug?.takeIf { it.isNotBlank() }
+        ProgressStore.get(context).get(titleId, profileId)?.slug?.takeIf { it.isNotBlank() }
             ?.let { return it }
         return null
     }
@@ -574,19 +680,30 @@ class SctvRepository(private val context: Context) {
 
     // -- Snapshot offline -----------------------------------------------------------------
 
+    /** Snapshot PER PROFILO: il profilo "default" conserva il file storico
+     *  (gli utenti esistenti ritrovano il proprio fallback offline), gli
+     *  altri profili hanno un file dedicato. */
+    private fun snapshotFile(profileId: String): File {
+        val safe = sanitizeProfileId(profileId)
+        val name = if (safe == DEFAULT_PROFILE_ID) SNAPSHOT_FILE
+        else SNAPSHOT_FILE.removeSuffix(".json") + "_$safe.json"
+        return File(context.filesDir, name)
+    }
+
     /** Ultimo boot riuscito, su disco: alla prima apertura offline l'UI resta
      *  utilizzabile (evento boot + toast errore) invece della sola error-card. */
-    private fun writeSnapshot(payload: JSONObject) {
+    private fun writeSnapshot(payload: JSONObject, profileId: String = DEFAULT_PROFILE_ID) {
         runCatching {
-            File(context.filesDir, SNAPSHOT_FILE).writeText(payload.toString())
+            snapshotFile(profileId).writeText(payload.toString())
         }.onFailure { Log.w(TAG, "snapshot write failed", it) }
     }
 
-    /** Snapshot dell'ultimo boot riuscito (aggiornando dominio/modalità al
-     *  valore corrente), o null se mai scritto. */
-    fun readSnapshot(domain: String, uiMode: String): JSONObject? {
+    /** Snapshot dell'ultimo boot riuscito del PROFILO [profileId]
+     *  (aggiornando dominio/modalità al valore corrente), o null se mai
+     *  scritto. */
+    fun readSnapshot(domain: String, uiMode: String, profileId: String = DEFAULT_PROFILE_ID): JSONObject? {
         return runCatching {
-            val file = File(context.filesDir, SNAPSHOT_FILE)
+            val file = snapshotFile(profileId)
             if (!file.exists()) return@runCatching null
             val snap = JSONObject(file.readText())
             snap.put("domainHost", hostOf(domain))

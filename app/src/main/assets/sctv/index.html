@@ -134,24 +134,29 @@
   <!-- Fix TV #2: TUTTI i controlli sono tv-focusable e il nome si scrive con
        la mini-tastiera a schermo (l'IME di sistema su TV è inaffidabile). -->
   <div id="profile-editor-modal" class="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md hidden items-center justify-center p-4">
-    <div class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl">
-      <h2 id="profile-editor-title" class="text-2xl font-bold mb-1">Add Profile</h2>
-      <p class="text-sm text-zinc-400 mb-6">Create a dedicated profile with personalized watchlists.</p>
+    <!-- Fix altezze piccole (stick ~540px visibili): come #detail-modal-card il
+         contenuto ha max-h + overflow-y-auto (no-scrollbar) e le spaziature
+         sono compatte nella variante base — il fondo della card (Salvare/
+         Eliminare) resta raggiungibile col D-pad e, se serve, scrollIntoView
+         di setTVFocus porta gli elementi in fondo a visibilità. -->
+    <div class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto no-scrollbar p-5 sm:p-6 shadow-2xl">
+      <h2 id="profile-editor-title" class="text-xl sm:text-2xl font-bold mb-1">Add Profile</h2>
+      <p class="text-xs sm:text-sm text-zinc-400 mb-3 sm:mb-5">Create a dedicated profile with personalized watchlists.</p>
 
-      <div class="space-y-5">
+      <div class="space-y-3 sm:space-y-5">
         <div>
-          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Profile Name</label>
-          <input id="profile-name-input" type="text" maxlength="18" readonly placeholder="Use the on-screen keyboard" class="w-full bg-[#222226] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium focus:outline-none focus:border-white transition" />
-          <div id="profile-kbd" class="mt-3"></div>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-1.5 sm:mb-2">Profile Name</label>
+          <input id="profile-name-input" type="text" maxlength="18" readonly placeholder="Use the on-screen keyboard" class="w-full bg-[#222226] border border-white/10 rounded-xl px-4 py-2.5 sm:py-3 text-white text-sm font-medium focus:outline-none focus:border-white transition" />
+          <div id="profile-kbd" class="mt-2 sm:mt-3"></div>
         </div>
 
         <div>
-          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-2">Avatar Style</label>
+          <label class="block text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-1.5 sm:mb-2">Avatar Style</label>
           <div id="avatar-color-picker" class="grid grid-cols-5 gap-3"></div>
         </div>
 
         <!-- Fix TV #2: era una <label> con checkbox (inaccessible al D-pad). -->
-        <button type="button" id="profile-kids-toggle" onclick="toggleKidsCheckbox()" class="tv-focusable flex items-center justify-between bg-[#222226] border border-white/5 p-4 rounded-xl w-full text-left transition">
+        <button type="button" id="profile-kids-toggle" onclick="toggleKidsCheckbox()" class="tv-focusable flex items-center justify-between bg-[#222226] border border-white/5 p-3 sm:p-4 rounded-xl w-full text-left transition">
           <div>
             <div class="font-semibold text-sm text-white">Kids Profile</div>
             <div class="text-xs text-zinc-400">Restrict catalog to PG and family titles</div>
@@ -160,14 +165,14 @@
         </button>
       </div>
 
-      <div class="flex items-center justify-end gap-3 mt-8">
-        <button id="delete-profile-btn" onclick="deleteEditingProfile()" class="tv-focusable hidden mr-auto px-4 py-2.5 rounded-xl bg-red-950/60 border border-red-800/40 text-red-400 hover:bg-red-900/60 text-xs font-bold uppercase tracking-wider transition">
+      <div class="flex items-center justify-end gap-3 mt-4 sm:mt-6">
+        <button id="delete-profile-btn" onclick="deleteEditingProfile()" class="tv-focusable hidden mr-auto px-4 py-2 sm:py-2.5 rounded-xl bg-red-950/60 border border-red-800/40 text-red-400 hover:bg-red-900/60 text-xs font-bold uppercase tracking-wider transition">
           Delete
         </button>
-        <button onclick="closeProfileEditor()" class="tv-focusable px-5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-sm font-semibold transition">
+        <button onclick="closeProfileEditor()" class="tv-focusable px-5 py-2 sm:py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-sm font-semibold transition">
           Cancel
         </button>
-        <button onclick="saveProfileEditor()" class="tv-focusable px-6 py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white text-sm font-bold transition">
+        <button onclick="saveProfileEditor()" class="tv-focusable px-6 py-2 sm:py-2.5 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white text-sm font-bold transition">
           Save
         </button>
       </div>
@@ -545,6 +550,9 @@
             if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
             state.rows = d.rows || {};
             if (Array.isArray(d.myList)) state.myList = d.myList.slice();
+            // Lista CW COMPLETA dal nativo (per il profilo corrente): reset
+            // della mappa prima del merge — mai voci di profili precedenti.
+            state.watchProgress = {};
             applyContinueWatching(d.continueWatching);
             if (d.heroTitleId) state.heroTitleId = d.heroTitleId;
             if (d.settings && typeof d.settings.uiAudio === 'boolean') {
@@ -615,6 +623,10 @@
             bootReceived = true;
             hideViewLoading();
             if (state.activeTab === 'search') {
+              // Risposta non più attesa (reset o query nuova in volo): scartata.
+              if (ev.req == null || ev.req !== state.pendingSearchReq) break;
+              state.pendingSearchReq = null;
+              state.searchPending = false;
               if (d.query != null) state.searchQuery = d.query;
               const inp = document.getElementById('tv-search-input');
               if (inp && inp.value !== state.searchQuery) inp.value = state.searchQuery;
@@ -627,8 +639,65 @@
               });
               state.remoteResults = { query: state.searchQuery, ids };
               const wrap = document.getElementById('search-results-wrap');
-              if (wrap) wrap.innerHTML = renderSearchResultsInner();
+              if (wrap) {
+                wrap.innerHTML = renderSearchResultsInner();
+                // Se il fuoco era su una card della griglia sostituita si
+                // ripristina sul primo risultato; resta sul tasto tastiera.
+                refreshFocusableElements();
+                if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
+                  const firstCard = wrap.querySelector('.tv-focusable');
+                  if (firstCard) setTVFocus(firstCard);
+                }
+              }
             }
+            break;
+          }
+
+          case 'categories': {
+            // FIX categorie (dati reali): generi dell'archivio (/it/archive →
+            // props.genres) + griglia delle prime 60 (genere "All"). I titoli
+            // tornano nel CATALOG con upsert, come per search. Lo stato viene
+            // memorizzato anche se l'utente è su un altro tab (il push non
+            // deve ri-renderizzare la vista corrente né rubare il fuoco).
+            bootReceived = true;
+            hideViewLoading();
+            if (state.pendingCategoriesReq != null && ev.req !== state.pendingCategoriesReq) break;
+            state.pendingCategoriesReq = null;
+            state.categoriesLoading = false;
+            state.categoriesGenres = Array.isArray(d.genres) ? d.genres : [];
+            const catIds = [];
+            (Array.isArray(d.catalog) ? d.catalog : []).forEach(it => {
+              const merged = upsertCatalogItem(it);
+              if (merged) catIds.push(merged.id);
+            });
+            state.categoriesIds = catIds;
+            state.selectedGenreId = 'all';
+            state.genreIds = catIds;
+            if (state.activeTab === 'categories') {
+              renderCurrentView(false);
+              // Fuoco sul primo chip (prima del payload restava sulla sidebar).
+              const chip = document.querySelector('#categories-chips .tv-focusable');
+              if (chip) setTVFocus(chip);
+            }
+            break;
+          }
+
+          case 'genreData': {
+            // FIX categorie: risposta del filtro genere — aggiornamento MIRATO
+            // della sola griglia (#categories-grid-wrap): i chip restano in
+            // pagina e il fuoco resta dove è (niente renderCurrentView).
+            if (state.activeTab !== 'categories') break;
+            if (state.pendingGenreReq == null || ev.req !== state.pendingGenreReq) break;
+            state.pendingGenreReq = null;
+            state.genreLoading = false;
+            if (d.genreId != null) state.selectedGenreId = String(d.genreId);
+            const gIds = [];
+            (Array.isArray(d.catalog) ? d.catalog : []).forEach(it => {
+              const merged = upsertCatalogItem(it);
+              if (merged) gIds.push(merged.id);
+            });
+            state.genreIds = gIds;
+            updateCategoriesGrid();
             break;
           }
 
@@ -644,7 +713,12 @@
           case 'progressChanged': {
             // Fix TV #13: aggiornamento MIRATO della rail #row-continue,
             // MAI renderCurrentView integrale (il fuoco resta dove è).
+            // Lista COMPLETA dal nativo (per il profilo corrente): reset
+            // della mappa prima del merge, così al cambio profilo le voci
+            // del profilo precedente non sopravvivono.
+            state.watchProgress = {};
             applyContinueWatching(d.continueWatching);
+            syncContinueRow(d.continueWatching || []);
             renderContinueRail();
             break;
           }
@@ -664,6 +738,30 @@
               renderDetailModalContent();
             }
             if (pendingDetail && ev.req === pendingDetail.req) pendingDetail = null;
+            // Ricerca server fallita: via lo stato "Ricerca in corso…".
+            if (state.pendingSearchReq != null && ev.req === state.pendingSearchReq) {
+              state.pendingSearchReq = null;
+              state.searchPending = false;
+              if (state.activeTab === 'search') updateSearchView();
+            }
+            // Categorie: genera il vuoto → il render mostra l'empty-state col
+            // bottone Riprova (retryLoadCategories).
+            if (state.pendingCategoriesReq != null && ev.req === state.pendingCategoriesReq) {
+              state.pendingCategoriesReq = null;
+              state.categoriesLoading = false;
+              if (state.activeTab === 'categories') {
+                renderCurrentView(false);
+                const retry = focusableList.find(el => el.closest('#view-container'));
+                if (retry) setTVFocus(retry);
+              }
+            }
+            // Filtro genere fallito: la griglia torna al suo stato (vuota o
+            // "Nessun titolo"), i chip restano navigabili.
+            if (state.pendingGenreReq != null && ev.req === state.pendingGenreReq) {
+              state.pendingGenreReq = null;
+              state.genreLoading = false;
+              if (state.activeTab === 'categories') updateCategoriesGrid();
+            }
             break;
           }
         }
@@ -712,6 +810,12 @@
      *  niente dati finti come fallback. */
     function bootReady() {
       if (Native && Native.bootReady) {
+        // Profilo corrente (localStorage) AL NATIVO PRIMA del boot: anche il
+        // PRIMO payload è scoped (My List / Continua a guardare del profilo).
+        try {
+          const saved = localStorage.getItem(PROFILE_CURRENT_KEY);
+          if (saved && Native.setActiveProfile) Native.setActiveProfile(saved);
+        } catch (e) {}
         Native.bootReady();
         setTimeout(() => {
           if (!bootReceived) {
@@ -771,8 +875,24 @@
       selectedPresetIdx: 0,
 
       activeTab: 'home',
-      selectedCategory: 'All',
       searchQuery: '',
+      // Ricerca server in volo: tra il debounce e la risposta `searchResults`
+      // la griglia mostra lo stato "Ricerca in corso…" (req per scartare le
+      // risposte superate dall'utente che continua a scrivere).
+      searchPending: false,
+      pendingSearchReq: null,
+
+      // Tab Categorie (dati REALI dall'archivio): generi e griglia "All"
+      // arrivano dall'evento `categories` (loadCategories), il filtro genere
+      // dall'evento `genreData` (loadGenre, aggiornamento MIRATO della griglia).
+      categoriesGenres: null,     // null = mai caricato; [{id,name}] dopo il load
+      categoriesIds: [],          // ids CATALOG delle prime 60 (genere "All")
+      categoriesLoading: false,
+      pendingCategoriesReq: null,
+      selectedGenreId: 'all',     // 'all' | id numerico del genere (stringa)
+      genreIds: [],               // ids CATALOG del genere selezionato
+      genreLoading: false,
+      pendingGenreReq: null,
 
       myList: [],
       ratings: {},
@@ -815,6 +935,33 @@
 
     function persistCurrentProfileId(id) {
       try { localStorage.setItem(PROFILE_CURRENT_KEY, id); } catch (e) {}
+    }
+
+    // Stato JS PER-PROFILO (rating/reminder): chiavi localStorage con
+    // suffisso profilo — caricate al select del profilo, salvate a ogni
+    // modifica. My List e "Continua a guardare" vivono invece negli store
+    // NATIVI scopati (AndroidJs.setActiveProfile → push myListChanged /
+    // progressChanged del profilo scelto).
+    function currentProfileKey(base) {
+      const id = state.currentProfile ? state.currentProfile.id : 'default';
+      return base + '_' + String(id).replace(/[^A-Za-z0-9_\-]/g, '');
+    }
+    function loadProfileScopedState(profileId) {
+      const safe = String(profileId || '').replace(/[^A-Za-z0-9_\-]/g, '');
+      try {
+        const r = localStorage.getItem('sctv.ratings_' + safe);
+        state.ratings = r ? (JSON.parse(r) || {}) : {};
+      } catch (e) { state.ratings = {}; }
+      try {
+        const m = localStorage.getItem('sctv.reminders_' + safe);
+        state.reminders = m ? (JSON.parse(m) || []) : [];
+      } catch (e) { state.reminders = []; }
+    }
+    function persistRatings() {
+      try { localStorage.setItem(currentProfileKey('sctv.ratings'), JSON.stringify(state.ratings || {})); } catch (e) {}
+    }
+    function persistReminders() {
+      try { localStorage.setItem(currentProfileKey('sctv.reminders'), JSON.stringify(state.reminders || [])); } catch (e) {}
     }
 
     const NAV_ITEMS = [
@@ -974,6 +1121,13 @@
       AudioEngine.playStartupChord();
       state.currentProfile = profile;
       persistCurrentProfileId(id);
+      // Stato JS del profilo (rating/reminder da localStorage per-profilo).
+      loadProfileScopedState(id);
+      // Dati nativi SCOPATI al profilo: setActiveProfile PRIMA di entrare in
+      // home — il nativo memorizza l'id (e, se il boot è già avvenuto,
+      // ripush myListChanged + progressChanged per ridisegnare la UI coi
+      // dati del profilo scelto, senza rubare il fuoco).
+      if (Native && Native.setActiveProfile) Native.setActiveProfile(profile.id);
       document.getElementById('profile-screen').classList.add('hidden');
       document.getElementById('profile-screen').classList.remove('flex');
       document.getElementById('tv-app-shell').classList.remove('hidden');
@@ -1015,16 +1169,19 @@
       const keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
       const box = document.getElementById('profile-kbd');
       if (!box) return;
+      // Fix altezze piccole: tasti su 9 colonne (4 righe) con altezza fissa
+      // h-9 invece di aspect-square — la griglia 6x6 quadrata superava i 540px
+      // del modal profilo e spingeva i bottoni Salvare/Eliminare fuori schermo.
       box.innerHTML = `
         <div class="grid grid-cols-3 gap-2 mb-2">
-          <button type="button" onclick="profAppendChar(' ')" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Spazio</button>
-          <button type="button" onclick="profBackspaceChar()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Canc</button>
-          <button type="button" onclick="profClearName()" class="tv-focusable py-2.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Reset</button>
+          <button type="button" onclick="profAppendChar(' ')" class="tv-focusable py-2 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Spazio</button>
+          <button type="button" onclick="profBackspaceChar()" class="tv-focusable py-2 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Canc</button>
+          <button type="button" onclick="profClearName()" class="tv-focusable py-2 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-xs font-bold uppercase tracking-wider transition">Reset</button>
         </div>
-        <div class="grid grid-cols-6 gap-1.5">
+        <div class="grid grid-cols-9 gap-1">
           ${keys.map(k => `
             <button type="button" onclick="profAppendChar('${k}')"
-              class="tv-focusable aspect-square rounded-lg bg-[#222226] hover:bg-white hover:text-black font-bold text-sm flex items-center justify-center transition">
+              class="tv-focusable h-9 rounded-lg bg-[#222226] hover:bg-white hover:text-black font-bold text-sm flex items-center justify-center transition">
               ${k}
             </button>
           `).join('')}
@@ -1199,6 +1356,29 @@
       const navMeta = NAV_ITEMS.find(n => n.id === tabId);
       document.getElementById('view-breadcrumb').textContent = navMeta ? navMeta.label : 'Browse';
       renderSidebarNav();
+      // FIX search/categorie: NON sono tab a righe. Il vecchio percorso
+      // loadTab+spinner li bloccava per sempre: hasRows era sempre false →
+      // showViewLoading() + return (renderSearchView mai invocata) e
+      // Native.loadTab('search') riceveva un tab ignoto dal repository
+      // (tabPayload → else → null → evento error "Tab non raggiungibile").
+      // Ora render immediato con fuoco nel contenuto, non sulla sidebar.
+      if (tabId === 'search' || tabId === 'categories') {
+        if (tabId === 'categories' &&
+            !Array.isArray(state.categoriesGenres) &&
+            !state.categoriesLoading &&
+            Native && Native.loadCategories) {
+          requestCategories();
+        }
+        renderCurrentView(false);
+        // Fuoco sul primo elemento VISIBILE della vista (focusableList è già
+        // filtrata per rect>0): primo tasto della tastiera (search) o primo
+        // chip genere (categories) — mai la sidebar e mai elementi hidden
+        // (es. il tasto Clear con query vuota).
+        const firstInView = focusableList.find(el => el.closest('#view-container'));
+        if (firstInView) setTVFocus(firstInView);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
       // M2: il boot copre le righe di home/tv/movie; "new" renderizza subito
       // dai top10Rank già in CATALOG (sliders top10 del boot) e in background
       // chiede comunque un refresh. Tab senza righe → spinner finché
@@ -1349,6 +1529,24 @@
         showProgress: isContinue,
         isTop10: !!row.isTop10
       });
+    }
+
+    /** Allinea la riga "Continua a guardare" di state.rows.home alla lista
+     *  CW corrente (dato PER-PROFILO): al cambio profilo, senza sync la home
+     *  ri-renderizzerebbe la riga del profilo precedente (card senza
+     *  progresso) o perderebbe la riga finché non si rientra in home.
+     *  Solo dati (state.rows), niente DOM: il DOM lo tocca il render. */
+    function syncContinueRow(cwList) {
+      const rows = state.rows && state.rows.home;
+      if (!Array.isArray(rows)) return;
+      const idx = rows.findIndex(r => /continua|continue/i.test(r.label || ''));
+      if (!cwList.length) {
+        if (idx >= 0) rows.splice(idx, 1);
+        return;
+      }
+      const ids = cwList.map(cw => cw.id);
+      if (idx >= 0) rows[idx].ids = ids;
+      else rows.unshift({ label: 'Continua a guardare', ids });
     }
 
     // Fix TV #13: aggiornamento MIRATO della rail "Continua a guardare" su
@@ -1593,42 +1791,151 @@
       `;
     }
 
-    function renderCategoriesView() {
-      const pool = getScopedCatalog();
-      const dynamicGenres = Array.from(new Set(pool.flatMap(i => i.genres || [])));
-      const allGenres = ['All', ...dynamicGenres];
-      const filtered = state.selectedCategory === 'All'
-        ? pool
-        : pool.filter(i => (i.genres || []).includes(state.selectedCategory));
+    // FIX categorie — i generi NON esistono nelle card della home (solo nel
+    // dettaglio): la vecchia vista li derivava da CATALOG e restava senza dati.
+    // Ora i generi sono REALI dall'archivio (evento `categories`, metodo
+    // bridge loadCategories → /it/archive → props.genres) e la griglia del
+    // genere scelto arriva dall'evento `genreData` (loadGenre → filtro
+    // genre[] dell'archivio, pagina 1). Token Tailwind per l'evidenza dei
+    // chip, applicati via classList (preserva tv-focusable/tv-focused senza
+    // ri-renderizzare i chip e senza perdere il fuoco).
+    const CHIP_ACTIVE_TOKENS = ['bg-[#E50914]', 'text-white', 'shadow-lg'];
+    const CHIP_IDLE_TOKENS = ['bg-white/[0.07]', 'text-zinc-300', 'hover:bg-white/[0.15]', 'hover:text-white'];
 
-      if (pool.length === 0) {
-        return renderEmptyCatalogState('No Categories Available', 'Categories are generated automatically from catalog genres.');
+    /** Richiesta dei generi reali al bridge (evento `categories` con req). */
+    function requestCategories() {
+      if (!(Native && Native.loadCategories)) return;
+      state.categoriesLoading = true;
+      const req = nextReq();
+      state.pendingCategoriesReq = req;
+      Native.loadCategories(req);
+    }
+
+    /** Bottone Riprova nell'empty-state del tab (rete giù / errore archivio). */
+    function retryLoadCategories() {
+      AudioEngine.playSelect();
+      requestCategories();
+      renderCurrentView(false);
+      // Il bottone cliccato è stato sostituito dallo spinner: il fuoco va sul
+      // primo elemento visibile della vista (o resta dove è se non c'è nulla).
+      const firstInView = focusableList.find(el => el.closest('#view-container'));
+      if (firstInView) setTVFocus(firstInView);
+    }
+
+    /** Griglia dei titoli del tab Categorie (genere "All" = prime 60 del
+     *  archivio, altrimenti titoli del genere scelto). Sostituita MIRATAMENTE
+     *  da `genreData` — i chip e il fuoco non vengono toccati. */
+    function renderCategoriesGridInner() {
+      if (state.genreLoading) {
+        return `
+          <div class="flex items-center gap-4 justify-center py-10">
+            <div class="w-8 h-8 rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin shrink-0"></div>
+            <p class="text-sm text-zinc-400">Caricamento genere…</p>
+          </div>`;
+      }
+      const items = state.genreIds
+        .map(id => CATALOG.find(c => c.id === id))
+        .filter(Boolean);
+      if (items.length === 0) {
+        return `
+          <div class="bg-[#18181B] rounded-2xl p-10 text-center border border-white/10">
+            <p class="text-lg font-bold mb-1">Nessun titolo in questo genere</p>
+            <p class="text-sm text-zinc-400">Scegli un altro genere dall'archivio.</p>
+          </div>`;
+      }
+      return `
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+          ${items.map(item => renderPosterCard(item)).join('')}
+        </div>`;
+    }
+
+    /** Aggiornamento MIRATO della sola griglia categorie (evento `genreData`
+     *  o cambio chip): mai renderCurrentView integrale — il fuoco resta dove
+     *  è (sui chip o sulla card già in fuoco). */
+    function updateCategoriesGrid() {
+      const wrap = document.getElementById('categories-grid-wrap');
+      if (wrap) wrap.innerHTML = renderCategoriesGridInner();
+      refreshFocusableElements();
+    }
+
+    /** Evidenza del chip selezionato senza ricreare i nodi: i token attivi/
+     *  inattivi si scambiano via classList (tv-focusable/tv-focused restano). */
+    function syncCategoryChipHighlight() {
+      const box = document.getElementById('categories-chips');
+      if (!box) return;
+      box.querySelectorAll('button[data-genre-id]').forEach(btn => {
+        const active = btn.dataset.genreId === String(state.selectedGenreId);
+        CHIP_ACTIVE_TOKENS.forEach(t => btn.classList.toggle(t, active));
+        CHIP_IDLE_TOKENS.forEach(t => btn.classList.toggle(t, !active));
+      });
+    }
+
+    function renderCategoriesView() {
+      // Caricamento generi in corso (loadCategories): spinner a vista intera.
+      if (state.categoriesLoading) {
+        return `
+          <div class="fixed inset-0 flex flex-col items-center justify-center">
+            <div class="w-10 h-10 rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin"></div>
+            <p class="mt-4 text-sm text-zinc-400">Caricamento categorie…</p>
+          </div>`;
+      }
+      // Generi mai arrivati (errore o anteprima browser): empty-state con
+      // Riprova — niente generi finti derivati dal catalogo.
+      if (!Array.isArray(state.categoriesGenres)) {
+        return `
+          <div class="pt-24 px-6 sm:px-10 max-w-2xl mx-auto text-center">
+            <div class="bg-[#18181B] border border-white/10 rounded-2xl p-12 shadow-xl">
+              <h2 class="text-2xl font-bold mb-2">Categorie non disponibili</h2>
+              <p class="text-sm text-zinc-400 mb-6">I generi dell'archivio non sono arrivati. Controlla la rete e Riprova.</p>
+              <button onclick="retryLoadCategories()" class="tv-focusable px-6 py-3 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-sm">Riprova</button>
+            </div>
+          </div>`;
       }
 
+      // Chips REALI: All + i 26 generi dell'archivio (id/name da props.genres).
+      // Il click passa l'id numerico (mai il nome: gli attributi onclick non
+      // devono contenere testo del sito).
+      const chips = [{ id: 'all', name: 'All' }].concat(state.categoriesGenres);
       return `
         <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">
           <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-6">Categories</h1>
 
-          <div class="flex flex-wrap gap-2.5 mb-8">
-            ${allGenres.map(g => `
-              <button onclick="selectCategory('${g}')"
-                class="tv-focusable px-5 py-2.5 rounded-lg text-xs uppercase tracking-wider font-bold transition ${state.selectedCategory === g ? 'bg-[#E50914] text-white shadow-lg' : 'bg-white/[0.07] text-zinc-300 hover:bg-white/[0.15] hover:text-white'}">
-                ${g}
+          <div id="categories-chips" class="flex flex-wrap gap-2.5 mb-8">
+            ${chips.map(g => `
+              <button data-genre-id="${g.id}" onclick="selectCategory('${g.id}')"
+                class="tv-focusable px-5 py-2.5 rounded-lg text-xs uppercase tracking-wider font-bold transition ${String(state.selectedGenreId) === String(g.id) ? 'bg-[#E50914] text-white shadow-lg' : 'bg-white/[0.07] text-zinc-300 hover:bg-white/[0.15] hover:text-white'}">
+                ${g.name}
               </button>
             `).join('')}
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-            ${filtered.map(item => renderPosterCard(item)).join('')}
-          </div>
+          <div id="categories-grid-wrap">${renderCategoriesGridInner()}</div>
         </div>
       `;
     }
 
-    function selectCategory(genre) {
+    /** Click su un chip genere: "All" usa la griglia già in cache (prime 60),
+     *  un genere reale parte con loadGenre → `genreData` aggiorna SOLO la
+     *  griglia. Il fuoco resta sul chip cliccato. */
+    function selectCategory(genreId) {
       AudioEngine.playSelect();
-      state.selectedCategory = genre;
-      renderCurrentView();
+      if (String(genreId) === 'all') {
+        state.selectedGenreId = 'all';
+        state.genreIds = state.categoriesIds;
+        state.genreLoading = false;
+        state.pendingGenreReq = null;
+        syncCategoryChipHighlight();
+        updateCategoriesGrid();
+        return;
+      }
+      if (!(Native && Native.loadGenre)) return;
+      state.selectedGenreId = String(genreId);
+      state.genreLoading = true;
+      const req = nextReq();
+      state.pendingGenreReq = req;
+      syncCategoryChipHighlight();
+      updateCategoriesGrid();
+      Native.loadGenre(parseInt(genreId, 10), req);
     }
 
     /**
@@ -1656,6 +1963,21 @@
       const results = (remote && remote.query === state.searchQuery)
         ? remote.ids.map(id => CATALOG.find(c => c.id === id)).filter(Boolean)
         : searchPool();
+
+      // Attesa della risposta server (debounce scattato, Native.search in
+      // volo): spinner dedicato al posto della griglia.
+      if (state.searchPending) {
+        return `
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold tracking-tight">Results for "${state.searchQuery}"</h2>
+          </div>
+          <div class="bg-[#18181B] rounded-2xl p-10 border border-white/10 flex items-center gap-4">
+            <div class="w-8 h-8 rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin shrink-0"></div>
+            <p class="text-sm text-zinc-400">Ricerca in corso…</p>
+          </div>
+        `;
+      }
+
       return `
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-bold tracking-tight">
@@ -1743,9 +2065,11 @@
     }
     function clearSearchQuery() {
       AudioEngine.playSelect();
+      // Reset annulla l'attesa PRIMA del re-render: la griglia non deve mai
+      // rimanere inchiodata sullo stato "Ricerca in corso…".
+      cancelRemoteSearch();
       state.searchQuery = '';
       updateSearchView();
-      cancelRemoteSearch();
     }
     // Typing reale (IME/desktop): solo griglia, niente render integrale né
     // rubafuoco — l'input conserva il suo focus.
@@ -1758,21 +2082,37 @@
     /** Ricerca SERVER (M2): la tastiera a schermo genera una lettera per
      *  pressione — la query va al bridge con debounce (650ms, min 2 caratteri)
      *  per non martellare il sito; la risposta (`searchResults`) aggiorna la
-     *  griglia in modo mirato. Filtri e griglia restano reattivi in locale. */
+     *  griglia in modo mirato. Filtri e griglia restano reattivi in locale.
+     *  Dal debounce allo scatto si marca searchPending: la griglia mostra
+     *  "Ricerca in corso…" durante l'attesa (aggiornamento mirato). */
     let searchTimer = null;
     function scheduleRemoteSearch() {
       clearTimeout(searchTimer);
       state.remoteResults = null;
       const q = state.searchQuery.trim();
-      if (q.length < 2 || !(Native && Native.search)) return;
+      if (q.length < 2 || !(Native && Native.search)) {
+        // Query sotto soglia o senza bridge: nessuna ricerca in volo — se un
+        // attesa precedente era segnata va rimossa (grid re-render mirato).
+        if (state.searchPending || state.pendingSearchReq != null) {
+          state.searchPending = false;
+          state.pendingSearchReq = null;
+          updateSearchView();
+        }
+        return;
+      }
       searchTimer = setTimeout(() => {
         const req = nextReq();
+        state.searchPending = true;
+        state.pendingSearchReq = req;
+        updateSearchView();
         Native.search(q, req);
       }, 650);
     }
     function cancelRemoteSearch() {
       clearTimeout(searchTimer);
       state.remoteResults = null;
+      state.searchPending = false;
+      state.pendingSearchReq = null;
     }
 
     /**
@@ -1939,6 +2279,8 @@
         showToast(labels[ratingVal]);
       }
       if (state.detailModalTitleId === titleId) renderDetailModalContent();
+      // Rating PER-PROFILO (localStorage con suffisso profilo).
+      persistRatings();
     }
 
     function toggleReminder(titleId) {
@@ -1954,6 +2296,8 @@
         showToast(`Reminder set for ${item.title}`);
       }
       renderCurrentView();
+      // Reminder PER-PROFILO (localStorage con suffisso profilo).
+      persistReminders();
     }
 
     /**
@@ -2244,7 +2588,35 @@
       expandSidebar(isInSidebar);
 
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      // Fix modal (verifica logica): lo scrollIntoView smooth può essere un
+      // no-op su WebView TV (animazioni di sistema disattivate) e lasciare
+      // fuori vista gli elementi in fondo dei contenitori overflow-y (modal
+      // profili/dettaglio, gate). Aggiustamento verticale ISTANTANEO garantito,
+      // solo se l'elemento è fuori vista: le rail orizzontali (overflow-y senza
+      // overflow reale) continuano a scorrere smooth come prima.
+      ensureVerticalInView(el);
       AudioEngine.playTick();
+    }
+
+    /** Porta el interamente dentro l'area visibile di ogni antenato con
+     *  overflow-y auto/scroll (margini 4px per il ring di fuoco). */
+    function ensureVerticalInView(el) {
+      let node = el.parentElement;
+      while (node && node !== document.documentElement) {
+        if (node.scrollHeight > node.clientHeight) {
+          const cs = window.getComputedStyle(node);
+          if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+            const box = node.getBoundingClientRect();
+            const r = el.getBoundingClientRect();
+            if (r.top < box.top + 4) {
+              node.scrollTop += r.top - box.top - 4;
+            } else if (r.bottom > box.bottom - 4) {
+              node.scrollTop += r.bottom - box.bottom + 4;
+            }
+          }
+        }
+        node = node.parentElement;
+      }
     }
 
     function moveSpatialFocus(direction) {

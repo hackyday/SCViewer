@@ -29,6 +29,14 @@ class SctvBridge(
     private val onLoadDetail: (titleId: Int, req: Int) -> Unit,
     /** Ricerca server: `searchResults` push con `req` (M2). */
     private val onSearch: (query: String, req: Int) -> Unit,
+    /** Tab Categorie: generi REALI dell'archivio (/it/archive → props.genres)
+     *  + prime 60 titoli; push evento `categories` {req, genres, catalog}.
+     *  EXTRA rispetto al contratto piano §2, come loadDetailSeason. */
+    private val onLoadCategories: (req: Int) -> Unit,
+    /** Filtro genere dell'archivio (/it/archive?genre[]=<id>&page=1):
+     *  push evento `genreData` {req, genreId, catalog}. EXTRA rispetto al
+     *  contratto piano §2, come loadDetailSeason. */
+    private val onLoadGenre: (genreId: Int, req: Int) -> Unit,
     /** Cambio stagione nel modal dettaglio: partial reload Inertia (~10KB) e
      *  push `titleSeason` {req, season, episodes} (M2 — metodo EXTRA rispetto
      *  al contratto piano §2, che non copriva il season switch; documentato
@@ -47,7 +55,13 @@ class SctvBridge(
     /** Switch alla modalità "sito" (MainActivity, CLEAR_TASK). */
     private val onOpenSiteInterface: () -> Unit,
     /** Riprova connessione dopo l'evento `error` (re-push boot in M1). */
-    private val onRetryConnection: () -> Unit
+    private val onRetryConnection: () -> Unit,
+    /** Selezione profilo dal gate JS: l'Activity memorizza l'id corrente e,
+     *  se il boot è già avvenuto, ripusha i dati scoped (myListChanged +
+     *  progressChanged) per ridisegnare la UI col profilo scelto. Chiamato
+     *  anche PRIMA di bootReady (profilo salvato in localStorage) così anche
+     *  il primo payload è scoped. */
+    private val onSetActiveProfile: (profileId: String) -> Unit
 ) {
 
     @JavascriptInterface
@@ -68,6 +82,23 @@ class SctvBridge(
     @JavascriptInterface
     fun search(query: String, req: Int) {
         onSearch(query, req)
+    }
+
+    /** EXTRA rispetto al piano §2: tab Categorie con generi reali
+     *  (/it/archive → props.genres) + prime 60 titoli → push evento
+     *  `categories` {req, genres:[{id,name}], catalog:[item]}, come
+     *  loadDetailSeason. */
+    @JavascriptInterface
+    fun loadCategories(req: Int) {
+        onLoadCategories(req)
+    }
+
+    /** EXTRA rispetto al piano §2: filtro genere dell'archivio
+     *  (/it/archive?lang=it&genre[]=<id>&page=1) → push evento `genreData`
+     *  {req, genreId, catalog:[item]}, come loadDetailSeason. */
+    @JavascriptInterface
+    fun loadGenre(genreId: Int, req: Int) {
+        onLoadGenre(genreId, req)
     }
 
     /** EXTRA rispetto al piano §2: cambio stagione nel modal (partial reload
@@ -110,5 +141,14 @@ class SctvBridge(
     @JavascriptInterface
     fun retryConnection() {
         onRetryConnection()
+    }
+
+    /** Selezione profilo (gate JS / boot con profilo salvato): EXTRA rispetto
+     *  al contratto piano §2, come loadDetailSeason. L'id arriva dal
+     *  localStorage JS ("p-<timestamp>"); l'Activity lo sanifica e mappa
+     *  "p-default" → "default" (bucket legacy/modalità sito). */
+    @JavascriptInterface
+    fun setActiveProfile(profileId: String) {
+        onSetActiveProfile(profileId)
     }
 }

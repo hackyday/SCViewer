@@ -37,6 +37,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.scviewer.fire.data.DEFAULT_PROFILE_ID
 import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PageInfo
 import com.scviewer.fire.data.PosterCache
@@ -118,6 +119,11 @@ class PlayerActivity : Activity() {
     /** Id del titolo dall'extra: fallback per i salvataggi quando il report
      *  Inertia della watch page non espone il titleId. */
     private var titleId = 0
+
+    /** Profilo SCtv proprietario dei record (ProgressStore/HistoryStore):
+     *  extra di SctvActivity — la modalità sito non passa l'extra e usa il
+     *  bucket di default. */
+    private var profileId = DEFAULT_PROFILE_ID
 
     /** Ordine di fuoco tra i controlli visibili. Lo scrubber NON fa parte
      *  dell'anello (né direct né legacy): fuocarlo intrappolava il D-pad —
@@ -264,6 +270,7 @@ class PlayerActivity : Activity() {
         titleText = intent.getStringExtra("title") ?: ""
         watchUrl = intent.getStringExtra("url") ?: ""
         titleId = intent.getIntExtra("titleId", 0)
+        profileId = intent.getStringExtra("profileId") ?: DEFAULT_PROFILE_ID
         pendingSeek = intent.getIntExtra("startPositionSec", 0)
         saveUrlRel = SiteUrl.relativeOf(watchUrl)
         currentLang = SettingsStore.getSctvAudioLang(this)
@@ -986,9 +993,10 @@ class PlayerActivity : Activity() {
                 url = url,
                 poster = poster,
                 updatedAt = System.currentTimeMillis()
-            )
+            ),
+            profileId
         )
-        HistoryStore.get(this).add(url, info.displayLabel(), poster)
+        HistoryStore.get(this).add(url, info.displayLabel(), poster, profileId)
         info.poster?.takeIf { it.isNotBlank() }?.let { PosterCache.put(this, tid, it) }
     }
 
@@ -1049,7 +1057,7 @@ class PlayerActivity : Activity() {
                 // mai l'embedUrl — stessa convenzione della modalità sito.
                 if (!historyLogged && watchUrl.isNotBlank()) {
                     historyLogged = true
-                    HistoryStore.get(this).add(watchUrl, recordLabel(), posterUrl.ifBlank { null })
+                    HistoryStore.get(this).add(watchUrl, recordLabel(), posterUrl.ifBlank { null }, profileId)
                     if (posterUrl.isNotBlank() && titleId > 0) {
                         PosterCache.put(this, titleId, posterUrl)
                     }
@@ -1173,7 +1181,8 @@ class PlayerActivity : Activity() {
                 url = urlRel,
                 poster = posterUrl.takeIf { it.isNotBlank() },
                 updatedAt = now
-            )
+            ),
+            profileId
         )
     }
 
