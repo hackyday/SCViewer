@@ -84,6 +84,18 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     private var lastDpadAt = 0L
     private var videoOffGeneration = 0
 
+    // Trail degli URL visitati (full load + report Inertia): la fonte di
+    // verità per BACK. Il sito naviga in SPA con replaceState — la lista di
+    // WebView resta su index 0 (hist=2, canGoBack=false, misurato) e il BACK
+    // nativo uscirebbe dall'app. BACK = loadUrl dell'URL precedente.
+    private val urlTrail = ArrayDeque<String>()
+    private var lastTrailUrl: String? = null
+
+    // B17-kotlin: SettingsStore non deve essere interrogato a ogni dispatch
+    // D-pad — cache del flag (SharedPreferences), invalidata in onResume e
+    // al salvataggio del SettingsDialog.
+    @Volatile private var sitePointerMode = false
+
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val domainRepo: DomainRepository by lazy { DomainRepository.get(this) }
     private val favorites: FavoritesStore by lazy { FavoritesStore.get(this) }
@@ -158,11 +170,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }.getOrNull() ?: return@launch
             prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
             val current = "v" + BuildConfig.VERSION_NAME
-            if (latest.isNotBlank() && latest != current) {
+            // Solo versioni PIÙ NUOVE: il confronto a stringa mostrava il chip
+            // anche a chi ha una versione superiore (es. "v1.5.6" offerto alla
+            // pre-release 1.6.0-beta — la beta non deve essere "aggiornata").
+            if (latest.isNotBlank() && isVersionNewer(latest, current)) {
                 runOnUiThread { showUpdateChip(latest) }
-                if (isVersionNewer(latest, current)) {
-                    runOnUiThread { startAutoUpdate(latest) }
-                }
+                runOnUiThread { startAutoUpdate(latest) }
             }
         }
     }
@@ -288,7 +301,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         if (!isTouchDevice) {
             cursorCtl.attach()
-            if (SettingsStore.getSitePointerMode(this)) cursorCtl.show()
+            sitePointerMode = SettingsStore.getSitePointerMode(this)
+            if (sitePointerMode) cursorCtl.show()
         } else {
             // Touch device: full-bleed WebView + floating studio menu trigger
             findViewById<View>(R.id.tvSidebarRoot).visibility = View.GONE
@@ -377,6 +391,8 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
                     this,
                     onSaved = { _ ->
                         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+                        // B17-kotlin: invalida la cache del flag pointer mode.
+                        sitePointerMode = SettingsStore.getSitePointerMode(this)
                         applyUserAgent()
                         applyNavMode()
                     },
@@ -588,7 +604,18 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     // -- PageListener ---------------------------------------------------------
 
+    /** Registra l'URL nel trail per il BACK SPA (dedup consecutivo, cap 25). */
+    private fun recordTrail(url: String?) {
+        if (url.isNullOrBlank()) return
+        if (url == lastTrailUrl) return
+        urlTrail.addLast(url)
+        lastTrailUrl = url
+        while (urlTrail.size > 25) urlTrail.removeFirst()
+    }
+
     override fun onPageStarted(url: String?) {
+        Log.i("com.scviewer.fire.debug", "onPageStarted url=$url canGoBack=${webView.canGoBack()} hist=${webView.copyBackForwardList().size}")
+        recordTrail(url)
         showLoading(true)
         handler.removeCallbacks(loadTimeoutRunnable)
         handler.postDelayed(loadTimeoutRunnable, LOAD_TIMEOUT_MS)
@@ -599,6 +626,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
         // Inertia della SPA arriva poi e lo ri-imposta correttamente. Senza
         // questo, dopo una pagina titolo la sidebar resterebbe morta su home.
         immersivePage = url != null && (url.contains("/it/watch/") || url.contains("/it/titles/"))
+        // B1 (P0): il latch cinema NON sopravvive a una navigazione fuori dal
+        // player — senza questo, usciti da un film via link o BACK la sidebar
+        // restava chiusa e il D-pad restava al cursore finché il video non
+        // "finiva". L'URL è la verità, il video state è solo un segnale.
+        if (url?.contains("/it/watch/") != true && cinemaMode) {
+            cinemaMode = false
+            handler.removeCallbacks(cursorAutoHideRunnable)
+            cursorCtl.hide()
+            if (isTouchDevice) phoneMenuButton.visibility = View.VISIBLE
+        }
         applyChrome()
         hideAutoNext()
         hideOutro()
@@ -675,10 +712,12 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun onVideoStateChanged(active: Boolean) {
         if (active) {
-            // Il trailer hero della home è un video grande e riprodotto: non
-            // deve attivare il cinema mode, altrimenti ruba i D-pad alla nav
-            // spaziale sulle pagine di browse. Solo le pagine immersive.
-            if (!immersivePage) return
+            // B1: gate sull'URL REALE del player, non sul flag immersivo
+            // generico (Titles/*): il report Inertia può arrivare in ritardo
+            // o classificare come immersive una pagina titolo senza player —
+            // e i trailer hero di browse rubavano i D-pad alla nav spaziale.
+            // Solo un video che parte su /it/watch/ è il player vero.
+            if (webView.url?.contains("/it/watch/") != true) return
             val wasOff = !cinemaMode
             videoOffGeneration++
             if (wasOff) {
@@ -726,9 +765,16 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             "window.__sctvNav?__sctvNav.move('$dir'):'false'"
         ) { result ->
             navMoveInFlight = false
-            Log.d("SCTV_NAV", "move($dir) -> $result")
-            // Bordo sinistro del sito → apre la sidebar.
+            if (BuildConfig.DEBUG) Log.d("SCTV_NAV", "move($dir) -> $result")
+            // Bordo sinistro del sito ('edge' su SINISTRA) o cima pagina
+            // ('top' su SU dalla prima riga con pagina già in cima, B7) →
+            // apre la sidebar, come per l'edge.
             if (dir == "left" && result?.contains("edge") == true) {
+                runOnUiThread {
+                    if (!sidebarCtl.isOpen && !immersivePage) sidebarCtl.open()
+                }
+            }
+            if (dir == "up" && result?.contains("top") == true) {
                 runOnUiThread {
                     if (!sidebarCtl.isOpen && !immersivePage) sidebarCtl.open()
                 }
@@ -757,9 +803,19 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
     private fun onPageInfoChanged(json: String) {
         val info = runCatching { pageJson.decodeFromString<PageInfo>(json) }.getOrNull() ?: return
+        recordTrail(webView.url)
         // Il component Inertia arriva per OGNI pagina (anche home/archive che
         // non hanno title): l'immersività non è mai un latch.
         immersivePage = info.component.startsWith("Titles/")
+        // B1: latch cinema legato all'URL reale anche qui — il report Inertia
+        // di una navigazione SPA fuori dal player arriva mentre il segnale
+        // video può ancora essere "active": spegni cinema mode subito.
+        if (webView.url?.contains("/it/watch/") != true && cinemaMode) {
+            cinemaMode = false
+            handler.removeCallbacks(cursorAutoHideRunnable)
+            cursorCtl.hide()
+            if (isTouchDevice) phoneMenuButton.visibility = View.VISIBLE
+        }
         applyChrome()
         if (info.titleId == 0) return
         currentPageInfo = info
@@ -1191,16 +1247,34 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
 
         // Sidebar: la apri solo fuori dalle pagine immersivE.
         val immersiveNow = immersivePage || cinemaMode
-        if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN && !isTouchDevice) {
+        // B12: il MENU tenuto premuto ripete ACTION_DOWN con repeatCount>0 —
+        // senza guardia il toggle sfarfalla apri/chiudi a ogni repeat.
+        if (keyCode == KeyEvent.KEYCODE_MENU && action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 && !isTouchDevice
+        ) {
             if (sidebarCtl.isOpen) sidebarCtl.close() else if (!immersiveNow) sidebarCtl.open()
             return true
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
+            Log.i("com.scviewer.fire.debug", "BACK canGoBack=${webView.canGoBack()} hist=${webView.copyBackForwardList().size} url=${webView.url} sidebar=${sidebarCtl.isOpen} cinema=$cinemaMode trail=${urlTrail.size}")
             if (!isTouchDevice && sidebarCtl.isOpen) {
                 sidebarCtl.close()
                 webView.requestFocus()
                 return true
+            }
+            // BACK SPA dal trail: il sito usa replaceState quindi la lista
+            // WebView non contiene la pagina precedente (canGoBack=false con
+            // hist>1). Il trail è alimentato da onPageStarted + report Inertia.
+            if (urlTrail.size >= 2) {
+                urlTrail.removeLast()
+                val target = urlTrail.lastOrNull()
+                if (!target.isNullOrBlank()) {
+                    lastTrailUrl = target
+                    Log.i("com.scviewer.fire.debug", "BACK trail -> $target")
+                    webView.loadUrl(target)
+                    return true
+                }
             }
             if (webView.canGoBack()) {
                 webView.goBack()
@@ -1247,7 +1321,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
             }
         }
 
-        val pointerMode = SettingsStore.getSitePointerMode(this)
+        // B17-kotlin: cache (vedi campo sitePointerMode) — niente read
+        // SharedPreferences nel percorso tasti.
+        val pointerMode = sitePointerMode
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_DPAD_DOWN,
@@ -1340,6 +1416,9 @@ class MainActivity : AppCompatActivity(), SCWebViewClient.PageListener {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        // B17-kotlin: riallinea la cache del flag pointer mode (le impostazioni
+        // possono essere cambiate altrove o il processo essere stato ricreato).
+        sitePointerMode = SettingsStore.getSitePointerMode(this)
         mainScope.launch { domainRepo.refreshOnline() }
         updateDomainLabel()
     }

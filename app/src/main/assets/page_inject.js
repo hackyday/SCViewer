@@ -360,15 +360,58 @@
     // così il rumore di layout non incolla righe di testo vicine.
     var ROW_OVERLAP_RATIO = 0.4;
     var ROW_OVERLAP_MIN_PX = 8;
-    // Bordo sinistro assoluto del contenuto: SINISTRA qui ritorna 'edge'.
-    // Le righe partono con un padding pagina ~2-4%: 48px copre il padding
-    // senza inglobare card indentate.
-    var EDGE_X = 48;
+    // B7: bordo sinistro del contenuto DINAMICO. Il costante 48px non reggeva
+    // su layout diversi (griglie indentate, hero full-bleed, pagine titolo):
+    // padding = mediana dei left minimi per riga (robusta a righe popup e a
+    // caroselli scrollati fuori schema), fallback sul padding del body.
+    function pagePadX(rows) {
+      var lefts = [];
+      for (var i = 0; i < rows.length; i++) {
+        var ms = rows[i].members;
+        if (ms.length < 2) continue; // riga a 1 membro: spesso popup → rumorosa
+        var mn = Infinity;
+        for (var j = 0; j < ms.length; j++) {
+          if (ms[j].r.left < mn) mn = ms[j].r.left;
+        }
+        if (mn > 0 && mn < 200) lefts.push(mn);
+      }
+      if (lefts.length) {
+        lefts.sort(function (a, b) { return a - b; });
+        return lefts[Math.floor(lefts.length / 2)];
+      }
+      try {
+        var pl = parseFloat(getComputedStyle(document.body).paddingLeft);
+        if (pl > 0) return pl;
+      } catch (e) { /* no-op */ }
+      return 0;
+    }
     // Culling dei candidati: finestra attorno al viewport molto più larga
     // del viewport (le righe sopra/sotto restano navigabili e la messa a
     // fuoco le centra), abbastanza stretta da tenere la scansione < 100ms.
     var CULL_Y_FACTOR = 1.2, CULL_X_FACTOR = 0.5, CULL_MIN = 160;
     var MIN_W = 24, MIN_H = 12;
+    // B6a: selettore unico dei candidati semantici, riusato da scan() e dal
+    // micro-merge dei nodi recenti in buildRows (stringa identica a prima).
+    var FOCUS_SEL =
+      'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])';
+    // Mappa §4/§5.9: blacklist applicata PRIMA del fallback pointer — esterni
+    // target=_blank (social/banner/verifylink/animeunity/vixsrc), logo, frecce
+    // rail, pallini paginazione, overlay trailer, skeleton loading, hamburger
+    // e sidebar-mobile (ridondanti: esiste la sidebar nativa). closest copre
+    // anche i discendenti.
+    var BLACKLIST_SEL =
+      'a[target="_blank"],.logo-item a,span.slide,.tab-indicator,.trailer-click,' +
+      '[class*="loading"],button.navbar-toggler,.sidebar-mobile,.sidebar-backdrop,' +
+      '.socials a,.slide-banner a,.close-banner';
+    // Mappa §5.5: durante lo slide del rail (.animating, 750ms) i click/fuoco
+    // sono persi (pointer-events:none) — i candidati dentro vengono saltati.
+    var ANIM_SEL = '.slider-content.animating';
+    function blacklisted(el) {
+      try { return !!(el.closest && el.closest(BLACKLIST_SEL)); } catch (eB) { return false; }
+    }
+    function inAnimating(el) {
+      try { return !!(el.closest && el.closest(ANIM_SEL)); } catch (eA) { return false; }
+    }
     // Margini oltre i quali la messa a fuoco centra l'elemento.
     var SNAP_Y = 70, SNAP_X = 8;
 
@@ -425,11 +468,29 @@
     function placeFrame(el) { if (el) placeFrameRect(el.getBoundingClientRect()); }
     function hideFrame() { frame.style.display = 'none'; }
 
+    // B17: scroll/resize arrivano a raffica (fling, caroselli) — un handler
+    // sincrono per evento forzava layout+style ripetuti (repaint storm su
+    // Mali-450). Dirty-flag + UN rAF per frame; se non c'è nulla di sporco
+    // il rAF muore subito senza costi.
+    var frameDirty = false, frameRAF = 0;
+    function scheduleFrame() {
+      if (frameRAF) return;
+      frameRAF = requestAnimationFrame(function () {
+        frameRAF = 0;
+        if (!cur || !frameDirty) return;
+        frameDirty = false;
+        placeFrame(cur);
+      });
+    }
     window.addEventListener('scroll', function () {
-      if (cur) placeFrame(cur);
+      if (!cur) return;
+      frameDirty = true;
+      scheduleFrame();
     }, true);
     window.addEventListener('resize', function () {
-      if (cur) placeFrame(cur);
+      if (!cur) return;
+      frameDirty = true;
+      scheduleFrame();
     });
 
     // rAF leggero SOLO durante gli scroll smooth: l'anello segue l'elemento
@@ -475,6 +536,7 @@
     // si filtrano da soli); rescan forzato solo su swap SPA.
     var CACHE_TTL = 2500;
     var pendingCenter = false; // ricentro dopo SPA nav (consumato dall'observer)
+    var spaAnchor = false;     // B15: la SPA nav in corso è un popstate (back/forward)
     var lastMutAt = 0;
 
     // Subtree aggiunti di recente al DOM = popup hover aperti (vedi merge
@@ -485,6 +547,10 @@
       var n = el, hops = 0;
       while (n && hops < 6) {
         if (recent.has(n)) return true;
+        // Mappa §3: la preview è un componente Vue TELEPORTATO su <body>
+        // con classe .preview-wrap — fuori dalla card. Anche fuori dalla
+        // finestra `recent` resta un popup da fondere nella riga della card.
+        if (n.classList && n.classList.contains('preview-wrap')) return true;
         if (n === document.body) break;
         n = n.parentElement;
         hops++;
@@ -499,11 +565,14 @@
     function rescanSoon(delay) {
       if (scanPending) return;
       scanPending = true;
+      // 0 esplicito = rescan al tick successivo (chiamato dal percorso tasti
+      // quando la cache è scaduta); senza argomento usa il default 180.
+      var d = (delay === undefined || delay === null) ? 180 : delay;
       setTimeout(function () {
         scanPending = false;
         cache = scan();
         cacheAt = Date.now();
-      }, delay || 180);
+      }, d);
     }
     // I trailer in autoplay nell'hero del sito: la loro superficie video
     // (fork Fire TV del WebView) copre la sidebar nativa e mangia CPU su
@@ -527,11 +596,12 @@
 
     var obs = new MutationObserver(function (muts) {
       lastMutAt = Date.now();
+      var batchAddedEls = false;
       for (var i = 0; i < muts.length; i++) {
         var added = muts[i].addedNodes;
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
-          if (n.nodeType === 1) recent.set(n, lastMutAt);
+          if (n.nodeType === 1) { recent.set(n, lastMutAt); batchAddedEls = true; }
         }
       }
       if (recent.size > 240) {
@@ -548,13 +618,21 @@
         if (pendingCenter && Date.now() - lastMutAt > 250) {
           pendingCenter = false;
           clearTimeout(spaTimer);
-          centerFocus();
+          doSpaFocus();
+          return;
         }
+        // B3: batch con elementi NUOVI nel DOM (card caricate, popup) →
+        // rescan debounced fuori dal percorso tasti. Mutazioni solo-testo
+        // non toccano la lista candidati.
+        if (batchAddedEls) rescanSoon(500);
       }, 120);
     });
     function startObserver() {
       if (document.body && !obs._started) {
-        obs.observe(document.body, { childList: true, subtree: true, attributes: true });
+        // B17: niente attributes — le mutazioni di attributo (classi hover,
+        // stili) non aggiungono candidati e generavano batch infiniti con i
+        // timer del sito. Il ring non dipende da attributi del sito.
+        obs.observe(document.body, { childList: true, subtree: true });
         obs._started = true;
       }
     }
@@ -577,11 +655,16 @@
             rr.right < -cullX || rr.left > vw + cullX) return false;
         return true;
       }
-      function add(e, rr) { e.__sctvRect = rr; seen.add(e); out.push(e); }
+      function add(e, rr, sem) {
+        e.__sctvRect = rr;
+        e.__sctvSem = !!sem;
+        seen.add(e);
+        out.push(e);
+      }
 
       // 1. semantica: link, bottoni, campi, tabindex
-      var nodes = document.querySelectorAll(
-        'a[href],button,[role="button"],input,select,textarea,[tabindex]:not([tabindex="-1"])');
+      var nodes = document.querySelectorAll(FOCUS_SEL);
+      var hrefs = new Set();
       for (i = 0; i < nodes.length; i++) {
         el = nodes[i];
         if (el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true')) continue;
@@ -589,7 +672,20 @@
         if (!ok(r)) continue;
         cs = getComputedStyle(el);
         if (cs.visibility === 'hidden' || cs.display === 'none') continue;
-        add(el, r);
+        if (blacklisted(el) || inAnimating(el)) continue;
+        // Mappa §5.1: rail infinite = cloni con lo STESSO href a slot diversi
+        // (non si sovrappongono: dedup per contenimento/IoU non li vede) —
+        // senza questo il fuoco "cammina all'infinito" sullo stesso titolo.
+        // Tieni la prima occorrenza nella finestra cull (dedup DOPO ok():
+        // un clone fuori finestra non deve consumare l'href di quello visibile).
+        if (el.tagName === 'A') {
+          var hh = el.getAttribute('href') || '';
+          if (hh) {
+            if (hrefs.has(hh)) continue;
+            hrefs.add(hh);
+          }
+        }
+        add(el, r, true);
       }
 
       // 2. euristica Vue: QUALSIASI elemento cliccabile senza semantica è
@@ -605,8 +701,45 @@
         cs = getComputedStyle(el);
         if (cs.cursor !== 'pointer' || cs.visibility === 'hidden' ||
             cs.display === 'none' || cs.pointerEvents === 'none') continue;
-        add(el, r);
+        if (blacklisted(el) || inAnimating(el)) continue;
+        add(el, r, false);
       }
+
+      // Mappa §2.1: TOP 10 — svg.svg-icon.svg-icon-rank-N.top-10-rank è
+      // DENTRO l'<a> della card (numero gigante, copre numero+poster). La
+      // regola "più interno vince" si INVERTE quando l'interno è un svg
+      // decorativo con un antenato semantico candidato: tieni l'ANTENATO.
+      var out2 = [];
+      for (i = 0; i < out.length; i++) {
+        var dv = out[i];
+        var dropDv = false;
+        var tn = dv.tagName;
+        if (tn === 'svg' || tn === 'SVG') dropDv = true;
+        else {
+          try {
+            dropDv = dv.classList.contains('svg-icon') ||
+                     dv.classList.contains('top-10-rank') ||
+                     dv.classList.contains('box-art-top10');
+          } catch (eS) { dropDv = false; }
+        }
+        if (dropDv) {
+          var anc2 = dv.parentElement, kept2 = false;
+          for (var h2 = 0; h2 < 4 && anc2 && !kept2; h2++) {
+            try {
+              if (anc2.matches && anc2.matches('a[href],button,[role="button"]') &&
+                  seen.has(anc2)) kept2 = true;
+            } catch (eM) { break; }
+            anc2 = anc2.parentElement;
+          }
+          if (kept2) {
+            delete dv.__sctvRect;
+            delete dv.__sctvSem;
+            continue;
+          }
+        }
+        out2.push(dv);
+      }
+      out = out2;
 
       // 3. dedup per contenimento: fra elementi sovrapposti tiene il più
       //    interno (il target reale del click), scarta il contenitore.
@@ -625,16 +758,54 @@
         }
         if (!inside) kept.push(out[i]);
       }
-      for (i = 0; i < out.length; i++) delete out[i].__sctvRect;
-      return kept;
+      // B9: dedup per IoU su coppie SENZA contenimento (il numero gigante
+      // "TOP 10" sopra la card): prima restavano entrambi e si navigava anche
+      // il numero decorativo. Vince il candidato più semantico (tag
+      // interattivo > solo cursor:pointer); a rango pari si mantiene tutto.
+      var dropped = new Set();
+      for (i = 0; i < kept.length; i++) {
+        var ri = kept[i].__sctvRect;
+        if (!ri) continue;
+        for (var m2 = i + 1; m2 < kept.length; m2++) {
+          if (dropped.has(i) || dropped.has(m2)) continue;
+          var rj = kept[m2].__sctvRect;
+          if (!rj) continue;
+          var ix = Math.min(ri.right, rj.right) - Math.max(ri.left, rj.left);
+          var iy = Math.min(ri.bottom, rj.bottom) - Math.max(ri.top, rj.top);
+          if (ix <= 0 || iy <= 0) continue;
+          var inter = ix * iy;
+          var union = ri.width * ri.height + rj.width * rj.height - inter;
+          if (union <= 0 || inter / union <= 0.4) continue;
+          var si2 = kept[i].__sctvSem ? 1 : 0;
+          var sj2 = kept[m2].__sctvSem ? 1 : 0;
+          if (sj2 > si2) dropped.add(i);
+          else if (si2 > sj2) dropped.add(m2);
+        }
+      }
+      var final = [];
+      for (i = 0; i < kept.length; i++) {
+        if (!dropped.has(i)) final.push(kept[i]);
+      }
+      for (i = 0; i < out.length; i++) {
+        delete out[i].__sctvRect;
+        delete out[i].__sctvSem;
+      }
+      return final;
     }
 
-    function candidates(force) {
+    // B2: MAI uno scan sincrono nel percorso dei tasti. Cache assente =
+    // prima installazione / centerFocus (nuova pagina, nessun tasto in attesa)
+    // → scan sincrono ammesso. Cache scaduta → si naviga con la stale (i rect
+    // sono riletti live in buildRows: nodi rimossi e scroll si filtrano da
+    // soli) e si riscansiona in background al tick successivo.
+    function candidates() {
       var now = Date.now();
-      if (!cache || force || now - cacheAt > CACHE_TTL) {
+      if (!cache) {
         cache = scan();
         cacheAt = now;
+        return cache;
       }
+      if (now - cacheAt > CACHE_TTL) rescanSoon(0);
       return cache;
     }
 
@@ -646,6 +817,7 @@
       var cullY = Math.max(CULL_MIN, vh * CULL_Y_FACTOR);
       var cullX = Math.max(CULL_MIN, vw * CULL_X_FACTOR);
       var items = [];
+      var candSet = new Set(cands);
       for (var i = 0; i < cands.length; i++) {
         var el = cands[i];
         var r = el.getBoundingClientRect();
@@ -653,6 +825,39 @@
         if (r.bottom < -cullY || r.top > vh + cullY ||
             r.right < -cullX || r.left > vw + cullX) continue;   // fuori finestra live
         items.push({ el: el, r: r, pop: popupish(el) });
+      }
+      // B6a micro-merge: i nodi appena aggiunti al DOM (popup hover aperti,
+      // bottoni dentro subtree nuovi) entrano nelle righe ANCHE se la cache
+      // non li contiene ancora — copre il gap fra comparsa del popup e rescan
+      // in background. Limitato ai nodi freschi (≤ 1,2 s), max 24 esaminati e
+      // 12 inseriti per chiamata: costo ~1-2ms, niente scan completo.
+      if (recent.size) {
+        var freshSeen = 0, mergedHot = 0;
+        recent.forEach(function (t, n) {
+          if (freshSeen >= 24 || mergedHot >= 12) return;
+          if (!n || n.nodeType !== 1 || !n.isConnected) return;
+          if (lastMutAt - t > 1200) return;
+          freshSeen++;
+          var subs = null;
+          try {
+            // il nodo nuovo può essere già interattivo (o solo un wrapper)
+            if (n.matches(FOCUS_SEL)) subs = [n];
+            else subs = n.querySelectorAll(FOCUS_SEL);
+          } catch (eQ) { return; }
+          for (var si = 0; si < subs.length && mergedHot < 12; si++) {
+            var s = subs[si];
+            if (candSet.has(s)) continue;
+            var rs = s.getBoundingClientRect();
+            if (rs.width < 4 || rs.height < 4) continue;
+            if (rs.bottom < -cullY || rs.top > vh + cullY ||
+                rs.right < -cullX || rs.left > vw + cullX) continue;
+            var csS;
+            try { csS = getComputedStyle(s); } catch (eC) { continue; }
+            if (csS.visibility === 'hidden' || csS.display === 'none') continue;
+            items.push({ el: s, r: rs, pop: true });
+            mergedHot++;
+          }
+        });
       }
       if (!items.length) return [];
 
@@ -799,22 +1004,26 @@
 
       try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e4) {}
 
-      var shift = 0;
       var sy = scrollerFor(el, 'y');
       if (sy) {
         var cr2 = sy.getBoundingClientRect();
         var ty = sy.scrollTop + (r.top + r.height / 2 - (cr2.top + cr2.height / 2));
         ty = clampN(ty, 0, sy.scrollHeight - sy.clientHeight);
-        if (Math.abs(ty - sy.scrollTop) > 4) {
+        // B10: oldTop catturato PRIMA dell'assegnazione — leggerlo dopo era
+        // inutile (sy.scrollTop valeva già ty ⇒ shift sempre 0) e il
+        // centraggio pagina ragionava su rect stidenti.
+        var oldTop = sy.scrollTop;
+        if (Math.abs(ty - oldTop) > 4) {
           sy.scrollTop = ty;
-          shift = ty - sy.scrollTop;
         }
       }
 
-      var vTop = r.top - shift, vBot = r.bottom - shift;
-      if (vTop < SNAP_Y || vBot > innerHeight - SNAP_Y) {
+      // B10: rect RILETTO dopo gli scroll interni — è l'unica posizione
+      // veritiera per decidere il centraggio pagina (niente shift manuale).
+      var r2 = el.getBoundingClientRect();
+      if (r2.top < SNAP_Y || r2.bottom > innerHeight - SNAP_Y) {
         var pt = pageTop();
-        var want = clampN(pt + (vTop + r.height / 2 - innerHeight / 2), 0, maxPage());
+        var want = clampN(pt + (r2.top + r2.height / 2 - innerHeight / 2), 0, maxPage());
         if (Math.abs(want - pt) > 4) {
           window.scrollTo(0, want);
         }
@@ -826,15 +1035,42 @@
       window.scrollBy(0, sign * innerHeight * 0.66);
       navScrollStart();
       startFollow(700);
+      // B3: lo scroll pagina cambia la finestra cull dei candidati — riscansiona
+      // presto MA in background (il prossimo tasto non deve aspettare).
+      rescanSoon(150);
     }
 
     // ---- Fuoco --------------------------------------------------------------
+    // Mappa §1.5/§6.6: su /it/watch/ il frame principale non ha candidati —
+    // il player è SOLO un iframe cross-origin. Niente scan né anello: move/
+    // activate rispondono false pulito e il nativo governa i tasti in
+    // cinema mode (latch B1). Zero costo: nemmeno un querySelector.
+    function isWatchDoc() {
+      return location.pathname.indexOf('/it/watch/') === 0;
+    }
     function isFieldEl(el) {
       var t = el && el.tagName;
       return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT';
     }
     function isTyping() {
       return !!cur && isFieldEl(cur) && document.activeElement === cur;
+    }
+
+    // Mappa §3: la preview NON è CSS-hover. L'apertura è un listener Vue su
+    // mouseenter DIRETTO di img.cover-image (rail normali) o .box-7x10 (top10)
+    // → setTimeout(300ms) → POST → Teleport su <body> (.preview-wrap).
+    // mouseenter non bubble: l'evento va dispatchato SUL target, non sulla
+    // card. Restituisce i target hover della card (max 3: i cloni del rail
+    // condividono l'href ma solo i primi contano per l'apertura).
+    function hoverTargets(card) {
+      var t = [];
+      if (!card || !card.querySelectorAll) return t;
+      try {
+        if (card.matches('img.cover-image,.box-7x10')) t.push(card);
+        var imgs = card.querySelectorAll('img.cover-image,.box-7x10');
+        for (var ii = 0; ii < imgs.length && ii < 3; ii++) t.push(imgs[ii]);
+      } catch (eH) { /* no-op */ }
+      return t;
     }
 
     function setFocus(el) {
@@ -845,23 +1081,52 @@
         // (e quindi non deve far perdere il fuoco).
         if (el && !el.contains(cur)) {
           try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+          // Mappa §3: mouseleave sintetico sulla card PRECEDENTE (e sui suoi
+          // target hover) — chiude/annulla la preview prima del mouseenter
+          // della nuova. Il sito ha un guard: se .preview-wrap è già in DOM
+          // la nuova preview NON si apre; il mouseleave lascia il tempo alla
+          // chiusura (~200ms) e cancella il timer del POST pendente.
+          try { cur.dispatchEvent(new Event('mouseleave')); } catch (eL0) {}
+          var olds = hoverTargets(cur);
+          for (var oi = 0; oi < olds.length; oi++) {
+            try { olds[oi].dispatchEvent(new Event('mouseleave')); } catch (eL1) {}
+          }
         }
         if (isFieldEl(cur)) { try { cur.blur(); } catch (e2) {} }
       }
       cur = el || null;
       if (!cur) { hideFrame(); return; }
-      var r0 = cur.getBoundingClientRect();
-      lastCenter = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+      // B5: un fuoco impostato da move()/utente è controllo esplicito —
+      // annulla ogni ricentro SPA pendente (observer + timer di sicurezza).
+      pendingCenter = false;
+      clearTimeout(spaTimer);
       cur.classList.add(RING);
       navScrollStart(); // prima dello scroll: il guard deve lasciarlo passare
       scrollFix(cur);
+      // B4: lastCenter DOPO lo scrollFix — l'elemento si è mosso rispetto al
+      // viewport (centratura pagina/riga), il recupero da fuoco perso deve
+      // partire dalla posizione VISTA, non da quella pre-scroll.
+      var r0 = cur.getBoundingClientRect();
+      lastCenter = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
       try {
         cur.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
         cur.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       } catch (e3) {}
-      // il popup hover del sito entra nel DOM: riscansiona presto, ma in
-      // background — il prossimo tasto non deve mai aspettare uno scan
-      rescanSoon(200);
+      // Mappa §3: mouseenter diretto sui target cover della card — è QUELLO
+      // che fa partire il timer 300ms del POST preview. Se il fuoco si muove
+      // di nuovo entro 300ms il mouseleave qui sopra cancella tutto (nessuno
+      // spam di preview durante la navigazione rapida).
+      var hts = hoverTargets(cur);
+      for (var hi = 0; hi < hts.length; hi++) {
+        try {
+          hts[hi].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+          hts[hi].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        } catch (eH2) { /* no-op */ }
+      }
+      // B6a/mappa §3: popup GIÀ in DOM (mutazione ≤ 50ms) → rescan al tick;
+      // altrimenti la preview arriva a ~300ms + POST: rescan a 450ms. Sempre
+      // in background — il prossimo tasto non deve mai aspettare uno scan.
+      rescanSoon(Date.now() - lastMutAt <= 50 ? 0 : 450);
       startFollow(900);
       clearTimeout(lateTimer);
       lateTimer = setTimeout(function () {
@@ -910,6 +1175,8 @@
 
     // ---- Navigazione --------------------------------------------------------
     function move(dir) {
+      // Zona morta watch (mappa §6.6): prima di ogni altra cosa, zero lavoro.
+      if (isWatchDoc()) return false;
       // Campi di testo attivi: SINISTRA/DESTRA appartengono al cursore testo,
       // non all'anello (SU/GIÙ escono dal campo normalmente).
       if (isTyping() && (dir === 'left' || dir === 'right')) return false;
@@ -943,15 +1210,31 @@
 
       if (dir === 'left') {
         if (idx > 0) { setFocus(row.members[idx - 1].el); return true; }
-        // Primo elemento della riga: 'edge' solo dal bordo sinistro assoluto.
-        return row.members[0].r.left <= EDGE_X ? 'edge' : false;
+        // Primo elemento della riga: 'edge' solo dal bordo sinistro del
+        // contenuto reale (padding dinamico, vedi pagePadX).
+        return row.members[0].r.left <= pagePadX(rows) + 8 ? 'edge' : false;
       }
       if (dir === 'right') {
         if (idx < row.members.length - 1) {
           setFocus(row.members[idx + 1].el);
           return true;
         }
-        return false;
+        // B7: DESTRA a fine riga → prima card della riga successiva (con la
+        // stessa guardia antisoscillazione del GIÙ); su ultima riga scorri
+        // la pagina invece di morire sul bordo.
+        var fyR = lastCenter ? lastCenter.y : 0;
+        for (var rr2 = loc.ri + 1; rr2 < rows.length; rr2++) {
+          if (rows[rr2].members.some(function (m) { return m.el === cur; })) continue;
+          var cyR = 0;
+          for (var mr2 = 0; mr2 < rows[rr2].members.length; mr2++) {
+            cyR = Math.max(cyR, rows[rr2].members[mr2].r.top);
+          }
+          if (cyR < fyR - 4) continue; // riga interamente sopra il fuoco
+          setFocus(rows[rr2].members[0].el);
+          return true;
+        }
+        pageScroll(1);
+        return true;
       }
       if (dir === 'down') {
         // La riga successiva: la prima SOPRA lo sfondo del fuoco che non
@@ -973,16 +1256,30 @@
         return true;
       }
       // up
-      if (loc.ri > 0) {
-        setFocus(pickByX(rows[loc.ri - 1], colX).el);
+      // B11: guardia antisoscillazione speculare a quella del GIÙ — salta le
+      // righe che contengono il fuoco e le righe interamente SOTTO la linea
+      // di fuoco (min-top > fy+4: ogni membro inizia sotto fy). I cluster
+      // cambiano tra le scansioni: senza guardia, SU oscilla tra righe
+      // sovrapposte come faceva GIÙ.
+      var fyU = lastCenter ? lastCenter.y : Infinity;
+      for (var ru = loc.ri - 1; ru >= 0; ru--) {
+        if (rows[ru].members.some(function (m) { return m.el === cur; })) continue;
+        var cyU = Infinity;
+        for (var mu = 0; mu < rows[ru].members.length; mu++) {
+          cyU = Math.min(cyU, rows[ru].members[mu].r.top);
+        }
+        if (cyU > fyU + 4) continue; // riga interamente sotto il fuoco
+        setFocus(pickByX(rows[ru], colX).el);
         return true;
       }
-      // Prima riga: se c'è ancora pagina sopra scorri, altrimenti 'top'.
+      // Prima riga navigabile sopra: se c'è ancora pagina sopra scorri,
+      // altrimenti 'top' (il nativo apre la sidebar).
       if (pageTop() > 60) { pageScroll(-1); return true; }
       return 'top';
     }
 
     function activate() {
+      if (isWatchDoc()) return;
       if (!cur) {
         var f = firstVisible();
         if (f) setFocus(f);
@@ -994,32 +1291,97 @@
         try { cur.focus(); } catch (e) {}
         return;
       }
+      // Mappa §5.5: rail in animazione — il click sarebbe perso
+      // (pointer-events:none per 750ms).
+      if (inAnimating(cur)) return;
       // Span/div "decorativi" con cursor:pointer dentro un anchor/bottone:
       // il click reale sta sull'antenato attivabile.
       var real = cur.closest ? cur.closest('a[href],button,[role="button"]') : null;
-      try { (real || cur).click(); } catch (e2) {}
+      var tgt = real || cur;
+      // Mappa §5.2: click REALE — sequenza completa pointer/mouse + click con
+      // le coordinate del centro dell'elemento. Le righe episodi hanno
+      // onClick=playVideo che parte PRIMA della navigazione e gli href sono
+      // bugiardi (puntano alla pagina titolo, non al player): mai usare
+      // location=href, il default navigate va lasciato agli handler del sito.
+      var cr5 = tgt.getBoundingClientRect();
+      var copts = {
+        bubbles: true, cancelable: true, view: window,
+        clientX: cr5.left + cr5.width / 2,
+        clientY: cr5.top + cr5.height / 2
+      };
+      try { tgt.dispatchEvent(new PointerEvent('pointerdown', copts)); } catch (e5a) {}
+      try { tgt.dispatchEvent(new MouseEvent('mousedown', copts)); } catch (e5b) {}
+      try { tgt.dispatchEvent(new PointerEvent('pointerup', copts)); } catch (e5c) {}
+      try { tgt.dispatchEvent(new MouseEvent('mouseup', copts)); } catch (e5d) {}
+      try { tgt.click(); } catch (e5e) {}
     }
 
     // Reset esplicito (documentato nell'header del modulo): azzera fuoco e
     // cache e ricentra sul candidato più vicino al centro viewport.
     function reset() {
       pendingCenter = false;
+      spaAnchor = false;
       clearTimeout(spaTimer);
       centerFocus();
     }
 
-    // Navigazione SPA (Inertia pushState/replaceState/popstate — richiamata
-    // dagli hook history in fondo al file): il DOM cambierà a breve.
-    // L'observer consuma pendingCenter alla quiete delle mutazioni; questo
-    // timer è la rete di sicurezza se il swap tarda.
-    function spaReset() {
+    // B15: ancora del fuoco attraverso la navigazione SPA. Al pushState
+    // (chiamata spaReset senza argomenti, subito dopo il push: history.length
+    // è già quella dello stack che contiene la pagina di partenza) lastCenter
+    // viene salvato in sessionStorage; al popstate (spaReset(true)) il fuoco
+    // riprende dal candidato più vicino all'ancora invece del centro — il
+    // back torna alla card di partenza, non a una generica al centro.
+    // history.length è stabile fra push e back (conta anche le entry forward),
+    // quindi la stessa chiave identifica la pagina di ritorno. try/catch:
+    // sessionStorage può mancare o essere a quota piena.
+    function saveAnchor() {
+      try {
+        if (!lastCenter) return;
+        sessionStorage.setItem('sctv-anc-' + history.length,
+          JSON.stringify({ x: lastCenter.x, y: lastCenter.y }));
+      } catch (e) { /* no-op */ }
+    }
+    function readAnchor() {
+      try {
+        var s = sessionStorage.getItem('sctv-anc-' + history.length);
+        if (!s) return null;
+        var a = JSON.parse(s);
+        return (a && typeof a.x === 'number' && typeof a.y === 'number') ? a : null;
+      } catch (e) { return null; }
+    }
+
+    function doSpaFocus() {
+      var anchor = spaAnchor ? readAnchor() : null;
+      spaAnchor = false;
+      if (anchor) {
+        if (cur) {
+          cur.classList.remove(RING);
+          try { cur.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); } catch (e) {}
+          cur = null;
+        }
+        hideFrame();
+        cache = null;
+        var f = nearestTo(anchor.x, anchor.y) || firstVisible();
+        if (f) setFocus(f);
+        return;
+      }
+      centerFocus();
+    }
+
+    // Navigazione SPA (Inertia pushState/popstate — richiamata dagli hook
+    // history in fondo al file): il DOM cambierà a breve. L'observer consuma
+    // pendingCenter alla quiete delle mutazioni; questo timer è la rete di
+    // sicurezza se il swap tarda. replaceState NON chiama spaReset (B5).
+    function spaReset(useAnchor) {
+      if (!useAnchor) saveAnchor();
       pendingCenter = true;
+      spaAnchor = !!useAnchor;
       lastMutAt = Date.now();
       clearTimeout(spaTimer);
       spaTimer = setTimeout(function () {
         if (!pendingCenter) return;
         pendingCenter = false;
-        centerFocus();
+        doSpaFocus();
       }, 1200);
     }
 
@@ -1034,17 +1396,17 @@
       var q = window.__sctvQueue;
       if (!q || !q.length) return;
       window.__sctvQueue = [];
-      var first = null;
+      // B13: drena la sequenza in ordine — ogni move già lascia il fuoco
+      // al posto giusto. Il vecchio setFocus(first) finale RI-portava
+      // l'anello al primo tasto della coda, annullando l'intera sequenza.
       for (var i = 0; i < q.length; i++) {
         var cmd = q[i];
         if (cmd[0] === 'move') {
-          var r = move(cmd[1]);
-          if (first === null && r === true) first = cur;
+          move(cmd[1]);
         } else if (cmd[0] === 'activate') {
           activate();
         }
       }
-      if (first) { setFocus(first); }
     }
     drainQueue();
 
@@ -1082,9 +1444,11 @@
   // SPA navigation: Inertia drives history.pushState/replaceState — hook
   // them (plus popstate) and re-report after the new page settles. The same
   // hooks reset the D-pad ring to the center-most candidate (section 9).
+  // B5: replaceState NON è navigazione (Inertia lo usa anche per querystring
+  // e stato di scroll senza cambiare pagina): solo pushState/popstate fanno
+  // spaReset, altrimenti l'anello si ricentra a ogni aggiornamento di stato.
   var navReport = function () {
     setTimeout(reportPageInfo, 700);
-    try { if (window.__sctvNav) window.__sctvNav.spaReset(); } catch (e) { /* no-op */ }
   };
   try {
     ['pushState', 'replaceState'].forEach(function (name) {
@@ -1092,13 +1456,17 @@
       history[name] = function () {
         var r = orig.apply(null, arguments);
         navReport();
+        if (name === 'pushState' && window.__sctvNav) {
+          try { window.__sctvNav.spaReset(); } catch (e) { /* no-op */ }
+        }
         return r;
       };
     });
   } catch (e) { /* no-op */ }
   window.addEventListener('popstate', function () {
     setTimeout(reportPageInfo, 700);
-    try { if (window.__sctvNav) window.__sctvNav.spaReset(); } catch (e) { /* no-op */ }
+    // B15: back/forward → ripristino del fuoco dall'ancora salvata al push.
+    try { if (window.__sctvNav) window.__sctvNav.spaReset(true); } catch (e) { /* no-op */ }
   });
 
   // Re-run the cosmetic hide on DOM mutations (the site is a SPA), debounced.
