@@ -23,11 +23,16 @@ import kotlinx.coroutines.launch
  * così anche l'interfaccia SCtv (SctvActivity) mantiene la funzione che
  * prima esisteva solo nella modalità sito.
  *
- * Flusso (identico a MainActivity):
- *  - checkForUpdates: gate 12h su prefs "scviewer_updates" (condiviso fra
- *    le due activity: un check in una modalità copre anche l'altra), GET
- *    GitHub /releases/latest, confronto semantico dei tag — solo versioni
- *    PIÙ NUOVE (una beta con tag superiore non deve "aggiornare" v1.5.6);
+ * Flusso:
+ *  - checkForUpdates: la proposta di un aggiornamento GIÀ TROVATO (prefs
+ *    "available_tag"/"available_at") torna a ogni avvio, senza rete e senza
+ *    gate — il gate 12h su "last_check" (condiviso fra le due activity: un
+ *    check in una modalità copre anche l'altra) limita SOLO la fetch GET
+ *    GitHub /releases/latest. Confronto semantico dei tag — solo versioni
+ *    PIÙ NUOVE (una beta con tag superiore non deve "aggiornare" v1.5.6).
+ *    Motivo: Cancel nell'installer di sistema (Fire TV reale) — senza
+ *    proposta persistita il gate silenziava l'app per 12 ore e l'utente
+ *    percepiva "non rifà mai più l'update";
  *  - showChip: chip nativo stile bg_sctv_chip, NON focusabile (si usa solo
  *    col cursore, come tutti i chip nativi — B16), cliccabile → download;
  *  - startAutoUpdate: download in cacheDir (update-<tag>.apk), verifica
@@ -67,13 +72,47 @@ object UpdateManager {
     // -- Check ------------------------------------------------------------------
 
     /**
-     * Check aggiornamento con gate 12h (prefs "scviewer_updates"). In caso
-     * di release più nuova invoca [onAvailable] (sul thread UI) col tag:
-     * il chiamante mostra il chip e avvia il download.
+     * Check aggiornamento, due livelli separati:
+     *
+     *  1) Proposta persistita (prefs "available_tag"/"available_at", scritte
+     *     da un check precedente): se il tag persistito è ancora più nuovo
+     *     della versione installata il chip torna SUBITO, senza rete e senza
+     *     gate — [onAvailable] con fromCache=true (il chiamante mostra solo
+     *     il chip: il download parte dal click, così dopo un Cancel
+     *     nell'installer la proposta resta visibile senza riaprire da sola
+     *     l'installer a ogni avvio). Se il tag persistito NON è più nuovo
+     *     dell'installato l'utente ha aggiornato (o la release è stata
+     *     ritirata): pulizia delle chiavi, il chip non rientra.
+     *  2) Fetch GitHub con gate 12h ("last_check"): il gate limita SOLO la
+     *     rete, mai il livello 1. Release più nuova trovata → aggiorna le
+     *     chiavi di proposta e invoca [onAvailable] con fromCache=false
+     *     (chip + auto-download, comportamento invariato). Nulla di più
+     *     nuovo dell'installata → pulizia delle chiavi di proposta e chip
+     *     via (se era comparso da cache in questo avvio: release ritirata).
+     *
+     * Gate bloccato e nessuna proposta persistita: uscita silenziosa (come
+     * prima del fix).
      */
-    fun checkForUpdates(activity: Activity, onAvailable: (tag: String) -> Unit) {
+    fun checkForUpdates(activity: Activity, onAvailable: (tag: String, fromCache: Boolean) -> Unit) {
         ioScope.launch {
             val prefs = activity.getSharedPreferences("scviewer_updates", Activity.MODE_PRIVATE)
+            val current = "v" + BuildConfig.VERSION_NAME
+
+            // 1) Aggiornamento già trovato in un check precedente: chip
+            //    immediato a ogni avvio (prima del fix il gate 12h nascondeva
+            //    la proposta fino al prossimo check: "Cancel → mai più").
+            val cached = prefs.getString("available_tag", null)
+            if (!cached.isNullOrBlank()) {
+                if (isVersionNewer(cached, current)) {
+                    uiHandler.post { onAvailable(cached, true) }
+                } else {
+                    // Non più nuovo dell'installato = aggiornamento completato:
+                    // le chiavi di proposta non servono più (pulizia automatica).
+                    prefs.edit().remove("available_tag").remove("available_at").apply()
+                }
+            }
+
+            // 2) Gate 12h: solo la fetch di rete GitHub, mai la proposta sopra.
             val last = prefs.getLong("last_check", 0L)
             if (System.currentTimeMillis() - last < CHECK_INTERVAL_MS) return@launch
             val latest = runCatching {
@@ -94,12 +133,23 @@ object UpdateManager {
             // Il gate si aggiorna ad ogni fetch RIUSCITO (anche se la release
             // corrente è già la più recente): stessa semantica di MainActivity.
             prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
-            val current = "v" + BuildConfig.VERSION_NAME
             // Solo versioni PIÙ NUOVE: il confronto a stringa mostrava il chip
             // anche a chi ha una versione superiore (es. "v1.5.6" offerto alla
             // pre-release 1.6.0-beta — la beta non deve essere "aggiornata").
             if (latest.isNotBlank() && isVersionNewer(latest, current)) {
-                uiHandler.post { onAvailable(latest) }
+                // Persisti la proposta: i prossimi avvi (anche dopo un Cancel
+                // nell'installer) mostrano il chip subito via livello 1.
+                prefs.edit()
+                    .putString("available_tag", latest)
+                    .putLong("available_at", System.currentTimeMillis())
+                    .apply()
+                uiHandler.post { onAvailable(latest, false) }
+            } else {
+                // Nessuna release più nuova della installata: l'utente ha
+                // aggiornato (o release ritirata) → pulizia proposta e chip
+                // via (no-op se il chip non era comparso in questo avvio).
+                prefs.edit().remove("available_tag").remove("available_at").apply()
+                uiHandler.post { removeChip(activity) }
             }
         }
     }

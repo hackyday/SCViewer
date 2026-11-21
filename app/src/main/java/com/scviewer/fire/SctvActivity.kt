@@ -166,19 +166,23 @@ class SctvActivity : AppCompatActivity() {
             runCatching { AdBlocker.get(this@SctvActivity).syncFromGitHub() }
         }
         // REGRESSIONE: auto-aggiornamento anche in SCtv mode (prima esisteva
-        // solo in MainActivity.onCreate). Stesso gate 12h condiviso (prefs
-        // "scviewer_updates"), chip nativo cliccabile e download/installer
-        // via UpdateManager.
+        // solo in MainActivity.onCreate). Fetch GitHub con gate 12h condiviso
+        // (prefs "scviewer_updates") + proposta persistita: il chip di un
+        // aggiornamento già trovato torna a ogni avvio, anche dopo un Cancel
+        // nell'installer di sistema. Download/installer via UpdateManager.
         checkUpdates()
     }
 
-    /** Check aggiornamento (gate 12h interno): alla release più nuova mostra
-     *  il chip nativo — banner in basso a sinistra, fuori dall'area di
-     *  header/logo di SCtv — e avvia subito il download + installer. */
+    /** Check aggiornamento (proposta persistita + gate 12h interno solo per
+     *  la fetch): alla release più nuova mostra il chip nativo — banner in
+     *  basso a sinistra, fuori dall'area di header/logo di SCtv. Da fetch
+     *  fresca avvia subito download + installer; dal chip di cache (proposta
+     *  già trovata in un check precedente) il download parte solo dal click,
+     *  per non riaprire l'installer a ogni avvio dopo un Cancel. */
     private fun checkUpdates() {
-        UpdateManager.checkForUpdates(this) { tag ->
+        UpdateManager.checkForUpdates(this) { tag, fromCache ->
             UpdateManager.showChip(this, tag, bottomBanner = true)
-            UpdateManager.startAutoUpdate(this, tag)
+            if (!fromCache) UpdateManager.startAutoUpdate(this, tag)
         }
     }
 
@@ -887,9 +891,10 @@ class SctvActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         web.onResume()
-        // Re-check aggiornamento anche al ritorno in primo piano: il gate 12h
-        // (prefs "scviewer_updates") lo rende economico — al più una fetch
-        // GitHub ogni 12 ore, la stessa finestra condivisa con il sito.
+        // Re-check aggiornamento anche al ritorno in primo piano: la proposta
+        // persistita (available_tag) rispunta il chip subito; il gate 12h
+        // (prefs "scviewer_updates") rende economica la fetch — al più una
+        // chiamata GitHub ogni 12 ore, la stessa finestra condivisa col sito.
         checkUpdates()
         // Mantieni il dominio fresco anche qui (la modalità sito lo fa in
         // onResume): il collector pusha domainChanged se cambia.
