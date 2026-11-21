@@ -96,6 +96,12 @@ dependencies {
     // ConstraintLayout for overlays
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
+    // MediaStyle per la notifica di riproduzione del percorso cast FAKE
+    // (debug): SctvCastController costruisce quella notifica con
+    // androidx.media.app.NotificationCompat.MediaStyle. Per il percorso
+    // REALE la notifica la costruisce il framework cast (non serve qui).
+    implementation("androidx.media:media:1.7.0")
+
     // OkHttp for domain fetching
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

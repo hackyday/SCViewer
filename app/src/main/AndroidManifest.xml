@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Cast (C1): il discovery dei device Chromecast scandisce lo stato WiFi. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Cast (B): notifica di riproduzione remota — la mostra il framework
+         durante il cast (e il controller per il percorso fake debug).
+         Android 13+ la richiede a runtime in RemoteActivity; senza permesso
+         nessuna notifica, nessun crash. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Auto-aggiornamento: avvio del package installer di sistema sull'APK
          scaricato (la conferma resta comunque all'utente). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

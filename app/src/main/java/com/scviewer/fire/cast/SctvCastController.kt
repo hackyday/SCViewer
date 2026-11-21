@@ -1,10 +1,18 @@
 package com.scviewer.fire.cast
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import com.google.android.gms.cast.Cast
 import com.google.android.gms.cast.CastDevice
 import com.google.android.gms.cast.MediaInfo
@@ -17,6 +25,7 @@ import com.google.android.gms.cast.framework.Session
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
+import com.scviewer.fire.R
 import com.scviewer.fire.data.HistoryStore
 import com.scviewer.fire.data.PosterCache
 import com.scviewer.fire.data.ProgressStore
@@ -67,6 +76,10 @@ class SctvCastController private constructor(private val appCtx: Context) {
 
         /** Durata del video finto (debug): un film "tipico". */
         const val FAKE_DURATION_SEC = 42 * 60
+
+        /** Notifica manuale del percorso FAKE (debug): un solo ID, un canale. */
+        private const val NOTIF_ID = 42
+        private const val NOTIF_CHANNEL = "sctv_cast_playback"
 
         @Volatile private var INSTANCE: SctvCastController? = null
 
@@ -130,6 +143,8 @@ class SctvCastController private constructor(private val appCtx: Context) {
         fun positionSec(): Int
         fun durationSec(): Int
         fun hasTextTracks(): Boolean
+        fun isMuted(): Boolean
+        fun setMuted(muted: Boolean)
         fun play()
         fun pause()
         fun seekTo(sec: Int)
@@ -169,6 +184,13 @@ class SctvCastController private constructor(private val appCtx: Context) {
         override fun hasTextTracks(): Boolean =
             client.mediaStatus?.mediaInfo?.mediaTracks?.any { it.type == MediaTrack.TYPE_TEXT } == true
 
+        // Mute di stream (setStreamMute): il receiver abbassa l'audio del TV;
+        // lo stato autoritativo arriva col prossimo MediaStatus.
+        override fun isMuted(): Boolean =
+            client.mediaStatus?.isMute() == true
+        override fun setMuted(muted: Boolean) =
+            runCatching { client.setStreamMute(muted) }.let { }
+
         override fun play() = runCatching { client.play() }.let { }
         override fun pause() = runCatching { client.pause() }.let { }
         override fun seekTo(sec: Int) = runCatching { client.seek(sec * 1000L) }.let { }
@@ -183,6 +205,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
     private inner class FakePlayer(private val durationSecValue: Int) : CastPlayer {
         @Volatile private var playing = true
         @Volatile private var startPos = 0
+        @Volatile private var muted = false
         private var playStartedAt = System.currentTimeMillis()
 
         override fun isFake(): Boolean = true
@@ -201,6 +224,13 @@ class SctvCastController private constructor(private val appCtx: Context) {
         }
         override fun durationSec(): Int = durationSecValue
         override fun hasTextTracks(): Boolean = false
+        // Muto finto (solo UI): il player non ha audio, il flag serve a far
+        // lavorare il bottone mute del telecomando identico al caso reale.
+        override fun isMuted(): Boolean = muted
+        override fun setMuted(m: Boolean) {
+            muted = m
+            pushSnapshot()
+        }
         override fun play() {
             if (playing) return
             startPos = positionSec()
@@ -278,6 +308,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
         val receiverName: String,
         val isFake: Boolean,
         val hasTextTracks: Boolean,
+        val isMuted: Boolean,
         val lang: String
     )
 
@@ -306,7 +337,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
             hasMedia = false, title = "", episodeLabel = "", poster = "",
             state = "idle", positionSec = 0, durationSec = 0,
             receiverName = receiverName(), isFake = fakeActive,
-            hasTextTracks = false, lang = currentLang
+            hasTextTracks = false, isMuted = false, lang = currentLang
         ) else Snapshot(
             hasMedia = true,
             title = meta.title,
@@ -318,6 +349,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
             receiverName = receiverName(),
             isFake = player.isFake(),
             hasTextTracks = player.hasTextTracks(),
+            isMuted = player.isMuted(),
             lang = currentLang
         )
     }
@@ -454,6 +486,10 @@ class SctvCastController private constructor(private val appCtx: Context) {
         currentPlayer?.teardown()
         currentPlayer = null
         currentMeta = null
+        // Difensivo: la notifica fake non dovrebbe mai essere visibile durante
+        // una sessione reale, ma si rimuove a qualunque fine sessione (per le
+        // sessioni reali la rimozione della SUA notifica la fa il framework).
+        cancelPlaybackNotification()
         for (l in sessionEndedListeners) runCatching { l() }
         sessionUiListener?.invoke("ended")
     }
@@ -506,6 +542,8 @@ class SctvCastController private constructor(private val appCtx: Context) {
             currentMeta = meta
             logHistory(meta)
             pushSnapshot()
+            // Notifica manuale (il framework cast non vede questo percorso).
+            showFakePlaybackNotification()
             Log.i(TAG, "fake castPlay: ${meta.title} start=${meta.startPositionSec}s")
             return true
         }
@@ -611,6 +649,15 @@ class SctvCastController private constructor(private val appCtx: Context) {
     /** Seek assoluto (scrub OK, skip intro, riapertura lingua). */
     fun seekTo(sec: Int) { currentPlayer?.seekTo(sec) }
 
+    /** Muto on/off (bottone del telecomando): toggle sul player corrente.
+     *  Il push immediato dà il feedback in UI; lo stato autoritativo resta
+     *  il prossimo MediaStatus del receiver (per il fake è il flag interno). */
+    fun toggleMute() {
+        val p = currentPlayer ?: return
+        p.setMuted(!p.isMuted())
+        pushSnapshot()
+    }
+
     /** Cambio lingua audio (dialog telecomando): re-resolve master con lang
      *  nuovo + loadItem a posizione preservata. Fallback: se il re-resolve
      *  fallisce si riprova con la cache (master ancora valida per token). */
@@ -702,6 +749,122 @@ class SctvCastController private constructor(private val appCtx: Context) {
         }
     }
 
+    // -- Notifica di riproduzione (percorso FAKE — debug) ---------------------------------
+
+    /**
+     * Percorso REALE: la notifica la mostra il framework cast
+     * (CastOptionsProvider → CastMediaOptions.setNotificationOptions) quando
+     * il MediaStatus del receiver è attivo, il tap sul body apre
+     * RemoteActivity e la rimozione a sessione finita è gestita dal framework.
+     *
+     * Percorso FAKE (FakePlayer): NON esiste una CastSession → il
+     * MediaNotificationManager del framework non parte. Qui una notifica
+     * MANUALE con gli stessi componenti UX: tap → RemoteActivity, progressi
+     * aggiornati dal tick 1s già esistente, rimossa a sessione finita /
+     * disconnect. Nessuna dipendenza extra: NotificationCompat (core) +
+     * MediaStyle (androidx.media).
+     *
+     * Permessi (Android 13+): senza POST_NOTIFICATIONS la notify() non
+     * mostra nulla e non crasha; qui si esce subito se le notifiche sono
+     * disabilitate (areNotificationsEnabled copre sia il permesso negato
+     * sia il canale spento dall'utente) — nessuna eccezione propagata.
+     */
+    @Volatile private var fakeNotifShown = false
+
+    /** Canale di notifica (API 26+): IMPORTANCE_LOW = senza suono. */
+    private fun ensureNotifChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = appCtx.getSystemService(NotificationManager::class.java) ?: return
+        if (nm.getNotificationChannel(NOTIF_CHANNEL) != null) return
+        runCatching {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    NOTIF_CHANNEL,
+                    "Riproduzione cast (debug)",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Riproduzione remota SCtv (cast finto, debug)"
+                }
+            )
+        }
+    }
+
+    /** ContentIntent: apre/riporta in cima il telecomando (singleTop →
+     *  onNewIntent con refresh metadati, nessun doppione). */
+    private fun remotePendingIntent(): PendingIntent {
+        val intent = Intent(appCtx, RemoteActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(RemoteActivity.EXTRA_REFRESH, true)
+        return PendingIntent.getActivity(
+            appCtx, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Builder della notifica fake: titolo (+ episodio), stato, receiver e
+     *  barra di progresso. Null se non c'è più media fake da mostrare. */
+    private fun buildFakePlaybackNotification(): NotificationCompat.Builder? {
+        val snap = buildSnapshot()
+        if (!fakeActive || !snap.hasMedia) return null
+        val stateText = when (snap.state) {
+            "playing" -> appCtx.getString(R.string.remote_state_playing)
+            "paused" -> appCtx.getString(R.string.remote_state_paused)
+            "buffering" -> appCtx.getString(R.string.remote_state_buffering)
+            else -> appCtx.getString(R.string.remote_state_idle)
+        }
+        val title = if (snap.episodeLabel.isNotBlank())
+            "${snap.title} — ${snap.episodeLabel}" else snap.title
+        return NotificationCompat.Builder(appCtx, NOTIF_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setContentText("$stateText · ${snap.receiverName}")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(remotePendingIntent())
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // MediaStyle senza MediaSession token: solo layout media (le
+            // azioni live nel percorso fake stanno sul telecomando).
+            .setStyle(MediaStyle())
+            .setProgress(snap.durationSec.coerceAtLeast(1), snap.positionSec, false)
+    }
+
+    /** Mostra la notifica fake (a castPlay riuscito). Silenziosa se le
+     *  notifiche sono disabilitate (nessun crash, nessun toast). */
+    private fun showFakePlaybackNotification() {
+        if (!fakeActive) return
+        val nm = NotificationManagerCompat.from(appCtx)
+        if (!nm.areNotificationsEnabled()) return
+        ensureNotifChannel()
+        val b = buildFakePlaybackNotification() ?: return
+        runCatching { nm.notify(NOTIF_ID, b.build()) }
+            .onSuccess { fakeNotifShown = true }
+            .onFailure { Log.w(TAG, "notifica fake non mostrata", it) }
+    }
+
+    /** Aggiornamento progressi: chiamato dal tick 1s (rebuild del builder —
+     *  NotificationCompat non è mutabile). Se il media è finito/assente ma
+     *  la notifica era visibile, la rimuove. */
+    private fun updateFakePlaybackNotification() {
+        if (!fakeNotifShown) return
+        val nm = NotificationManagerCompat.from(appCtx)
+        if (!nm.areNotificationsEnabled()) return
+        val b = buildFakePlaybackNotification()
+        if (b == null) {
+            cancelPlaybackNotification()
+            return
+        }
+        runCatching { nm.notify(NOTIF_ID, b.build()) }
+            .onFailure { Log.w(TAG, "aggiornamento notifica fake fallito", it) }
+    }
+
+    /** Rimozione della notifica fake (sessione finita / disconnect). */
+    private fun cancelPlaybackNotification() {
+        if (!fakeNotifShown) return
+        fakeNotifShown = false
+        runCatching { NotificationManagerCompat.from(appCtx).cancel(NOTIF_ID) }
+    }
+
     // -- Cast finto (DEBUG) -------------------------------------------------------------
 
     /** Attiva la sessione finta (long-press sul MediaRouteButton con il
@@ -719,6 +882,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
         currentPlayer?.teardown()
         currentPlayer = null
         currentMeta = null
+        cancelPlaybackNotification()
         Log.i(TAG, "CAST FINITO terminato")
         for (l in sessionEndedListeners) runCatching { l() }
         sessionUiListener?.invoke("ended")
@@ -728,8 +892,10 @@ class SctvCastController private constructor(private val appCtx: Context) {
 
     private fun tick() {
         // Il player finto avanza da solo via elapsedRealtime (positionSec());
-        // qui serve solo il push regolare dello snapshot.
+        // qui serve solo il push regolare dello snapshot + il refresh dei
+        // progressi nella notifica fake (se visibile).
         pushSnapshot()
+        updateFakePlaybackNotification()
     }
 
     /** Salvataggio progresso (throttle 10s, schema PlayerActivity direct):

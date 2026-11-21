@@ -1,8 +1,12 @@
 package com.scviewer.fire.cast
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,8 +17,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
-import android.widget.ProgressBar
+import android.widget.SeekBar
 import android.widget.TextView
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.scviewer.fire.R
 import com.scviewer.fire.data.SettingsStore
 import coil.load
@@ -25,9 +31,18 @@ import coil.load
  *
  * Comandi (Percorso 1 — Default Media Receiver):
  *  - Play/Pausa (toggle) e ⟲10/10⟳ singoli (seek ±10s);
+ *  - SEEKBAR TRASCINABILE: il dito trascina la barra → preview del target
+ *    (l'etichetta del tempo mostra la posizione scelta) e seek REALE al
+ *    rilascio. Scelta documentata: un solo comando per il receiver — i seek
+ *    continuativi throttled durante il drag riempiono la coda comandi del
+ *    RemoteMediaClient, ogni seek resetta approximateStreamPosition e causa
+ *    stutter/desync sul TV; al rilascio il prossimo snapshot (1s) riallinea
+ *    tutto. I tasti ⟲/⟳ fisici e i tasti media restano ±10 singoli;
  *  - SCRUB: ⟲/⟳ TENUTI → accelerazione 10/30/60s (stessa UX di
  *    PlayerActivity: video in pausa, preview del target, conferma esplicita —
  *    su telefono "Vai a quel punto" fa da OK, "Annulla"/BACK cancella);
+ *  - MUTE: toggle setStreamMute sul receiver (icona speaker on/off; con il
+ *    FakePlayer è un flag interno, lavora identico);
  *  - LINGUA: Audio Italiano/Inglese via re-resolve master con lang nuovo +
  *    loadItem a posizione preservata; SOTTOTITOLI via setActiveMediaTracks
  *    (voce disabilitata se il MediaStatus non espone tracce text);
@@ -36,6 +51,16 @@ import coil.load
  *    nextEpisodeId dai metadati correnti;
  *  - BACK → chiude IL TELECOMANDO (la sessione cast resta viva);
  *  - Disconnect → endSession esplicita (il receiver si ferma).
+ *
+ * Riapertura automatica: dopo OGNI castPlay riuscito SctvActivity fa
+ * startActivity(singleTop) verso questa schermata con l'extra
+ * [EXTRA_REFRESH] — se è già in cima parte [onNewIntent] che ricarica
+ * titolo/poster dal controller (niente doppioni).
+ *
+ * NOTIFICA: Android 13+ richiede POST_NOTIFICATIONS a runtime — la richiesta
+ * parte al primo ingresso in questa schermata (il momento in cui una
+ * notifica di riproduzione può comparare). Accetta/rifiuta: senza permesso
+ * nessuna notifica (framework e percorso fake la saltano), nessun crash.
  *
  * Comandi (Percorso 2 — receiver custom): la sezione D-pad in fondo invia
  * {cmd:"remote", action} via namespace urn:x-cast:sctv — l'interfaccia SCtv
@@ -51,8 +76,10 @@ import coil.load
  *  2. long-press sul bottone cast nell'interfaccia SCtv → si apre questa
  *     schermata col nome "Cast finto (debug)";
  *  3. scegli un titolo: castPlay va allo [SctvCastController.FakePlayer]
- *     stub (film finto di 42 min, stato in memoria, zero rete) e il
- *     telecomando lavora identico al caso reale.
+ *     stub (film finto di 42 min, stato in memoria, zero rete), il
+ *     telecomando lavora identico al caso reale e la NOTIFICA manuale del
+ *     controller appare (tap → riapre qui; il percorso reale usa la
+ *     notifica del framework cast, stessi componenti UX).
  */
 class RemoteActivity : Activity() {
 
@@ -61,13 +88,14 @@ class RemoteActivity : Activity() {
     private lateinit var episodeView: TextView
     private lateinit var receiverView: TextView
     private lateinit var statusView: TextView
-    private lateinit var progress: ProgressBar
+    private lateinit var progress: SeekBar
     private lateinit var timeCur: TextView
     private lateinit var timeTot: TextView
     private lateinit var noMediaView: TextView
     private lateinit var playBtn: TextView
     private lateinit var rewBtn: TextView
     private lateinit var ffwBtn: TextView
+    private lateinit var muteBtn: TextView
     private lateinit var langBtn: TextView
     private lateinit var subsBtn: TextView
     private lateinit var skipBtn: TextView
@@ -88,6 +116,15 @@ class RemoteActivity : Activity() {
     /** true quando l'utente ha annullato la card prossimo episodio. */
     private var nextCardDismissed = false
 
+    // -- DRAG SEEKBAR --------------------------------------------------------------
+
+    /** true mentre il dito trascina la barra: gli snapshot (1s) NON devono
+     *  sovrascrivere barra/tempi col valore reale (stesso schema di
+     *  scrubActive). */
+    private var dragActive = false
+    /** Posizione scelta col dito (seek reale solo al rilascio). */
+    private var dragTargetSec = 0
+
     // -- SCRUB MODE (portato da PlayerActivity, adattato al touch) -------------
     private var scrubActive = false
     private var scrubTargetSec = 0
@@ -101,21 +138,28 @@ class RemoteActivity : Activity() {
     private var scrubAdjustScheduled = false
 
     // -- Soglie (stesse di PlayerActivity) ---------------------------------------
-    private companion object {
-        const val TAG = "RemoteActivity"
+    // companion pubblico solo per EXTRA_REFRESH (letto da SctvActivity e dal
+    // PendingIntent del controller); il resto resta privato.
+    companion object {
+        private const val TAG = "RemoteActivity"
+        /** Extra di riapertura: SctvActivity (post castPlay) e la notifica
+         *  lo passano a true → refresh metadati in onNewIntent. */
+        const val EXTRA_REFRESH = "refresh"
+        /** Codice della richiesta runtime POST_NOTIFICATIONS (Android 13+). */
+        private const val REQ_NOTIF_PERM = 101
         /** Hold minimo (ms) prima di entrare in scrub mode col dito. */
-        const val SCRUB_HOLD_MS = 200L
+        private const val SCRUB_HOLD_MS = 200L
         /** Intervallo degli incrementi durante il hold. */
-        const val SCRUB_REPEAT_MS = 300L
+        private const val SCRUB_REPEAT_MS = 300L
         /** Passo base / medio / massimo dell'accelerazione. */
-        const val SCRUB_STEP_NEAR = 10
-        const val SCRUB_STEP_MED = 30
-        const val SCRUB_STEP_FAR = 60
+        private const val SCRUB_STEP_NEAR = 10
+        private const val SCRUB_STEP_MED = 30
+        private const val SCRUB_STEP_FAR = 60
         /** Incrementi prima del passo medio (30s) e massimo (60s). */
-        const val SCRUB_REPEATS_MED = 6
-        const val SCRUB_REPEATS_FAST = 12
+        private const val SCRUB_REPEATS_MED = 6
+        private const val SCRUB_REPEATS_FAST = 12
         /** Passo fine ai bordi della timeline. */
-        const val SCRUB_STEP_EDGE = 5
+        private const val SCRUB_STEP_EDGE = 5
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -143,6 +187,7 @@ class RemoteActivity : Activity() {
         playBtn = findViewById(R.id.remotePlay)
         rewBtn = findViewById(R.id.remoteRew)
         ffwBtn = findViewById(R.id.remoteFfw)
+        muteBtn = findViewById(R.id.remoteMute)
         langBtn = findViewById(R.id.remoteLang)
         subsBtn = findViewById(R.id.remoteSubs)
         skipBtn = findViewById(R.id.remoteSkip)
@@ -166,6 +211,10 @@ class RemoteActivity : Activity() {
         attachScrubTouch(rewBtn, -1)
         attachScrubTouch(ffwBtn, 1)
 
+        // Drag seekbar: preview del target col dito, seek reale al rilascio.
+        attachDragSeekbar()
+
+        muteBtn.setOnClickListener { controller.toggleMute() }
         langBtn.setOnClickListener { showLanguageDialog() }
         subsBtn.setOnClickListener {
             controller.toggleSubtitles()
@@ -191,9 +240,30 @@ class RemoteActivity : Activity() {
         // Percorso 2: sezione D-pad SOLO con receiver custom impostato.
         bindDpad()
 
+        // POST_NOTIFICATIONS (Android 13+): si chiede al primo ingresso nel
+        // telecomando — la riproduzione cast è appena partita ed è il
+        // momento in cui una notifica può comparare. Rifiuto → nessuna
+        // notifica (framework/fake la saltano), nessun crash.
+        requestNotifPermissionIfNeeded()
+
         controller.addSnapshotListener(onSnapshot)
         controller.addSessionEndedListener(onSessionEnded)
         controller.pushSnapshotNow()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Riapertura mentre è già in cima (startActivity singleTop da
+        // SctvActivity dopo un castPlay riuscito, oppure tap sulla notifica):
+        // l'extra refresh ricarica titolo/poster/stato dal controller —
+        // currentMeta è già quello del titolo nuovo — e riabilita la card
+        // prossimo episodio. Nessun doppione di activity (singleTop).
+        if (intent?.getBooleanExtra(EXTRA_REFRESH, false) == true) {
+            nextCardDismissed = false
+            // Se un drag era attivo onSnapshot lo ignora: il rilascio
+            // provvederà al ridisegno.
+            ctl?.pushSnapshotNow()
+        }
     }
 
     override fun onDestroy() {
@@ -205,12 +275,28 @@ class RemoteActivity : Activity() {
         handler.removeCallbacksAndMessages(null)
     }
 
+    // -- Permessi notifiche ---------------------------------------------------------
+
+    /** POST_NOTIFICATIONS (Android 13+): richiesta runtime silenziosa — se
+     *  negata il controller/framework non mostrano notifiche e nulla crasha. */
+    private fun requestNotifPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED) return
+        runCatching {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF_PERM
+            )
+        }
+    }
+
     // -- Stato (Snapshot del controller, ~1s) -----------------------------------
 
     private val onSnapshot: (SctvCastController.Snapshot) -> Unit = { snap -> runOnUiThread {
-        if (scrubActive) {
-            // In scrub la barra/tempo corrente mostrano il TARGET: gli eventi
-            // residui non devono sovrascriverli (stesso schema PlayerActivity).
+        if (scrubActive || dragActive) {
+            // In scrub/drag la barra/tempo corrente mostrano il TARGET: gli
+            // eventi residui non devono sovrascriverli (stesso schema
+            // PlayerActivity). Il ridisegno torna al rilascio/commit.
             return@runOnUiThread
         }
         receiverView.text = if (snap.receiverName.isBlank())
@@ -227,6 +313,7 @@ class RemoteActivity : Activity() {
             playBtn.visibility = View.GONE
             rewBtn.visibility = View.GONE
             ffwBtn.visibility = View.GONE
+            muteBtn.visibility = View.GONE
             langBtn.visibility = View.GONE
             subsBtn.visibility = View.GONE
             skipBtn.visibility = View.GONE
@@ -237,6 +324,7 @@ class RemoteActivity : Activity() {
         playBtn.visibility = View.VISIBLE
         rewBtn.visibility = View.VISIBLE
         ffwBtn.visibility = View.VISIBLE
+        muteBtn.visibility = View.VISIBLE
         langBtn.visibility = View.VISIBLE
         titleView.text = snap.title
         episodeView.text = snap.episodeLabel
@@ -248,6 +336,11 @@ class RemoteActivity : Activity() {
         timeCur.text = fmt(snap.positionSec)
         timeTot.text = fmt(snap.durationSec)
         updatePlayIcon(playState = snap.state == "playing")
+
+        // Mute: icona speaker on/off (stato dal snapshot — per il receiver
+        // reale è il MediaStatus, per il fake il flag interno).
+        muteBtn.text = if (snap.isMuted)
+            getString(R.string.remote_mute_off) else getString(R.string.remote_mute_on)
 
         // Skip Intro: primi 30s di un titolo >60s (euristica PlayerActivity).
         val skipOk = snap.durationSec > 60 && snap.positionSec > 0 && snap.positionSec < 30
@@ -302,6 +395,56 @@ class RemoteActivity : Activity() {
         val snap = currentPlayerOrNull() ?: return
         if (snap.durationSec <= 0) return
         ctl?.seekTo((snap.positionSec + delta).coerceIn(0, snap.durationSec - 1))
+    }
+
+    // -- DRAG SEEKBAR (touch naturale su telefono) ---------------------------------
+
+    /**
+     * SeekBar trascinabile: mentre il dito trascina la barra si aggiorna
+     * SOLO la preview (etichetta del tempo target + thumb sotto il dito) e
+     * gli snapshot in arrivo vengono ignorati (dragActive). Il seek REALE
+     * parte al RILASCIO: un solo comando per il RemoteMediaClient.
+     *
+     * Perché seek-al-rilascio e non seek continuo throttled (~500ms):
+     *  - ogni RemoteMediaClient.seek è un comando async verso il receiver:
+     *  una raffica durante il drag si accoda e il TV applica i seek in
+     *  serie → stutter visibile e buffering a raffica;
+     *  - ogni seek resetta approximateStreamPosition: a metà drag il
+     *  valore "reale" cambia sotto il dito e la preview salta;
+     *  - al rilascio il prossimo snapshot (1s) riallinea barra e tempi.
+     * Il video NON viene messo in pausa durante il drag (comportamento
+     * Netflix/YouTube: la preview è solo l'etichetta del target).
+     */
+    private fun attachDragSeekbar() {
+        progress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
+                if (!fromUser || !dragActive) return
+                dragTargetSec = value
+                // Preview del target mentre trascini: l'etichetta del tempo
+                // corrente mostra la posizione scelta (la barra segue il dito).
+                timeCur.text = fmt(value)
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {
+                val snap = currentPlayerOrNull() ?: return
+                if (snap.durationSec <= 0) return
+                // Un solo gestore alla volta: se lo scrub a dito tenuto era
+                // attivo, cancel torna alla base (net-zero: riprende il play
+                // se era in play) e il drag lo sostituisce.
+                dragActive = true
+                if (scrubActive) cancelScrub()
+                dragTargetSec = sb?.progress ?: snap.positionSec
+            }
+
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                if (!dragActive) return
+                dragActive = false
+                val snap = currentPlayerOrNull() ?: return
+                if (snap.durationSec <= 0) return
+                // Seek reale UNICO al rilascio (durata nota).
+                ctl?.seekTo(dragTargetSec.coerceIn(0, snap.durationSec - 1))
+            }
+        })
     }
 
     // -- SCRUB via touch (hold su ⟲/⟳) --------------------------------------------
@@ -569,7 +712,8 @@ class RemoteActivity : Activity() {
                 }
                 return true
             }
-            // Tasti media (remoto Bluetooth in percorso 1).
+            // Tasti media (remoto Bluetooth in percorso 1): ±10 singoli, la
+            // seekbar drag resta una gesture solo-touch.
             when (code) {
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY,
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> {

@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Telecomando Chromecast (C2, phone mode): mini-info + progresso + bottoni
-     grandi (play/pausa, ±10, lingua/sottotitoli, skip intro, disconnect),
-     card prossimo episodio, indicatore SCRUB e — per il receiver custom
-     (percorso 2) — sezione D-pad che invia {cmd:"remote", action}. -->
+<!-- Telecomando Chromecast (C2, phone mode): mini-info in alto, SeekBar
+     trascinabile full-width sotto, bottoni grandi (play/pausa, ±10), riga
+     lingua/muto/sottotitoli, skip intro + disconnect, card prossimo
+     episodio, indicatore SCRUB e — per il receiver custom (percorso 2) —
+     sezione D-pad che invia {cmd:"remote", action}. Portrait leggibile a
+     una mano. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -81,13 +83,16 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Progresso -->
-            <ProgressBar
+            <!-- Progresso: SeekBar TRASCINABILE (preview del target col dito,
+                 seek reale al rilascio — vedi attachDragSeekbar). I tasti
+                 ⟲/⟳ e i tasti media restano ±10 singoli. -->
+            <SeekBar
                 android:id="@+id/remoteProgress"
-                style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginStart="-8dp"
+                android:layout_marginEnd="-8dp"
                 android:max="1"
                 android:progress="0"
                 android:progressBackgroundTint="#33FFFFFF"
@@ -172,7 +177,7 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Riga 2: Lingua · Sottotitoli -->
+            <!-- Riga 2: Lingua · Muto · Sottotitoli -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -189,7 +194,19 @@
                     android:gravity="center"
                     android:text="@string/remote_lang_audio"
                     android:textColor="@color/sctv_text_primary"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/remoteMute"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="@string/remote_mute_on"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/remoteSubs"
@@ -200,7 +217,7 @@
                     android:gravity="center"
                     android:text="@string/remote_subs"
                     android:textColor="@color/sctv_text_primary"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <!-- Riga 3: Skip Intro · Disconnect -->

@@ -656,7 +656,25 @@ class SctvActivity : AppCompatActivity() {
                 Log.i(TAG, "play titleId=$titleId → CAST (start=${startPositionSec}s, " +
                     "nextEp=$nextEpisodeId)")
                 val ok = cast.castPlay(castMeta)
-                if (!ok) pushError("Stream non risolvibile per il cast: riprova")
+                if (!ok) {
+                    pushError("Stream non risolvibile per il cast: riprova")
+                } else {
+                    // Il telecomando RIAPRE SEMPRE dopo un play riuscito: se
+                    // l'utente l'aveva chiuso e avvia un titolo dal browsing,
+                    // il play parte sul TV ma il telecomando non riapparirebbe
+                    // (gli eventi di sessione "started"/"resumed" sono già
+                    // passati). singleTop (launchMode in manifest): se è già
+                    // in cima — es. play del prossimo episodio dal telecomando
+                    // stesso — niente doppione, parte onNewIntent che aggiorna
+                    // titolo/poster dall'extra refresh.
+                    startActivity(
+                        Intent(this@SctvActivity,
+                            com.scviewer.fire.cast.RemoteActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            .putExtra(com.scviewer.fire.cast.RemoteActivity.EXTRA_REFRESH, true)
+                    )
+                }
                 return@launch
             }
 

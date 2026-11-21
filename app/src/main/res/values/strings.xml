@@ -102,6 +102,8 @@
     <string name="remote_receiver">Connesso a %s</string>
     <string name="remote_receiver_fake">Cast finto (debug)</string>
     <string name="remote_disconnect">Disconnetti</string>
+    <string name="remote_mute_on">🔊 Audio</string>
+    <string name="remote_mute_off">🔇 Muto</string>
     <string name="remote_lang_audio">Lingua audio</string>
     <string name="remote_subs">Sottotitoli</string>
     <string name="remote_subs_unavailable">Sottotitoli non disponibili su questo stream</string>
