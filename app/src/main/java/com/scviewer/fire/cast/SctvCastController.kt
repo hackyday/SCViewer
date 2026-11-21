@@ -335,15 +335,32 @@ class SctvCastController private constructor(private val appCtx: Context) {
      * CastContext (API Task — la variante sincrona è deprecata e può bloccare
      * il thread), registra i listener di sessione e avvia il tick 1s.
      */
-    fun attach(newHost: Host) {
-        host = newHost
-        ensureCastContext()
-        // Listener di sessione: riregistrati a ogni attach (onResume pattern).
+    /** true dopo la PRIMA registrazione riuscita del listener di sessione
+     *  (addSessionManagerListener non deduplica: senza flag, registrare due
+     *  volte = eventi doppi). */
+    @Volatile private var sessionListenerRegistered = false
+
+    /** Registra il listener di sessione NON APPENA castContext è disponibile.
+     *  FIX: prima la registrazione avveniva solo in attach(), ma
+     *  CastContext.getSharedInstance è una Task ASINCRONA — se non era ancora
+     *  completata, castContext era null e la registrazione veniva saltata
+     *  PER SEMPRE: la sessione partiva (il framework la vedeva) ma il
+     *  listener non riceveva onSessionStarted → niente telecomando e play
+     *  andato al percorso sbagliato. */
+    private fun registerSessionListener() {
+        if (sessionListenerRegistered) return
         castContext?.sessionManager?.let { sm ->
             runCatching {
                 sm.addSessionManagerListener(sessionListener, CastSession::class.java)
+                sessionListenerRegistered = true
             }
         }
+    }
+
+    fun attach(newHost: Host) {
+        host = newHost
+        ensureCastContext()
+        registerSessionListener()
         if (!tickStarted) {
             tickStarted = true
             mainHandler.post(tickRunnable)
@@ -358,6 +375,7 @@ class SctvCastController private constructor(private val appCtx: Context) {
                 sm.removeSessionManagerListener(sessionListener, CastSession::class.java)
             }
         }
+        sessionListenerRegistered = false
     }
 
     /** CastContext lazy (guarded): null su GMS assente o init fallito. */
@@ -367,6 +385,10 @@ class SctvCastController private constructor(private val appCtx: Context) {
             CastContext.getSharedInstance(appCtx, Runnable::run)
                 .addOnSuccessListener { ctx ->
                     castContext = ctx
+                    // FIX race: ora che castContext esiste, registra il
+                    // listener di sessione (a questo punto può anche esserci
+                    // già una sessione attiva ripresa dal GMS).
+                    registerSessionListener()
                     // La sessione può essere ripresa dal GMS prima dell'init:
                     // se c'è già una sessione attiva, notifica come "resumed".
                     if (ctx.sessionManager.currentCastSession != null) {
