@@ -23,6 +23,7 @@ import com.scviewer.fire.data.ProgressStore
 import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.sanitizeProfileId
+import androidx.appcompat.app.AppCompatActivity
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.SettingsDialog
 import com.scviewer.fire.web.SCWebViewClient
@@ -67,7 +68,7 @@ import java.util.concurrent.TimeUnit
  * resolve: errore in UI e stop. La catena "prossimo episodio" riparte da
  * onActivityResult (RESULT_OK con nextEpisodeId). NIENTE player HTML5.
  */
-class SctvActivity : Activity() {
+class SctvActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "SctvActivity"
