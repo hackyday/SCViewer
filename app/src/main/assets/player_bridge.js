@@ -8,13 +8,18 @@
  *  - polla l'esistenza dell'istanza JW (jwplayer() senza argomenti = istanza
  *    live del bundle nogui) e al primo hit:
  *      · setMute(false) — il bundle nogui parte muted;
- *      · si aggancia agli eventi time/play/pause/complete/error e li
- *        inoltra a AndroidJs.onPlayerEvent(JSON);
+ *      · si aggancia agli eventi time/play/pause/mute/complete/error e li
+ *        inoltra a AndroidJs.onPlayerEvent(JSON) ('state' e 'mute' portano
+ *        il mute corrente per la sincronizzazione del bottone nativo);
  *      · invia l'evento 'ready' con uno snapshot completo (stato, pos/dur,
  *        mute, livelli qualità, tracce audio, sottotitoli);
+ *  - FIX audio alla prima riproduzione: ri-applica setMute(false) al primo
+ *    evento 'play' (il mute:true della config può venire ri-applicato dal
+ *    player dopo il ready, o la pipeline audio non era ancora attiva);
  *  - espone window.__sctvPlayer { play, pause, seek, pos, dur, setAudio,
- *    setCaptions, setQuality, snapshot } per i comandi nativi diretti —
- *    bypassa la coda di JsInterface (video_agent non gira in questo mode);
+ *    setCaptions, setQuality, setMute, mute, snapshot } per i comandi
+ *    nativi diretti — bypassa la coda di JsInterface (video_agent non gira
+ *    in questo mode);
  *  - forza object-fit:contain sul video (nogui usa stretching:fill).
  */
 (function () {
@@ -24,8 +29,19 @@
 
   var ready = false;
 
+  // FIX audio "a volte muto alla prima riproduzione": setMute(false) al
+  // ready può arrivare PRIMA che la pipeline audio sia attiva, oppure il
+  // mute:true della config nogui può venire ri-applicato dal player
+  // all'evento di partenza. Al primo 'play' lo stato mute viene quindi
+  // ri-verificato (una sola volta: dopo, il mute è voluto dall'utente).
+  var unmuteOnFirstPlay = true;
+  // Ultimo mute esplicito richiesto dal nativo (bottone MUTO): null = mai
+  // richiesto. L'auto-unmute non deve mai combattere con l'intento utente.
+  var nativeMuteWanted = null;
+
   // Snapshot completo dell'istanza JW live (usato per l'evento 'ready' e
-  // per il dialog LINGUA del nativo).
+  // per il dialog LINGUA del nativo). Il mute è letto LIVE (getMute), mai
+  // memoizzato: è lo stesso valore che il getter mute() espone al nativo.
   function snap() {
     var p = jwplayer();
     return {
@@ -55,8 +71,30 @@
         send({ t: 'time', pos: e.position, dur: p.getDuration() });
       });
     } catch (e2) {}
-    try { p.on('play', function () { send({ t: 'state', state: 'playing' }); }); } catch (e3) {}
-    try { p.on('pause', function () { send({ t: 'state', state: 'paused' }); }); } catch (e4) {}
+    try {
+      p.on('play', function () {
+        // FIX audio (vedi unmuteOnFirstPlay): ri-applica UNA volta al primo
+        // 'play' — qui la pipeline audio è attiva e qualunque re-applica-
+        // zione del mute:true della config è già avvenuta.
+        if (unmuteOnFirstPlay) {
+          unmuteOnFirstPlay = false;
+          if (nativeMuteWanted !== true) {
+            try { if (p.getMute()) p.setMute(false); } catch (eU) {}
+          }
+        }
+        // mute incluso: il bottone MUTO nativo resta sincronizzato anche se
+        // il player ha ri-mutato alla partenza.
+        send({ t: 'state', state: 'playing', mute: !!p.getMute() });
+      });
+    } catch (e3) {}
+    try {
+      p.on('pause', function () { send({ t: 'state', state: 'paused', mute: !!p.getMute() }); });
+    } catch (e4) {}
+    try {
+      // Evento nativo JW di toggle mute: la verità per il bottone del
+      // nativo (arriva anche per mute impostati fuori dai nostri comandi).
+      p.on('mute', function (e) { send({ t: 'mute', mute: !!(e && e.mute) }); });
+    } catch (e7) {}
     try { p.on('complete', function () { send({ t: 'complete' }); }); } catch (e5) {}
     try { p.on('error', function (e) { send({ t: 'error', msg: e && e.message }); }); } catch (e6) {}
     if (!ready) {
@@ -75,6 +113,18 @@
     setAudio: function (i) { jwplayer().setCurrentAudioTrack(i); },
     setCaptions: function (i) { jwplayer().setCurrentCaptions(i); },
     setQuality: function (i) { jwplayer().setCurrentQuality(i); },
+    // FIX audio: mute esplicito del nativo (bottone MUTO direct mode) —
+    // registra l'intento utente così l'auto-unmute al primo 'play' non lo
+    // sovrascrive mai.
+    setMute: function (b) {
+      nativeMuteWanted = !!b;
+      try { jwplayer().setMute(!!b); } catch (e) {}
+    },
+    // Getter live del mute: usato dal snapshot del bottone nativo (sempre
+    // lo stato REALE dell'istanza JW, mai uno stato memoizzato).
+    mute: function () {
+      try { return !!jwplayer().getMute(); } catch (e) { return true; }
+    },
     snapshot: function () { return JSON.stringify(snap()); }
   };
 

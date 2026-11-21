@@ -94,6 +94,10 @@ class PlayerActivity : Activity() {
     private lateinit var playBtn: TextView
     private lateinit var rewBtn: TextView
     private lateinit var ffwBtn: TextView
+    /** FIX audio (SOLO direct mode): bottone MUTO — comanda __sctvPlayer
+     *  .setMute (API bridge) con lo stato tenuto allineato dagli eventi
+     *  'ready'/'state'/'mute' del bridge. In legacy resta GONE. */
+    private lateinit var muteBtn: TextView
     private lateinit var langBtn: TextView
     private lateinit var scrubber: ProgressBar
     private lateinit var timeCur: TextView
@@ -135,7 +139,10 @@ class PlayerActivity : Activity() {
     private val focusOrder: List<View>
         get() = listOfNotNull(
             backBtn,
-            playBtn, rewBtn, ffwBtn, langBtn,
+            playBtn, rewBtn, ffwBtn,
+            // FIX audio: solo direct (GONE in legacy → anello invariato).
+            muteBtn.takeIf { it.visibility == View.VISIBLE },
+            langBtn,
             skipBtn.takeIf { it.visibility == View.VISIBLE },
             nextPlay.takeIf { nextCard.visibility == View.VISIBLE },
             nextCancel.takeIf { nextCard.visibility == View.VISIBLE }
@@ -189,6 +196,10 @@ class PlayerActivity : Activity() {
     private var nextCardDismissed = false
     /** Toast di errore JW: una sola volta per riproduzione. */
     private var directErrorShown = false
+    /** FIX audio: ultimo mute NOTO del player (da snapshot 'ready', eventi
+     *  'state'/'mute' o flip ottimistico del bottone). Parte true: l'embed
+     *  nogui nasce muted finché il bridge non lo sblocca. */
+    private var directMuted = true
     /** HistoryStore: una sola voce per riproduzione (al primo ready). */
     private var historyLogged = false
 
@@ -261,6 +272,7 @@ class PlayerActivity : Activity() {
         playBtn = findViewById(R.id.playerPlay)
         rewBtn = findViewById(R.id.playerRew)
         ffwBtn = findViewById(R.id.playerFfw)
+        muteBtn = findViewById(R.id.playerMute)
         scrubber = findViewById(R.id.playerScrubber)
         timeCur = findViewById(R.id.playerTimeCur)
         timeTot = findViewById(R.id.playerTimeTot)
@@ -313,6 +325,17 @@ class PlayerActivity : Activity() {
         }
         rewBtn.setOnClickListener { seekBy(-10) }
         ffwBtn.setOnClickListener { seekBy(10) }
+        // FIX audio (direct mode SOLO): un tap impone il mute opposto via
+        // __sctvPlayer.setMute (la vecchia toggle legacy NON esiste qui: in
+        // direct mode il comandi passano tutti dall'API del bridge). Flip
+        // ottimistico: gli eventi 'mute'/'state' del bridge correggono
+        // qualunque difformità. In legacy il bottone resta GONE.
+        muteBtn.setOnClickListener {
+            if (!directEmbed) return@setOnClickListener
+            directCall("setMute(${!directMuted})")
+            directMuted = !directMuted
+            updateMuteLabel()
+        }
         langBtn = findViewById(R.id.playerLang)
         langBtn.setOnClickListener { showLanguageDialog() }
         skipBtn.setOnClickListener {
@@ -547,6 +570,11 @@ class PlayerActivity : Activity() {
         blackout.visibility = View.VISIBLE
         handler.postDelayed(blackoutSafety, BLACKOUT_MAX_MS)
         if (directEmbed) {
+            // FIX audio: bottone MUTO visibile SOLO in direct mode (l'embed
+            // nogui non ha GUI propria: è l'unico controllo mute utente).
+            // In legacy resta GONE — flusso legacy invariato.
+            muteBtn.visibility = View.VISIBLE
+            updateMuteLabel()
             // V2: l'embed vixcloud È il main frame. NESSUN two-stage — la
             // risoluzione (token monouso ~10s) è già stata fatta da
             // SctvActivity subito prima del lancio. Il Referer è OBBLIGATORIO
@@ -1049,10 +1077,15 @@ class PlayerActivity : Activity() {
             "ready" -> {
                 nextCardDismissed = false
                 hideBlackout()
-                val st = ev.optJSONObject("snapshot")?.optString("state")
+                val snapshot = ev.optJSONObject("snapshot")
+                val st = snapshot?.optString("state")
                 // nogui autostarta: buffering/playing contano come "playing"
                 // per auto-hide e icona; idle/paused/complete no.
                 playing = when (st) { "paused", "idle", "complete" -> false; else -> true }
+                // FIX audio: allinea il bottone al mute REALE del player al
+                // ready (lo snapshot legge getMute() live).
+                directMuted = snapshot?.optBoolean("mute", directMuted) ?: directMuted
+                updateMuteLabel()
                 updatePlayIcon()
                 showControls()
                 scheduleHide()
@@ -1078,9 +1111,22 @@ class PlayerActivity : Activity() {
             "time" -> onDirectTime(ev.optInt("pos"), ev.optInt("dur"))
             "state" -> {
                 playing = ev.optString("state") == "playing"
+                // FIX audio: gli eventi 'state' portano il mute corrente —
+                // copre il caso del player che ri-muta alla (ri)partenza.
+                if (ev.has("mute")) {
+                    directMuted = ev.optBoolean("mute", directMuted)
+                    updateMuteLabel()
+                }
                 updatePlayIcon()
                 // In scrub mode i controlli restano visibili (preview attiva).
                 if (!scrubActive) scheduleHide()
+            }
+            "mute" -> {
+                // FIX audio: evento dedicato di toggle mute del bridge — la
+                // verità per il bottone (arriva anche per mute impostati
+                // fuori dai comandi del nativo).
+                directMuted = ev.optBoolean("mute", directMuted)
+                updateMuteLabel()
             }
             "complete" -> {
                 // Uscita FORZATA dallo scrub: il video è finito (es. commit
@@ -1390,6 +1436,15 @@ class PlayerActivity : Activity() {
 
     private fun updatePlayIcon() {
         playBtn.text = if (playing) "❚❚" else "▶"
+    }
+
+    /** FIX audio: etichetta del bottone MUTO con lo stato CORRENTE
+     *  ("AUDIO" = audio attivo, "MUTO" = muto) — stessa convenzione di
+     *  playBtn che mostra lo stato, non l'azione. Solo direct: in legacy
+     *  il bottone non esiste (GONE) e la funzione esce subito. */
+    private fun updateMuteLabel() {
+        if (!directEmbed) return
+        muteBtn.text = if (directMuted) "MUTO" else "AUDIO"
     }
 
     // -- Controlli: visibilità + fuoco ---------------------------------------

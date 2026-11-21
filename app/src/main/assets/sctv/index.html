@@ -585,6 +585,20 @@
       });
     }
 
+    /** FIX My List: item MINIMI spinti dal nativo (boot.myListItems /
+     *  myListChanged.items, costruiti dai record FavoritesStore). Upsert nel
+     *  CATALOG (un item lean non sovrascrive mai un item più ricco — vedi
+     *  upsertCatalogItem) + mappa state.myListItems, che resta valida anche
+     *  quando un tab SOSTITUISCE il CATALOG: renderMyListView risolve prima
+     *  il CATALOG poi questa mappa. */
+    function applyMyListItems(list) {
+      (list || []).forEach(it => {
+        if (!it || !it.id) return;
+        state.myListItems[it.id] = it;
+        upsertCatalogItem(it);
+      });
+    }
+
     /** Spinner nel view-container (fix TV #12): tra boot e payload NON si
      *  vede mai il flash "No Titles Available". */
     function showViewLoading() {
@@ -620,6 +634,10 @@
             if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
             state.rows = d.rows || {};
             if (Array.isArray(d.myList)) state.myList = d.myList.slice();
+            // FIX My List: item minimi per i preferiti assenti dal CATALOG
+            // appena caricato (riavvio app: i preferiti non sempre compaiono
+            // negli slider della home).
+            applyMyListItems(d.myListItems);
             // Lista CW COMPLETA dal nativo (per il profilo corrente): reset
             // della mappa prima del merge — mai voci di profili precedenti.
             state.watchProgress = {};
@@ -775,6 +793,9 @@
           case 'myListChanged': {
             if (Array.isArray(d.ids)) {
               state.myList = d.ids.slice();
+              // FIX My List: gli item minimi allegati al push (cambio profilo)
+              // garantiscono le card anche se i preferiti non sono in CATALOG.
+              applyMyListItems(d.items);
               renderCurrentView(false); // push nativo: mai rubafuoco
               if (state.detailModalTitleId) renderDetailModalContent();
             }
@@ -966,6 +987,11 @@
       pendingGenreReq: null,
 
       myList: [],
+      // FIX My List: item MINIMI dai record FavoritesStore (push nativo
+      // boot/myListChanged) per i preferiti che non sono nel CATALOG —
+      // mappa id→item che SOPRAVVIVE ai replace del CATALOG (i tab
+      // home/tv/movie sostituiscono il catalogo a ogni ingresso).
+      myListItems: {},
       ratings: {},
       reminders: [],
       watchProgress: {},
@@ -1443,13 +1469,17 @@
       const navMeta = NAV_ITEMS.find(n => n.id === tabId);
       document.getElementById('view-breadcrumb').textContent = navMeta ? navMeta.label : 'Browse';
       renderSidebarNav();
-      // FIX search/categorie: NON sono tab a righe. Il vecchio percorso
-      // loadTab+spinner li bloccava per sempre: hasRows era sempre false →
-      // showViewLoading() + return (renderSearchView mai invocata) e
-      // Native.loadTab('search') riceveva un tab ignoto dal repository
+      // FIX search/categorie/mylist: NON sono tab a righe. Il vecchio
+      // percorso loadTab+spinner li bloccava per sempre: hasRows era sempre
+      // false → showViewLoading() + return (renderMyListView mai invocata) e
+      // Native.loadTab('mylist') riceveva un tab ignoto dal repository
       // (tabPayload → else → null → evento error "Tab non raggiungibile").
       // Ora render immediato con fuoco nel contenuto, non sulla sidebar.
-      if (tabId === 'search' || tabId === 'categories') {
+      // My List è a stato LOCALE (state.myList, sincronizzata da boot e
+      // push myListChanged nativi — toggle incluso): NESSUN loadTab, niente
+      // rete; gli item minimi per i preferiti fuori CATALOG arrivano già coi
+      // push (applyMyListItems) e le card vengono risolte in renderMyListView.
+      if (tabId === 'search' || tabId === 'categories' || tabId === 'mylist') {
         if (tabId === 'categories' &&
             !Array.isArray(state.categoriesGenres) &&
             !state.categoriesLoading &&
@@ -1863,8 +1893,18 @@
     }
 
     function renderMyListView() {
-      const pool = getScopedCatalog();
-      const saved = pool.filter(i => state.myList.includes(i.id));
+      // FIX My List: risoluzione PER ID (state.myList è l'ordine autorevole,
+      // il più recente in cima) — item COMPLETO dal CATALOG, altrimenti item
+      // minimo spinto dal nativo (record FavoritesStore: title+poster). Così
+      // la griglia esiste anche a CATALOG fresco di riavvio o dopo il replace
+      // di un tab. Profili kids: resta il vecchio scoping (solo item isKids
+      // del CATALOG) — gli item minimi non sono mai isKids e non appaiono.
+      const kids = state.currentProfile && state.currentProfile.isKids;
+      const saved = [];
+      for (const id of state.myList) {
+        const it = CATALOG.find(c => c.id === id) || (kids ? null : state.myListItems[id]);
+        if (it && (!kids || it.isKids)) saved.push(it);
+      }
 
       return `
         <div class="pt-24 px-6 sm:px-10 max-w-7xl mx-auto">

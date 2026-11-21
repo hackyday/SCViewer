@@ -269,6 +269,10 @@ class SctvRepository(private val context: Context) {
             .put("quality", quality)
             .put("domainHost", hostOf(domain))
             .put("myList", myListIds(profileId))
+            // FIX My List: item minimi per i preferiti che potrebbero NON
+            // comparire nel CATALOG del boot (slider della home) — altrimenti
+            // la griglia My List perderebbe le card a ogni riavvio app.
+            .put("myListItems", myListItems(profileId))
             .put("continueWatching", cw)
             .put("catalog", catalogArr)
             .put("heroTitleId", heroTitleId)
@@ -497,6 +501,60 @@ class SctvRepository(private val context: Context) {
             ids.put("site-$id")
         }
         return ids
+    }
+
+    /** FIX My List: item CATALOG MINIMI per i preferiti del profilo
+     *  [profileId], costruiti SOLO dai dati già salvati nel record
+     *  FavoritesStore (title + poster + url) e dai titoli noti di questa
+     *  sessione (knownTitles: type/season/poster quando disponibili).
+     *
+     *  Scelta documentata — enrich on-demand con fetchProps del dettaglio
+     *  SCARTATO: la My List deve renderizzare anche offline e a CATALOG
+     *  fresco di riavvio (i preferiti non sempre compaiono negli slider
+     *  della home, e un 'catalog' di tab SOSTITUISCE il CATALOG lato JS);
+     *  con le fetch servirebbero ≥400ms/req (throttle del sito) × 10 titoli
+     *  = ≥4s SOLO per vedere le proprie card, e offline nulla. Il dettaglio
+     *  completo arriva comunque dal modal via loadDetail quando l'utente
+     *  apre la card. I campi mancanti (genres/synopsis/episodi) rendono
+     *  l'item "lean": l'upsert lato JS non sovrascrive mai un item più
+     *  ricco già presente nel CATALOG.
+     *
+     *  Tipo best-effort: il record non lo conserva; si usa knownTitles se
+     *  il titolo è già stato visto in sessione, altrimenti "movie" (il
+     *  dettaglio reale lo corregge al primo loadDetail). */
+    fun myListItems(profileId: String = DEFAULT_PROFILE_ID): JSONArray {
+        val items = JSONArray()
+        for (f in FavoritesStore.get(context).all(profileId)) {
+            val id = SiteUrl.titleIdOf(f.url) ?: continue
+            val known = synchronized(knownTitles) { knownTitles[id] }
+            val poster = f.poster?.takeIf { it.isNotBlank() }
+                ?: known?.posterUrl?.takeIf { it.isNotBlank() }
+                ?: PosterCache.get(context, id)
+            items.put(
+                JSONObject()
+                    .put("id", "site-$id")
+                    .put("titleId", id)
+                    .put("title", f.title.ifBlank { known?.name ?: "Titolo" })
+                    .put("type", if (known?.type == "tv") "tv" else "movie")
+                    .put("isOriginal", false)
+                    .put("isKids", false)
+                    .put("match", 0)
+                    .put("year", known?.year ?: 0)
+                    .put("maturity", known?.maturity ?: "NR")
+                    .put("durationLabel", known?.durationLabel ?: "")
+                    .put("badges", JSONArray())
+                    .put("genres", JSONArray())
+                    .put("cast", JSONArray())
+                    .put("synopsis", "")
+                    .put("posterUrl", poster ?: "")
+                    .put("backdropUrl", poster ?: "")
+                    .put("url", f.url)
+                    .put("comingSoon", false)
+                    .put("seasons", known?.seasonsCount ?: 0)
+                    .put("episodes", JSONArray())
+            )
+        }
+        return items
     }
 
     /** Toggle My List ↔ FavoritesStore (bucket del profilo [profileId]).

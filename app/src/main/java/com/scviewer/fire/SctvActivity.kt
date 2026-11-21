@@ -426,8 +426,13 @@ class SctvActivity : AppCompatActivity() {
                     repo.continueWatchingJson(normalized)
                 }
                 push("progressChanged", JSONObject().put("continueWatching", cw))
+                // FIX My List: oltre agli ids, gli item MINIMI dai record
+                // FavoritesStore — i preferiti del nuovo profilo potrebbero
+                // non essere nel CATALOG (slider home) e senza item la
+                // griglia My List resterebbe vuota.
                 val ids = withContext(Dispatchers.IO) { repo.myListIds(normalized) }
-                push("myListChanged", JSONObject().put("ids", ids))
+                val items = withContext(Dispatchers.IO) { repo.myListItems(normalized) }
+                push("myListChanged", JSONObject().put("ids", ids).put("items", items))
             }
         }
     }

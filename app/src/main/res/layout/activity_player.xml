@@ -311,6 +311,24 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
+            <!-- FIX audio (direct mode SOLO): bottone MUTO — corregge in un
+                 tap il mute che a volte sopravvive alla prima riproduzione.
+                 GONE in legacy (nessun bridge JW → nessun controllo mute). -->
+            <TextView
+                android:id="@+id/playerMute"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginStart="18dp"
+                android:background="@drawable/player_focus"
+                android:gravity="center"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="AUDIO"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
             <!-- M4b: cambio lingua audio (parametro lang dell'embed vixcloud).
                  Gli SOTTOTITOLI non hanno supporto parametrico nell'embed
                  (verificato nei bundle vixcloud: solo lang/canPlayFHD/scz/
