@@ -479,15 +479,20 @@ class PlayerActivity : Activity() {
                     if (!stage2Started && url != null && !url.contains("/watch/") &&
                         url.startsWith("http")) {
                         stage2Started = true
-                        // Verifica dei cookie stabiliti dallo stage1: senza,
-                        // la watch può venire rimandata alla pagina titolo —
-                        // in quel caso scatta il fallback deterministico.
-                        cookieHeader = runCatching {
-                            CookieManager.getInstance().getCookie(url)
-                        }.getOrNull()
-                        Log.i("Player", "stage1 cookies: " +
-                            if (cookieHeader.isNullOrBlank()) "ASSENTI" else "ok")
                         scope.launch {
+                            // CookieManager.getCookie BLOCCA il thread chiamante
+                            // in attesa di chromium: chiamato sul UI thread
+                            // (onPageFinished) congelava il player mentre
+                            // l'home di stage1 teneva chromium occupata
+                            // (freeze al play — segnalato dall'utente).
+                            // Verifica dei cookie stabiliti dallo stage1: senza,
+                            // la watch può venire rimandata alla pagina titolo —
+                            // in quel caso scatta il fallback deterministico.
+                            cookieHeader = withContext(Dispatchers.IO) {
+                                runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+                            }
+                            Log.i("Player", "stage1 cookies: " +
+                                if (cookieHeader.isNullOrBlank()) "ASSENTI" else "ok")
                             resolvedUrl = withContext(Dispatchers.IO) {
                                 resolveWatchUrl(watchUrl, cookieHeader)
                             }

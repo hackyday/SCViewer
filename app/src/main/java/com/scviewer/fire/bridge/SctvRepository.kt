@@ -125,16 +125,24 @@ class SctvRepository(private val context: Context) {
 
     /** Righe + catalogo da una pagina con slider (/ , /it/tv-shows, /it/movies).
      *  I titoli sono dedup-ati per id dentro [catalogAcc] e gli id item
-     *  ("site-<id>") finiscono nella riga corrispondente. */
+     *  ("site-<id>") finiscono nella riga corrispondente.
+     *
+     *  LAVORO 1 — CAP per tier RAM (audit #5: senza cap il boot iterava TUTTI
+     *  gli slider e TUTTI i titoli → payload e DOM enormi sugli stick deboli):
+     *  [caps] = (maxRail, maxTitoliPerRail); null = nessun cap (high).
+     *  I titoli saltati per cap restano comunque in [rememberTitle] (risoluzione
+     *  slug/toggleMyList gratuita) — è il DOM della rail a restare piccolo. */
     private fun addSlidersRows(
         page: CachedPage?,
         catalogAcc: LinkedHashMap<String, JSONObject>,
-        filterType: String?   // null = tutti; "tv"/"movie" = filtra per tipo
+        filterType: String?,  // null = tutti; "tv"/"movie" = filtra per tipo
+        caps: Pair<Int, Int>? = null
     ): JSONArray {
         val rows = JSONArray()
         if (page == null) return rows
         val sliders = page.props.optJSONArray("sliders") ?: return rows
         for (i in 0 until sliders.length()) {
+            if (caps != null && rows.length() >= caps.first) break
             val s = sliders.optJSONObject(i) ?: continue
             val sliderName = s.optString("name")
             val titles = s.optJSONArray("titles") ?: continue
@@ -144,6 +152,7 @@ class SctvRepository(private val context: Context) {
                 val t = SiteCatalog.parseTitle(raw, page.props, "") ?: continue
                 rememberTitle(t)
                 if (filterType != null && t.type != filterType) continue
+                if (caps != null && ids.length() >= caps.second) break
                 val keyId = "site-" + t.id
                 if (!catalogAcc.containsKey(keyId)) catalogAcc[keyId] = itemJson(t)
                 ids.put(keyId)
@@ -159,10 +168,29 @@ class SctvRepository(private val context: Context) {
         return rows
     }
 
+    /** CAP rail per tier RAM (LAVORO 1): low = max 6 rail × 20 titoli,
+     *  mid = 8 × 25, high (default) = nessun cap. */
+    private fun sliderCaps(quality: String): Pair<Int, Int>? = when (quality) {
+        "low" -> 6 to 20
+        "mid" -> 8 to 25
+        else -> null
+    }
+
     /** Payload dell'evento boot: home + serie + film, hero, righe, CW e My List
      *  (CW e My List SCOPATI al profilo [profileId]).
+     *
+     *  LAVORO 1 — [quality] (default "high" così i chiamanti esistenti
+     *  compilano): campo nuovo "quality" nel payload (il JS ne deriva la
+     *  classe q-* su <html>) + CAP rail per tier (sliderCaps). La quality
+     *  finisce anche nello snapshot offline: il fallback boot conserva la
+     *  tier dell'ultimo boot riuscito.
      *  Null se la home non è raggiungibile (l'Activity gestisce recovery). */
-    fun bootPayload(domain: String, uiMode: String, profileId: String = DEFAULT_PROFILE_ID): JSONObject? {
+    fun bootPayload(
+        domain: String,
+        uiMode: String,
+        profileId: String = DEFAULT_PROFILE_ID,
+        quality: String = "high"
+    ): JSONObject? {
         val home = getPage("/", domain)
             ?: return null
         val tv = getPage("/it/tv-shows", domain)
@@ -208,10 +236,10 @@ class SctvRepository(private val context: Context) {
             )
         }
 
-        val homeSliders = addSlidersRows(home, catalog, null)
+        val homeSliders = addSlidersRows(home, catalog, null, sliderCaps(quality))
         for (i in 0 until homeSliders.length()) homeRows.put(homeSliders.optJSONObject(i))
-        val tvRows = addSlidersRows(tv, catalog, "tv")
-        val movieRows = addSlidersRows(movie, catalog, "movie")
+        val tvRows = addSlidersRows(tv, catalog, "tv", sliderCaps(quality))
+        val movieRows = addSlidersRows(movie, catalog, "movie", sliderCaps(quality))
 
         // Hero = props.title della home (titolo in evidenza con logo+preview).
         var heroTitleId = ""
@@ -238,6 +266,7 @@ class SctvRepository(private val context: Context) {
         val payload = JSONObject()
             .put("bridgeVersion", 1)
             .put("uiMode", uiMode)
+            .put("quality", quality)
             .put("domainHost", hostOf(domain))
             .put("myList", myListIds(profileId))
             .put("continueWatching", cw)
@@ -259,13 +288,19 @@ class SctvRepository(private val context: Context) {
 
     /** Payload dell'evento catalog per un tab: home/tv/movie → righe della
      *  pagina corrispondente; "new" → top10 di serie+film (coming soon v1 è
-     *  vuoto: l'archivio è client-only, nessun SSR — piano §3). */
-    fun tabPayload(tab: String, domain: String): JSONObject? {
+     *  vuoto: l'archivio è client-only, nessun SSR — piano §3).
+     *
+     *  LAVORO 1 — [quality] (default "high"): CAP rail per tier su
+     *  home/tv/movie. Il tab "new" NON è cap-pato: l'output è solo il top10
+     *  (≤10 titoli dopo il filtro top10Rank) e tagliare le righe a monte
+     *  rischierebbe di perdere lo slider top10 se arrivasse dopo la soglia. */
+    fun tabPayload(tab: String, domain: String, quality: String = "high"): JSONObject? {
+        val caps = sliderCaps(quality)
         return when (tab) {
             "home" -> {
                 val page = getPage("/", domain, allowStale = true) ?: return null
                 val catalog = LinkedHashMap<String, JSONObject>()
-                val rows = addSlidersRows(page, catalog, null)
+                val rows = addSlidersRows(page, catalog, null, caps)
                 JSONObject()
                     .put("tab", "home")
                     .put("catalog", JSONArray(catalog.values))
@@ -274,7 +309,7 @@ class SctvRepository(private val context: Context) {
             "tv" -> {
                 val page = getPage("/it/tv-shows", domain, allowStale = true) ?: return null
                 val catalog = LinkedHashMap<String, JSONObject>()
-                val rows = addSlidersRows(page, catalog, "tv")
+                val rows = addSlidersRows(page, catalog, "tv", caps)
                 JSONObject()
                     .put("tab", "tv")
                     .put("catalog", JSONArray(catalog.values))
@@ -283,7 +318,7 @@ class SctvRepository(private val context: Context) {
             "movie" -> {
                 val page = getPage("/it/movies", domain, allowStale = true) ?: return null
                 val catalog = LinkedHashMap<String, JSONObject>()
-                val rows = addSlidersRows(page, catalog, "movie")
+                val rows = addSlidersRows(page, catalog, "movie", caps)
                 JSONObject()
                     .put("tab", "movie")
                     .put("catalog", JSONArray(catalog.values))
@@ -294,6 +329,7 @@ class SctvRepository(private val context: Context) {
                 val movie = getPage("/it/movies", domain, allowStale = true)
                 if (tv == null && movie == null) return null
                 val catalog = LinkedHashMap<String, JSONObject>()
+                // Senza caps (vedi KDoc): serve l'intero dataset per il top10.
                 addSlidersRows(tv, catalog, "tv")
                 addSlidersRows(movie, catalog, "movie")
                 // Solo i top10 ordinati per rank (fix TV #9 lato JS li ordina).

@@ -98,6 +98,34 @@ class SctvActivity : Activity() {
     /** Ultimo host pushato al JS: evita domainChanged ridondanti. */
     @Volatile private var pushedHost = ""
 
+    /**
+     * LAVORO 1 — TIERING RAM ("low"/"mid"/"high"): il device si adegua alla
+     * RAM disponibile. Box migliori = interfaccia più ricca (blur, kenBurns,
+     * shadow ampi); stick deboli (AFTSSS 1GB, Mali-450) = interfaccia lean
+     * ma sempre reattiva. La tier viene decisa UNA volta qui, prima di
+     * qualunque boot push, e consumata in due posti:
+     *  - payload boot, campo nuovo "quality" → il JS mette la classe `q-*`
+     *    su <html> e abilita/disabilita le regole CSS del tier (index.html);
+     *  - [SctvRepository.bootPayload]/[SctvRepository.tabPayload] per i CAP
+     *    delle rail (low = 6 rail × 20 titoli, mid = 8 × 25, high = senza).
+     * isLowRamDevice + soglia 1800MB coprono gli stick 1GB; sotto 3200MB è
+     * mid, sopra high. lazy: getSystemService è economico ma non serve
+     * ricomputarlo — la RAM fisica non cambia durante il processo.
+     */
+    private val sctvQuality: String by lazy {
+        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        val totalMb = mi.totalMem shr 20
+        val tier = when {
+            am.isLowRamDevice || totalMb < 1800 -> "low"
+            totalMb < 3200 -> "mid"
+            else -> "high"
+        }
+        Log.i(TAG, "SCtv quality tier: $tier (RAM=${totalMb}MB, isLowRamDevice=${am.isLowRamDevice})")
+        tier
+    }
+
     // -- Creazione ---------------------------------------------------------------
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -107,6 +135,9 @@ class SctvActivity : Activity() {
         web = findViewById(R.id.sctvWeb)
         loadingOverlay = findViewById(R.id.sctvLoading)
         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+        // LAVORO 1 — tiering RAM: inizializza la tier SUBITO (primo accesso
+        // alla lazy, che logga la tier scelta), prima di qualunque boot push.
+        Log.d(TAG, "SCtv tier attiva: $sctvQuality")
         configureWebView()
         // Cache-busting via versionCode: aggiornare l'asset invalida la URL.
         web.loadUrl("file:///android_asset/sctv/index.html?v=" + BuildConfig.VERSION_CODE)
@@ -133,8 +164,9 @@ class SctvActivity : Activity() {
             onBootReady = { scope.launch { pushBootPayload() } },
             onLoadTab = { tab ->
                 scope.launch {
+                    // LAVORO 1: quality al repository per i CAP rail del tier.
                     val payload = withRecovery("loadTab($tab)") { dom ->
-                        repo.tabPayload(tab, dom)
+                        repo.tabPayload(tab, dom, sctvQuality)
                     }
                     if (payload != null) push("catalog", payload)
                     else pushError("Tab non raggiungibile: controlla la connessione")
@@ -321,8 +353,10 @@ class SctvActivity : Activity() {
     private fun pushBootPayload() {
         scope.launch {
             val uiMode = SettingsStore.getUiMode(this@SctvActivity)
+            // LAVORO 1: quality nel payload boot (campo "quality" → classe
+            // q-* su <html> lato JS) e nei CAP rail del repository.
             val payload = withRecovery("boot") { dom ->
-                repo.bootPayload(dom, uiMode, currentProfileId)
+                repo.bootPayload(dom, uiMode, currentProfileId, sctvQuality)
             }
             if (payload != null) {
                 booted = true

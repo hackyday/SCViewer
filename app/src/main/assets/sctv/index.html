@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<!-- LAVORO 1 — tiering RAM: q-low è lo STATO LEAN pre-boot (sicuro: zero
+     effetti GPU-costosi anche durante lo splash). All'arrivo dell'evento boot
+     la classe viene sostituita con q-low/q-mid/q-high secondo il campo
+     "quality" del payload (fallback "low" se assente). -->
+<html lang="en" class="dark q-low">
 <head>
   <!--
     SCtv — interfaccia TV (asset locale, offline).
@@ -84,6 +88,41 @@
     .animate-ken-burns {
       animation: kenBurns 24s ease-in-out infinite;
     }
+
+    /* ==================== LAVORO 1 — TIER RAM (q-low / q-mid / q-high) ====================
+       La classe q-* arriva dal campo "quality" del payload boot (SctvActivity
+       legge la RAM: isLowRamDevice / soglie 1800 / 3200 MB) e sta su <html>.
+       Audit #1: su Mali-450 OGNI backdrop-filter è readback+gaussian PER FRAME,
+       mai cacheabile perché l'hero animato (#2) si muove sotto → su low niente
+       blur, su mid solo i micro-blur fuori (resta la sidebar, superficie
+       statica). Audit #3: la transition di .tv-focusable include box-shadow →
+       a ogni movimento fuoco 2 elementi ripaintano un raster-blur per 240ms
+       nel momento esatto del tasto → su low/mid shadow statica senza
+       transition. HIGH = default del file (blur, kenBurns, shadow 44px con
+       transition): nessuna regola q-high, resta intatto. */
+
+    /* LOW: zero effetti GPU-costosi. */
+    .q-low .backdrop-blur-xl, .q-low .backdrop-blur-md, .q-low .backdrop-blur-sm { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+    .q-low #view-container .animate-ken-burns { animation:none !important; }
+    .q-low .tv-focusable { transition: transform .16s ease, border-color .16s ease, background-color .16s ease !important; }
+    .q-low .tv-focused { box-shadow: 0 0 0 2.5px #FFFFFF, 0 8px 18px rgba(0,0,0,.85) !important; }
+    .q-low #tv-sidebar { transition: none !important; }
+
+    /* MID: kenBurns sì, micro-blur no, sidebar blur sì; shadow ridotto e
+       istantaneo (niente transition box-shadow). */
+    .q-mid .backdrop-blur-md, .q-mid .backdrop-blur-sm { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+    .q-mid .tv-focusable { transition: transform .2s ease, border-color .2s ease, background-color .18s ease !important; }
+    .q-mid .tv-focused { box-shadow: 0 0 0 2.5px #FFFFFF, 0 12px 28px rgba(0,0,0,.88) !important; }
+
+    /* LOW — compenso di contrasto dove il blur è stato tolto: le superfici
+       restano leggibili su immagini chiare alzando l'opacità dei fondi. */
+    .q-low #tv-sidebar { background: rgba(9, 9, 11, 0.97) !important; }
+    /* Chip header (breadcrumb/Search/orologio): bg 6% bianco senza blur si
+       perde sulla home → chip grigio scuro quasi opaco. */
+    .q-low header .backdrop-blur-md { background-color: rgba(24, 24, 27, 0.92) !important; }
+    /* Bottoni hero (More Info / My List): poggiano sull'immagine full-bleed
+       → fondo scuro semitrasparente al posto del vetro. */
+    .q-low #view-container .backdrop-blur-md { background-color: rgba(10, 10, 12, 0.82) !important; }
   </style>
 </head>
 <body class="bg-[#0E0E10] text-zinc-100 antialiased selection:bg-[#E50914] selection:text-white">
@@ -139,7 +178,9 @@
          sono compatte nella variante base — il fondo della card (Salvare/
          Eliminare) resta raggiungibile col D-pad e, se serve, scrollIntoView
          di setTVFocus porta gli elementi in fondo a visibilità. -->
-    <div class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto no-scrollbar p-5 sm:p-6 shadow-2xl">
+    <!-- LAVORO 2g: id sulla card scrollabile (era l'unico contenitore
+         overflow-y senza id — serve all'early-exit di ensureVerticalInView). -->
+    <div id="profile-editor-card" class="bg-[#18181B] border border-white/10 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto no-scrollbar p-5 sm:p-6 shadow-2xl">
       <h2 id="profile-editor-title" class="text-xl sm:text-2xl font-bold mb-1">Add Profile</h2>
       <p class="text-xs sm:text-sm text-zinc-400 mb-3 sm:mb-5">Create a dedicated profile with personalized watchlists.</p>
 
@@ -344,8 +385,18 @@
         }
       }
 
+      // Audit #11: il key-repeat del D-pad arriva anche sotto i 30ms — senza
+      // throttle ogni evento creava oscillator+gain (nodi WebAudio che si
+      // accumulano e schedulano sul thread audio). Sotto soglia il tick è
+      // semplicemente saltato (il suono non serve a percepire un tasto
+      // ripetuto). playSelect passa da qui: stessa soglia.
+      let lastTickAt = 0;
+
       function playTick(freq = 540, duration = 0.03) {
         if (!enabled) return;
+        const now = performance.now();
+        if (now - lastTickAt < 30) return;
+        lastTickAt = now;
         try {
           ensureCtx();
           if (!ctx) return;
@@ -435,6 +486,18 @@
     let bootReceived = false;
     let pendingDetail = null; // { titleId, req } — correlazione titleDetail (M2)
     let pendingSeason = null; // { titleId, req } — correlazione titleSeason (M2)
+
+    /** LAVORO 1 — tiering RAM: applica la classe q-* su <html>. <html> nasce
+     *  con q-low (stato lean pre-boot, sicuro); al boot la classe viene
+     *  sostituita con q-low/q-mid/q-high secondo il campo "quality" del
+     *  payload (fallback "low" se assente — es. snapshot offline vecchio).
+     *  Le regole CSS del tier stanno nel <style> inline in testa al file. */
+    function applyQualityTier(quality) {
+      const q = (quality === 'low' || quality === 'mid' || quality === 'high') ? quality : 'low';
+      const html = document.documentElement;
+      html.classList.remove('q-low', 'q-mid', 'q-high');
+      html.classList.add('q-' + q);
+    }
 
     function numericTitleId(item) {
       if (!item) return 0;
@@ -531,12 +594,16 @@
           <div class="w-10 h-10 rounded-full border-4 border-white/15 border-t-[#E50914] animate-spin"></div>
           <p class="mt-4 text-sm text-zinc-400">Caricamento catalogo…</p>
         </div>`;
+      markFocusableCacheDirty();
       refreshFocusableElements();
     }
 
     function hideViewLoading() {
       const c = document.getElementById('view-loading');
-      if (c) c.parentElement.innerHTML = '';
+      if (c) {
+        c.parentElement.innerHTML = '';
+        markFocusableCacheDirty();
+      }
     }
 
     window.__sctvReceive = function (ev) {
@@ -546,6 +613,9 @@
         switch (ev.t) {
           case 'boot': {
             bootReceived = true;
+            // LAVORO 1: tier RAM prima del render → le regole CSS del tier
+            // sono attive già sul primo disegno della home.
+            applyQualityTier(d.quality);
             hideViewLoading();
             if (Array.isArray(d.catalog)) replaceCatalog(d.catalog);
             state.rows = d.rows || {};
@@ -643,6 +713,7 @@
                 wrap.innerHTML = renderSearchResultsInner();
                 // Se il fuoco era su una card della griglia sostituita si
                 // ripristina sul primo risultato; resta sul tasto tastiera.
+                markFocusableCacheDirty();
                 refreshFocusableElements();
                 if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
                   const firstCard = wrap.querySelector('.tv-focusable');
@@ -1042,6 +1113,7 @@
             <button onclick="retryConnection()" class="tv-focusable px-6 py-3 rounded-xl bg-[#E50914] hover:bg-[#FF1E27] text-white font-bold text-sm">Riprova</button>
           </div>
         </div>`;
+      markFocusableCacheDirty();
       refreshFocusableElements();
       setTVFocus(focusableList[0]);
     }
@@ -1097,6 +1169,7 @@
       }
 
       grid.innerHTML = html;
+      markFocusableCacheDirty();
       refreshFocusableElements();
       // Fix TV #6: dopo ogni render del gate il fuoco torna sul primo profilo.
       setTVFocus(focusableList[0]);
@@ -1186,6 +1259,8 @@
             </button>
           `).join('')}
         </div>`;
+      // Cache focusable (audit #4): tasti tv-focusable sostituiti.
+      markFocusableCacheDirty();
     }
 
     function profAppendChar(ch) {
@@ -1253,6 +1328,8 @@
           ${preset.label}
         </button>
       `).join('');
+      // Cache focusable (audit #4): preset tv-focusable sostituiti.
+      markFocusableCacheDirty();
     }
 
     function selectAvatarPreset(idx) {
@@ -1320,8 +1397,15 @@
     function expandSidebar(expand) {
       const sb = document.getElementById('tv-sidebar');
       if (!sb) return;
+      // Cache focusable (audit #4): l'espansione cambia la larghezza della
+      // sidebar → i rect dei suoi item. Dirty SOLO se lo stato cambia davvero:
+      // setTVFocus richiama expandSidebar a ogni movimento fuoco e senza il
+      // guard la cache non sarebbe mai valida durante la navigazione dentro
+      // la sidebar. Stato finale identico al comportamento originale.
+      if (expand === sb.classList.contains('sidebar-expanded')) return;
       if (expand) sb.classList.add('sidebar-expanded');
       else sb.classList.remove('sidebar-expanded');
+      markFocusableCacheDirty();
     }
 
     function handleSidebarMouseLeave() {
@@ -1342,6 +1426,9 @@
           </button>
         `;
       }).join('');
+      // Cache focusable (audit #4): i bottoni nav sono tv-focusable e sono
+      // stati sostituiti — la lista cached punterebbe a nodi staccati.
+      markFocusableCacheDirty();
     }
 
     function switchTab(tabId) {
@@ -1376,7 +1463,8 @@
         // (es. il tasto Clear con query vuota).
         const firstInView = focusableList.find(el => el.closest('#view-container'));
         if (firstInView) setTVFocus(firstInView);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Audit #6: scroll istantaneo (anche lo scrollTo al cambio tab).
+        window.scrollTo({ top: 0, behavior: 'auto' });
         return;
       }
       // M2: il boot copre le righe di home/tv/movie; "new" renderizza subito
@@ -1393,7 +1481,8 @@
         return;
       }
       renderCurrentView();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Audit #6: scroll istantaneo (anche lo scrollTo al cambio tab).
+      window.scrollTo({ top: 0, behavior: 'auto' });
     }
 
     /**
@@ -1429,7 +1518,7 @@
             class="tv-focusable relative z-10 w-36 sm:w-44 md:w-48 aspect-[2/3] rounded-xl overflow-hidden bg-sctv-card cursor-pointer border border-white/10 shadow-xl">
 
             ${item.posterUrl
-              ? `<img src="${item.posterUrl}" alt="${item.title}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />`
+              ? `<img src="${item.posterUrl}" alt="${item.title}" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />`
               : `<div class="w-full h-full bg-zinc-900 flex items-center justify-center p-4 text-center font-display text-2xl text-zinc-300">${item.title}</div>`
             }
 
@@ -1473,6 +1562,9 @@
       `;
     }
 
+    /** Audit #6: la rail NON ha la classe scroll-smooth (rimossa) — su TV lo
+     *  scroll è istantaneo su tutti i tier, lo smooth va in conflitto col
+     *  key-repeat del D-pad. */
     function renderCarouselRow(rowId, title, items, options = {}) {
       if (!items || items.length === 0) return '';
       return `
@@ -1491,7 +1583,7 @@
             </div>
           </div>
 
-          <div id="${rowId}" class="flex items-center gap-3.5 sm:gap-4 overflow-x-auto no-scrollbar px-6 sm:px-10 py-3 scroll-smooth">
+          <div id="${rowId}" class="flex items-center gap-3.5 sm:gap-4 overflow-x-auto no-scrollbar px-6 sm:px-10 py-3">
             ${items.map((item, index) => renderPosterCard(item, {
               ...options,
               topRank: options.isTop10 ? index + 1 : null
@@ -1504,7 +1596,9 @@
     function scrollRow(rowId, dir) {
       AudioEngine.playTick();
       const el = document.getElementById(rowId);
-      if (el) el.scrollBy({ left: dir * 560, behavior: 'smooth' });
+      // Audit #6: niente behavior 'smooth' — scroll istantaneo su tutti i
+      // tier (il key-repeat martella i tasti: lo smooth accumula ritardo).
+      if (el) el.scrollBy({ left: dir * 560, behavior: 'auto' });
     }
 
     /** Righe dal bridge (boot.rows): {label, ids, isTop10}. La rail continue
@@ -1569,15 +1663,20 @@
         );
         if (!html) return;
         wrap.insertAdjacentHTML('afterbegin', html);
+        markFocusableCacheDirty();
         refreshFocusableElements();
         return;
       }
       if (!items.length) {
         const section = el.closest('section');
-        if (section) section.remove();
+        if (section) {
+          section.remove();
+          markFocusableCacheDirty();
+        }
         return;
       }
       el.innerHTML = items.map(item => renderPosterCard(item, { showProgress: true })).join('');
+      markFocusableCacheDirty();
       refreshFocusableElements();
     }
 
@@ -1729,7 +1828,7 @@
                 const reminded = state.reminders.includes(item.id);
                 return `
                   <div class="bg-[#18181B] border border-white/10 rounded-2xl overflow-hidden flex flex-col sm:flex-row shadow-xl">
-                    ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" class="sm:w-56 h-44 sm:h-auto object-cover" />` : ''}
+                    ${item.backdropUrl ? `<img src="${item.backdropUrl}" alt="${item.title}" loading="lazy" decoding="async" class="sm:w-56 h-44 sm:h-auto object-cover" />` : ''}
                     <div class="p-5 flex flex-col justify-between flex-1">
                       <div>
                         <div class="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 mb-1">${item.releaseDate || 'Coming Soon'}</div>
@@ -1854,7 +1953,10 @@
      *  è (sui chip o sulla card già in fuoco). */
     function updateCategoriesGrid() {
       const wrap = document.getElementById('categories-grid-wrap');
-      if (wrap) wrap.innerHTML = renderCategoriesGridInner();
+      if (wrap) {
+        wrap.innerHTML = renderCategoriesGridInner();
+        markFocusableCacheDirty();
+      }
       refreshFocusableElements();
     }
 
@@ -2048,7 +2150,12 @@
       const clearBtn = document.getElementById('search-clear-btn');
       if (clearBtn) clearBtn.classList.toggle('hidden', !state.searchQuery);
       const wrap = document.getElementById('search-results-wrap');
-      if (wrap) wrap.innerHTML = renderSearchResultsInner();
+      if (wrap) {
+        wrap.innerHTML = renderSearchResultsInner();
+        // Cache focusable (audit #4): la griglia (card tv-focusable) è stata
+        // sostituita — dirty sincrono, l'observer consegnerebbe solo dopo.
+        markFocusableCacheDirty();
+      }
     }
 
     function appendSearchChar(ch) {
@@ -2241,9 +2348,21 @@
           container.innerHTML = renderSettingsView();
           break;
       }
+      markFocusableCacheDirty();
       refreshFocusableElements();
-      // Fix TV #6: fuoco automatico al primo elemento dopo ogni render.
-      if (focusFirst) setTVFocus(focusableList[0]);
+      // Fix TV #6 + audit #7: il fuoco dopo il render va al PRIMO ELEMENTO
+      // DEL CONTENUTO (#view-container), NON a focusableList[0] — che è il
+      // bottone profilo in sidebar (nel DOM l'aside precede il main): il
+      // fuoco lì espande la sidebar animata a ogni ingresso home
+      // (transition-all su width = layout per frame). Il pattern esiste già
+      // in switchTab per search/categories. Un fuoco esistente e ancora
+      // valido NON viene rubato (push nativi, rientri senza re-render).
+      if (focusFirst) {
+        if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
+          const firstInView = focusableList.find(el => el.closest('#view-container'));
+          setTVFocus(firstInView || focusableList[0]);
+        }
+      }
     }
 
     /**
@@ -2387,7 +2506,7 @@
                   class="tv-focusable flex items-center gap-4 p-3.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.1] cursor-pointer border border-transparent hover:border-white/15 transition">
                   <div class="text-lg font-bold text-zinc-500 w-7 text-center">${ep.ep}</div>
                   <div class="relative w-32 sm:w-40 aspect-video rounded-lg overflow-hidden shrink-0 bg-black">
-                    ${ep.thumb || item.backdropUrl ? `<img src="${ep.thumb || item.backdropUrl}" alt="${ep.title}" class="w-full h-full object-cover opacity-85" />` : ''}
+                    ${ep.thumb || item.backdropUrl ? `<img src="${ep.thumb || item.backdropUrl}" alt="${ep.title}" loading="lazy" decoding="async" class="w-full h-full object-cover opacity-85" />` : ''}
                     <div class="absolute inset-0 flex items-center justify-center">
                       <span class="w-9 h-9 rounded-full bg-black/75 border border-white/80 flex items-center justify-center text-white">
                         <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -2470,7 +2589,7 @@
               <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 ${similar.map(sim => `
                   <div onclick="openDetailModal('${sim.id}')" class="tv-focusable bg-[#222226] rounded-xl overflow-hidden cursor-pointer border border-white/10 hover:border-white/30 transition">
-                    ${sim.backdropUrl ? `<img src="${sim.backdropUrl}" alt="${sim.title}" class="w-full h-28 object-cover" />` : ''}
+                    ${sim.backdropUrl ? `<img src="${sim.backdropUrl}" alt="${sim.title}" loading="lazy" decoding="async" class="w-full h-28 object-cover" />` : ''}
                     <div class="p-3.5">
                       <div class="flex items-center justify-between text-xs mb-1">
                         ${sim.match ? `<span class="text-emerald-400 font-bold">${sim.match}% Match</span>` : '<span></span>'}
@@ -2486,6 +2605,9 @@
           ` : ''}
         </div>
       `;
+      // Cache focusable (audit #4): il modal è stato ricostruito (card,
+      // episodi, similar sono tutti tv-focusable) — dirty sincrono.
+      markFocusableCacheDirty();
     }
 
     // Fix TV #4: il selettore stagione è una coppia di bottoni ◀/▶.
@@ -2556,6 +2678,75 @@
     let focusableList = [];
     let currentFocusedEl = null;
 
+    // --- CACHE focusableList + rect (audit #4, fix per-tasto più importante) ---
+    // moveSpatialFocus gira a OGNI tasto D-pad: prima rifaceva
+    // querySelectorAll('.tv-focusable') + getBoundingClientRect su OGNI
+    // elemento (N≈100-210 in home) + un secondo rect per candidato nel loop
+    // di scoring + closest('#tv-sidebar') per candidato → flush di layout
+    // forzato stimato 20-45ms per pressione (budget frame: 16.7ms).
+    //
+    // Ora: focusableRects è un array parallelo a focusableList con i rect
+    // precomputati {el, x, y, w, h, inSidebar}; la cache vale SOLO se il root
+    // è invariato e !focusableCacheDirty, e il refresh la riusa senza UNA
+    // sola query DOM o lettura di layout.
+    //
+    // INVALIDAZIONE — elenco COMPLETO dei percorsi che settano
+    // focusableCacheDirty:
+    //  1. dirty MANUALE (markFocusableCacheDirty) prima del refresh dopo ogni
+    //    sostituzione DOM: renderCurrentView, showViewLoading,
+    //    hideViewLoading, renderErrorCard, renderProfilesGrid,
+    //    renderSidebarNav, renderProfileKeyboard, renderAvatarPresets,
+    //    renderDetailModalContent, renderContinueRail, updateSearchView,
+    //    updateCategoriesGrid e il wrap.innerHTML del handler searchResults.
+    //    NECESSARIO oltre all'observer: i record MutationObserver vengono
+    //    consegnati in microtask, DOPO la fine del task corrente — il
+    //    refreshFocusableElements() chiamato sincrono nello stesso task
+    //    dell'innerHTML vedrebbe la cache ancora "pulita" con nodi già
+    //    staccati;
+    //  2. MutationObserver su document.body (rete di sicurezza per qualunque
+    //    altro cambio DOM): childList+subtree → dirty con debounce ~100ms;
+    //    attributi class/style → dirty IMMEDIATO solo se toccano hidden/flex
+    //    (open/close modal, gate, viste show/hide): il churn tv-focused del
+    //    D-pad — class aggiunta/rimossa a ogni tasto — NON deve uccidere la
+    //    cache (con attributeOldValue si vedono anche le rimozioni);
+    //  3. CAMBIO DI ROOT dentro refreshFocusableElements: apertura/chiusura
+    //    modal dettaglio, modal profilo e gate selezionano un root diverso →
+    //    rebuild immediato anche prima che l'observer consegni (le tre
+    //    superfici chiamano comunque refresh al loro open/close);
+    //  4. SCROLL (listener in capture su window): scrollIntoView di setTVFocus,
+    //    scrollRow e scrollTo cambiano le posizioni viewport dei rect cached.
+    //    Scelta documentata: UN ricalcolo per il movimento che causa scroll —
+    //    il tasto che ha fatto scorrere ha già consumato il refresh corrente,
+    //    il tasto SUCCESSIVO ricostruisce la cache; i tasti consecutivi sulla
+    //    stessa fila (il caso dominio: sinistra/destra dentro una rail) sono
+    //    cache hit perché la rail scorre e poi si ferma;
+    //  5. espansione/collasso sidebar (expandSidebar): cambia la larghezza e
+    //    quindi i rect degli item sidebar (solo se lo stato cambia davvero).
+    //
+    // Semantica PRESERVATA: stessa selezione di root (precedenza modal
+    // dettaglio > modal profilo > gate > shell), stesso filtro rect > 0,
+    // stessa lista. I rect dei D-pad in gate/modal continuano a funzionare
+    // perché lo scoping del root resta identico.
+    //
+    // TEST su device (AFTSSS):
+    //  a. D-pad lungo in home (su/giù tra rail, destra/sinistra dentro una
+    //     rail): il fuoco atterra sempre sull'elemento giusto, mai su nodi
+    //     staccati o su card di rail già sostituite;
+    //  b. open/close modal dettaglio e modal profilo + gate: il primo tasto
+    //     dopo la chiusura muove il fuoco nella vista sottostante (root);
+    //  c. ricerca veloce (la griglia si re-renderizza per tasto) seguita
+    //     subito da D-pad: nessun fuoco perso;
+    //  d. ritorno dal player (progressChanged → renderContinueRail) e cambio
+    //     profilo (myListChanged): il D-pad vede le card nuove;
+    //  e. selettore stagione nel modal (◀/▶): il fuoco resta sul selettore.
+    let focusableCacheDirty = true;
+    let focusableCacheRoot = null;
+    let focusableRects = [];
+
+    function markFocusableCacheDirty() {
+      focusableCacheDirty = true;
+    }
+
     function refreshFocusableElements() {
       let root = document;
       // Fix TV #3: il root del player overlay non esiste più — l'ordine di
@@ -2570,9 +2761,29 @@
         root = document.getElementById('tv-app-shell');
       }
 
+      // Cache valida (root invariato + !dirty): riuso lista e rect salvati —
+      // zero query DOM e zero getBoundingClientRect per questo tasto.
+      if (!focusableCacheDirty && root === focusableCacheRoot) return;
+
+      focusableCacheDirty = false;
+      focusableCacheRoot = root;
+      focusableRects = [];
       focusableList = Array.from(root.querySelectorAll('.tv-focusable')).filter(el => {
         const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
+        if (rect.width > 0 && rect.height > 0) {
+          focusableRects.push({
+            el: el,
+            x: rect.left,
+            y: rect.top,
+            w: rect.width,
+            h: rect.height,
+            // Precomputato UNA volta: niente closest('#tv-sidebar') per
+            // candidato nel loop di scoring di moveSpatialFocus.
+            inSidebar: Boolean(el.closest('#tv-sidebar'))
+          });
+          return true;
+        }
+        return false;
       });
     }
 
@@ -2587,35 +2798,42 @@
       const isInSidebar = Boolean(el.closest('#tv-sidebar'));
       expandSidebar(isInSidebar);
 
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      // Fix modal (verifica logica): lo scrollIntoView smooth può essere un
-      // no-op su WebView TV (animazioni di sistema disattivate) e lasciare
-      // fuori vista gli elementi in fondo dei contenitori overflow-y (modal
-      // profili/dettaglio, gate). Aggiustamento verticale ISTANTANEO garantito,
-      // solo se l'elemento è fuori vista: le rail orizzontali (overflow-y senza
-      // overflow reale) continuano a scorrere smooth come prima.
+      // Audit #6: scroll ISTANTANEO su tutti i tier — lo smooth va in
+      // conflitto col key-repeat del D-pad (lo scroll animato accumula
+      // ritardo e target sbagliati quando i tasti arrivano a raffica) e
+      // potrebbe comunque essere un no-op su WebView TV (animazioni di
+      // sistema disattivate). 'auto' = salto immediato al target.
+      el.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
+      // Aggiustamento verticale ISTANTANEO garantito, solo se l'elemento è
+      // fuori vista nei contenitori overflow-y reali (modal profili/dettaglio,
+      // gate — vedi early-exit di ensureVerticalInView, audit #8).
       ensureVerticalInView(el);
       AudioEngine.playTick();
     }
 
-    /** Porta el interamente dentro l'area visibile di ogni antenato con
-     *  overflow-y auto/scroll (margini 4px per il ring di fuoco). */
+    /** Porta el interamente dentro l'area visibile del contenitore scrollabile
+     *  verticale che lo contiene (margini 4px per il ring di fuoco).
+     *  Audit #8: il walk su TUTTI gli antenati (getComputedStyle + letture di
+     *  scrollHeight/clientHeight per nodo) costava un flush di layout a ogni
+     *  movimento fuoco. I contenitori con overflow-y REALE sono solo i tre
+     *  layer modal/gate — le rail hanno overflow-x puro (overflow-y calcolato
+     *  "auto" per la regola CSS delle combinazioni overflow, ma mai contenuti
+     *  verticali: scrollHeight == clientHeight, mai scrollate) e la pagina
+     *  principale scorre via window, che questa funzione non toccava nemmeno
+     *  prima. → Early-exit se l'elemento non è dentro uno dei tre layer. */
     function ensureVerticalInView(el) {
-      let node = el.parentElement;
-      while (node && node !== document.documentElement) {
-        if (node.scrollHeight > node.clientHeight) {
-          const cs = window.getComputedStyle(node);
-          if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
-            const box = node.getBoundingClientRect();
-            const r = el.getBoundingClientRect();
-            if (r.top < box.top + 4) {
-              node.scrollTop += r.top - box.top - 4;
-            } else if (r.bottom > box.bottom - 4) {
-              node.scrollTop += r.bottom - box.bottom + 4;
-            }
-          }
-        }
-        node = node.parentElement;
+      const box =
+        el.closest('#detail-modal-card') ||
+        el.closest('#profile-editor-card') ||
+        el.closest('#profile-screen');
+      if (!box) return;
+      if (box.scrollHeight <= box.clientHeight) return;
+      const boxRect = box.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      if (r.top < boxRect.top + 4) {
+        box.scrollTop += r.top - boxRect.top - 4;
+      } else if (r.bottom > boxRect.bottom - 4) {
+        box.scrollTop += r.bottom - boxRect.bottom + 4;
       }
     }
 
@@ -2623,29 +2841,38 @@
       refreshFocusableElements();
       if (focusableList.length === 0) return;
 
-      if (!currentFocusedEl || !focusableList.includes(currentFocusedEl)) {
+      // Audit #4: indice corrente con UNA scansione (serve anche per pescare
+      // il rect cached); assente/staccato → fuoco al primo elemento, come
+      // prima della cache.
+      const currIdx = focusableList.indexOf(currentFocusedEl);
+      if (currIdx < 0) {
         setTVFocus(focusableList[0]);
         return;
       }
 
-      const currInSidebar = Boolean(currentFocusedEl.closest('#tv-sidebar'));
-      const currRect = currentFocusedEl.getBoundingClientRect();
-      const cx = currRect.left + currRect.width / 2;
-      const cy = currRect.top + currRect.height / 2;
+      // Rect e inSidebar dalla CACHE (precomputati nel refresh): niente
+      // getBoundingClientRect né closest('#tv-sidebar') nel loop di scoring.
+      // Il centro dell'elemento in fuoco resta accurato anche con la cache
+      // perché transform: scale() ha origine al centro — lo scaling non
+      // sposta il centroide (il rect del candidato non in fuoco non è
+      // trasformato, quindi coincide col valore misurato dal refresh).
+      const cur = focusableRects[currIdx];
+      const currInSidebar = cur.inSidebar;
+      const cx = cur.x + cur.w / 2;
+      const cy = cur.y + cur.h / 2;
 
       let bestCandidate = null;
       let bestScore = Infinity;
 
-      for (const cand of focusableList) {
-        if (cand === currentFocusedEl) continue;
-        const candInSidebar = Boolean(cand.closest('#tv-sidebar'));
+      for (let i = 0; i < focusableRects.length; i++) {
+        const cand = focusableRects[i];
+        if (cand.el === currentFocusedEl) continue;
 
-        if (currInSidebar && direction === 'right' && candInSidebar) continue;
-        if (currInSidebar && (direction === 'up' || direction === 'down') && !candInSidebar) continue;
+        if (currInSidebar && direction === 'right' && cand.inSidebar) continue;
+        if (currInSidebar && (direction === 'up' || direction === 'down') && !cand.inSidebar) continue;
 
-        const r = cand.getBoundingClientRect();
-        const tx = r.left + r.width / 2;
-        const ty = r.top + r.height / 2;
+        const tx = cand.x + cand.w / 2;
+        const ty = cand.y + cand.h / 2;
         const dx = tx - cx;
         const dy = ty - cy;
 
@@ -2667,7 +2894,7 @@
           const score = primaryDist + orthoDist * 2.6;
           if (score < bestScore) {
             bestScore = score;
-            bestCandidate = cand;
+            bestCandidate = cand.el;
           }
         }
       }
@@ -2676,6 +2903,57 @@
         setTVFocus(bestCandidate);
       }
     }
+
+    // --- Invalidazione cache (audit #4): observer + listener scroll ----------
+    // Rete di sicurezza DOM (i dirty manuali coprono i render noti). La
+    // consegna dei record è asincrona (microtask), per questo i percorsi
+    // sincroni (innerHTML + refresh nello stesso task) marcano a mano.
+    let focusableMoTimer = null;
+    const focusableMo = new MutationObserver((muts) => {
+      let immediate = false;
+      let structural = false;
+      for (const m of muts) {
+        if (m.type === 'attributes') {
+          // Solo i toggle di visibilità (hidden/flex: open/close modal e
+          // gate, show/hide viste) invalidano SUBITO — in entrambe le
+          // direzioni, grazie a attributeOldValue. Il churn tv-focused del
+          // D-pad non tocca hidden/flex: la cache sopravvive alla navigazione.
+          const now = m.target.classList;
+          const old = (m.oldValue || '').split(/\s+/);
+          if (now.contains('hidden') || now.contains('flex') ||
+              old.indexOf('hidden') !== -1 || old.indexOf('flex') !== -1) {
+            immediate = true;
+            break;
+          }
+        } else {
+          structural = true;
+        }
+      }
+      if (immediate) {
+        clearTimeout(focusableMoTimer);
+        focusableMoTimer = null;
+        focusableCacheDirty = true;
+      } else if (structural && !focusableMoTimer) {
+        // Debounce ~100ms: un render a blocchi genera molti record nello
+        // stesso frame — basta UN dirty quando la raffica si acquieta.
+        focusableMoTimer = setTimeout(() => {
+          focusableMoTimer = null;
+          focusableCacheDirty = true;
+        }, 100);
+      }
+    });
+    focusableMo.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+      attributeOldValue: true
+    });
+
+    // Audit #4 — scroll → dirty: ogni scroll (pagina, rail, modal) sposta le
+    // posizioni viewport dei rect cached (vedi punto 4 del commento cache:
+    // si accetta un ricalcolo per il movimento che causa scroll).
+    window.addEventListener('scroll', () => { focusableCacheDirty = true; }, { capture: true, passive: true });
 
     function toggleVirtualRemote() {
       AudioEngine.playSelect();
