@@ -197,7 +197,8 @@
         </div>
 
         <!-- Fix TV #2: era una <label> con checkbox (inaccessible al D-pad). -->
-        <button type="button" id="profile-kids-toggle" onclick="toggleKidsCheckbox()" class="tv-focusable flex items-center justify-between bg-[#222226] border border-white/5 p-3 sm:p-4 rounded-xl w-full text-left transition">
+        <!-- Kids disattivato: richiede dati di classificazione (vedi saveProfileEditor). -->
+        <button type="button" id="profile-kids-toggle" onclick="toggleKidsCheckbox()" class="tv-focusable hidden flex items-center justify-between bg-[#222226] border border-white/5 p-3 sm:p-4 rounded-xl w-full text-left transition">
           <div>
             <div class="font-semibold text-sm text-white">Kids Profile</div>
             <div class="text-xs text-zinc-400">Restrict catalog to PG and family titles</div>
@@ -1378,7 +1379,13 @@
         showToast('Please enter a profile name');
         return;
       }
-      const isKids = profKidsChecked;
+      // Lettura del checkbox preservata per la riattivazione.
+      const isKidsChecked = profKidsChecked;
+      // Kids disattivato: richiede dati di classificazione (vedi saveProfileEditor).
+      // Il filtro kids (getScopedCatalog) usa il campo isKids che i dati reali di
+      // streamingcommunity NON forniscono: un profilo kids mostrerebbe catalogo
+      // vuoto. Riattivare = togliere questa guard e il `hidden` su #profile-kids-toggle.
+      const isKids = false;
       const preset = AVATAR_PRESETS[state.selectedPresetIdx];
 
       if (state.editingProfileId) {
