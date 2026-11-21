@@ -24,10 +24,12 @@ import com.scviewer.fire.data.SettingsStore
 import com.scviewer.fire.data.SiteUrl
 import com.scviewer.fire.data.sanitizeProfileId
 import androidx.appcompat.app.AppCompatActivity
+import com.scviewer.fire.network.AdBlocker
 import com.scviewer.fire.network.HlsRewriter
 import com.scviewer.fire.ui.SettingsDialog
 import com.scviewer.fire.web.SCWebViewClient
 import com.scviewer.fire.work.DomainRefreshScheduler
+import com.scviewer.fire.work.UpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -153,6 +155,31 @@ class SctvActivity : AppCompatActivity() {
         // Cast Chromecast (C1): SOLO phone mode — su Fire TV questa funzione
         // esce subito e NESSUN codice cast viene istanziato.
         setupCastIfAvailable()
+
+        // REGRESSIONE (parità con la modalità sito): sync della blocklist
+        // adblock da GitHub a ogni boot — il Player (direct) filtra le
+        // richieste col singleton AdBlocker e qui è l'unico avvio del
+        // processo (il WorkManager periodico la rinfresca solo ogni 30 min).
+        // Fuori dallo scope dell'activity: la coroutine deve concludersi
+        // anche se SctvActivity viene distrutta subito.
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { AdBlocker.get(this@SctvActivity).syncFromGitHub() }
+        }
+        // REGRESSIONE: auto-aggiornamento anche in SCtv mode (prima esisteva
+        // solo in MainActivity.onCreate). Stesso gate 12h condiviso (prefs
+        // "scviewer_updates"), chip nativo cliccabile e download/installer
+        // via UpdateManager.
+        checkUpdates()
+    }
+
+    /** Check aggiornamento (gate 12h interno): alla release più nuova mostra
+     *  il chip nativo — banner in basso a sinistra, fuori dall'area di
+     *  header/logo di SCtv — e avvia subito il download + installer. */
+    private fun checkUpdates() {
+        UpdateManager.checkForUpdates(this) { tag ->
+            UpdateManager.showChip(this, tag, bottomBanner = true)
+            UpdateManager.startAutoUpdate(this, tag)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -860,6 +887,10 @@ class SctvActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         web.onResume()
+        // Re-check aggiornamento anche al ritorno in primo piano: il gate 12h
+        // (prefs "scviewer_updates") lo rende economico — al più una fetch
+        // GitHub ogni 12 ore, la stessa finestra condivisa con il sito.
+        checkUpdates()
         // Mantieni il dominio fresco anche qui (la modalità sito lo fa in
         // onResume): il collector pusha domainChanged se cambia.
         scope.launch { runCatching { domainRepo.refreshOnline() } }
@@ -885,6 +916,10 @@ class SctvActivity : AppCompatActivity() {
         // Cast (C1): detach del controller (rimuove listener di sessione).
         // La SESSIONE cast non viene chiusa: il receiver continua a suonare.
         com.scviewer.fire.cast.SctvCastController.peek()?.detach(castHost)
+        // Chip aggiornamento: via dal content (nessun riferimento a view di
+        // activity morte; il download in corso prosegue nello scope del
+        // manager e l'installer arriverà al ritorno in primo piano).
+        UpdateManager.removeChip(this)
         scope.cancel()
         web.apply {
             stopLoading()
