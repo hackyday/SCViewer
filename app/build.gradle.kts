@@ -106,4 +106,15 @@ dependencies {
 
     // Copertine negli overlay (async + cache di memoria/disco)
     implementation("io.coil-kt:coil:2.6.0")
+
+    // Cast Chromecast (C1, solo phone mode): framework GMS + MediaRouter.
+    // Su Fire TV il codice cast non viene MAI istanziato (guard DeviceProfile
+    // + GoogleApiAvailability in SctvActivity) — la dipendenza resta nel
+    // pacchetto ma inerte. Nessun media3.
+    // NOTA versione: la 23.0.0 trascina androidx.mediarouter 1.9.0-beta01 e
+    // core 1.17.0 (richiedono compileSdk 36 + AGP 9.1 — incompatibili con
+    // questo progetto: compileSdk 34 + AGP 8.5.2). La 22.0.0 è l'ultima
+    // compatibile: trascina mediarouter 1.6.0 e core 1.13.1. API equivalenti
+    // (CastContext Task API, RemoteMediaClient, SessionManagerListener).
+    implementation("com.google.android.gms:play-services-cast-framework:22.0.0")
 }

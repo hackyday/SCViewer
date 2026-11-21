@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -153,6 +154,30 @@ class SettingsDialog(
             )
         }
 
+        // -- Cast Chromecast (C1) --------------------------------------------
+        // App ID del receiver custom (vuoto = Default Media Receiver). Il
+        // cambio ha effetto alla riapertura dell'app: il framework GMS legge
+        // l'OptionsProvider quando CastContext viene creato.
+        val castAppIdEdit = findViewById<EditText>(R.id.settingsCastAppId)
+        castAppIdEdit.setText(SettingsStore.getCastAppId(context))
+
+        // Cast finto (DEBUG ONLY): RemoteMediaClient stub per provare il
+        // telecomando senza Chromecast. Nei build release la voce esiste nel
+        // layout ma resta nascosta (e il flag non viene mai letto).
+        val fakeToggle = findViewById<Button>(R.id.settingsCastFakeToggle)
+        var fakeValue = SettingsStore.getCastFake(context)
+        fun renderFake() {
+            fakeToggle.text = context.getString(
+                if (fakeValue) R.string.settings_cast_fake_on else R.string.settings_cast_fake_off
+            )
+        }
+        renderFake()
+        fakeToggle.setOnClickListener {
+            fakeValue = !fakeValue
+            renderFake()
+        }
+        if (!com.scviewer.fire.BuildConfig.DEBUG) fakeToggle.visibility = View.GONE
+
         findViewById<Button>(R.id.settingsCancel).setOnClickListener { dismiss() }
         findViewById<Button>(R.id.settingsSave).setOnClickListener {
             val modeChanged = uiMode != initialMode
@@ -162,6 +187,8 @@ class SettingsDialog(
             SettingsStore.setQualityStop(context, qualitySeek.progress)
             SettingsStore.setAlternateUa(context, uaValue)
             SettingsStore.setSitePointerMode(context, navPointer)
+            SettingsStore.setCastAppId(context, castAppIdEdit.text.toString())
+            if (com.scviewer.fire.BuildConfig.DEBUG) SettingsStore.setCastFake(context, fakeValue)
             onSaved.invoke(modeChanged)
             Toast.makeText(
                 context,

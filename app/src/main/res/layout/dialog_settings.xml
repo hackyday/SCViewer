@@ -226,6 +226,62 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
+            <!-- Cast Chromecast (C1): App ID del receiver CUSTOM. Vuoto =
+                 Default Media Receiver (percorso 1). Solo phone mode usa il
+                 cast: su Fire TV questa voce resta inerte. -->
+            <LinearLayout
+                android:id="@+id/settingsCastSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/settings_cast_label"
+                    android:textColor="@color/sctv_text_secondary"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/settingsCastAppId"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_sctv_card"
+                    android:hint="@string/settings_cast_hint_short"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textColorHint="@color/sctv_text_muted"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/settings_cast_hint"
+                    android:textColor="@color/sctv_text_muted"
+                    android:textSize="13sp" />
+
+                <!-- DEBUG ONLY: cast finto (RemoteMediaClient stub locale)
+                     per provare il telecomando senza Chromecast. Nascosto nei
+                     build release. -->
+                <Button
+                    android:id="@+id/settingsCastFakeToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:minWidth="200dp"
+                    android:text="@string/settings_cast_fake_off"
+                    android:textAllCaps="false"
+                    android:textColor="@color/sctv_text_primary" />
+            </LinearLayout>
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

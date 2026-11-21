@@ -1,0 +1,430 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Telecomando Chromecast (C2, phone mode): mini-info + progresso + bottoni
+     grandi (play/pausa, ±10, lingua/sottotitoli, skip intro, disconnect),
+     card prossimo episodio, indicatore SCRUB e — per il receiver custom
+     (percorso 2) — sezione D-pad che invia {cmd:"remote", action}. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/sctv_bg_obsidian">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <!-- Mini-info: poster + titolo + receiver + stato -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/remotePoster"
+                    android:layout_width="64dp"
+                    android:layout_height="96dp"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="@null"
+                    android:scaleType="centerCrop" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/remoteTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/remoteEpisode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/sctv_text_secondary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/remoteReceiverName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textColor="@color/sctv_accent"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/remoteStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/sctv_text_muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Progresso -->
+            <ProgressBar
+                android:id="@+id/remoteProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:max="1"
+                android:progress="0"
+                android:progressBackgroundTint="#33FFFFFF"
+                android:progressTint="@color/sctv_accent"
+                android:secondaryProgressTint="#55FFFFFF"
+                android:thumbTint="@color/sctv_accent" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/remoteTimeCur"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/remoteTimeTot"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/sctv_text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/remoteNoMedia"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/remote_no_media"
+                android:textColor="@color/sctv_text_secondary"
+                android:textSize="14sp" />
+
+            <!-- Riga 1: ⟲10 · Play/Pausa · 10⟳ -->
+            <LinearLayout
+                android:id="@+id/remoteMainRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/remoteRew"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="⟲ 10s"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/remotePlay"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1.4"
+                    android:background="@drawable/bg_sctv_button_primary"
+                    android:gravity="center"
+                    android:text="▶"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/remoteFfw"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="10s ⟳"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Riga 2: Lingua · Sottotitoli -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/remoteLang"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="@string/remote_lang_audio"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/remoteSubs"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="@string/remote_subs"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <!-- Riga 3: Skip Intro · Disconnect -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/remoteSkip"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="@string/remote_skip_intro"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/remoteDisconnect"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="@string/remote_disconnect"
+                    android:textColor="@color/sctv_accent"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <!-- Prossimo episodio (card, ultimi 90s) -->
+            <LinearLayout
+                android:id="@+id/remoteNextCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_sctv_card"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/remoteNextLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/remote_next_ep"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/remoteNextPlay"
+                        android:layout_width="0dp"
+                        android:layout_height="46dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_sctv_button_primary"
+                        android:gravity="center"
+                        android:text="▶ Riproduci"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/remoteNextCancel"
+                        android:layout_width="0dp"
+                        android:layout_height="46dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_sctv_button_ghost"
+                        android:gravity="center"
+                        android:text="Annulla"
+                        android:textColor="@color/sctv_text_secondary"
+                        android:textSize="15sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Percorso 2 (receiver custom): sezione D-pad. I tasti inviano
+                 {cmd:"remote", action} al receiver via namespace sctv —
+                 l'interfaccia SCtv COMPATTA che gira sul TV esegue le stesse
+                 handleRemoteAction dell'HTML. Nascosta col Default receiver. -->
+            <LinearLayout
+                android:id="@+id/remoteDpadSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/bg_sctv_card"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/remote_dpad_hint"
+                    android:textColor="@color/sctv_text_muted"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/remoteDpadUp"
+                    android:layout_width="72dp"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="▲"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="18sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/remoteDpadLeft"
+                        android:layout_width="72dp"
+                        android:layout_height="52dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_sctv_button_ghost"
+                        android:gravity="center"
+                        android:text="◀"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="18sp" />
+
+                    <TextView
+                        android:id="@+id/remoteDpadOk"
+                        android:layout_width="72dp"
+                        android:layout_height="52dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_sctv_button_primary"
+                        android:gravity="center"
+                        android:text="OK"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/remoteDpadRight"
+                        android:layout_width="72dp"
+                        android:layout_height="52dp"
+                        android:background="@drawable/bg_sctv_button_ghost"
+                        android:gravity="center"
+                        android:text="▶"
+                        android:textColor="@color/sctv_text_primary"
+                        android:textSize="18sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/remoteDpadDown"
+                    android:layout_width="72dp"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_sctv_button_ghost"
+                    android:gravity="center"
+                    android:text="▼"
+                    android:textColor="@color/sctv_text_primary"
+                    android:textSize="18sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Indicatore SCRUB MODE (portato da PlayerActivity): target grande al
+         centro + conferma/annulla espliciti (su telefono non c'è OK fisico). -->
+    <LinearLayout
+        android:id="@+id/remoteScrubBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_margin="32dp"
+        android:background="@drawable/bg_sctv_card"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/remoteScrubTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/sctv_text_primary"
+            android:textSize="40sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/remoteScrubCancel"
+                android:layout_width="0dp"
+                android:layout_height="50dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_sctv_button_ghost"
+                android:gravity="center"
+                android:text="Annulla"
+                android:textColor="@color/sctv_text_secondary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/remoteScrubCommit"
+                android:layout_width="0dp"
+                android:layout_height="50dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_sctv_button_primary"
+                android:gravity="center"
+                android:text="Vai a quel punto"
+                android:textColor="@color/sctv_text_primary"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

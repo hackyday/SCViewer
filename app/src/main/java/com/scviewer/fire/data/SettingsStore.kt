@@ -134,4 +134,39 @@ object SettingsStore {
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_SCTV_AUDIO_LANG, if (value == "en") "en" else "it").apply()
     }
+
+    // -- Cast Chromecast (C1, solo phone mode) ---------------------------------
+
+    private const val KEY_CAST_APP_ID = "cast_app_id"
+
+    /** Receiver App ID del Cast CUSTOM (percorso 2): l'utente registra il
+     *  receiver SCtv su Google Cast SDK Developer Console e incolla qui l'ID
+     *  (es. "ABCD1234"). Vuoto = Default Media Receiver di Google (percorso 1). */
+    fun getCastAppId(context: Context): String =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_CAST_APP_ID, "") ?: ""
+
+    fun setCastAppId(context: Context, value: String) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_CAST_APP_ID, value.trim()).apply()
+    }
+
+    private const val KEY_CAST_FAKE = "cast_fake"
+
+    /** DEBUG ONLY (honored SOLO se BuildConfig.DEBUG): "cast finto" — un
+     *  RemoteMediaClient stub locale per provare il telecomando RemoteActivity
+     *  senza un Chromecast fisico. Attivabile dal SettingsDialog (voce visibile
+     *  solo nei build debug) e via long-press sul MediaRouteButton. */
+    fun getCastFake(context: Context): Boolean =
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CAST_FAKE, false)
+
+    fun setCastFake(context: Context, value: Boolean) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_CAST_FAKE, value).apply()
+    }
 }

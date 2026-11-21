@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -81,6 +82,10 @@ class SctvActivity : Activity() {
     private val domainRepo by lazy { DomainRepository.get(this) }
     private val repo by lazy { SctvRepository(this) }
 
+    /** TRUE mentre PlayerActivity (locale) è in primo piano: se una sessione
+     *  cast partisse in quel frangente il telecomando NON deve coprirlo. */
+    private var localPlayerOpen = false
+
     /** titleId del play in corso: onActivityResult (catena prossimo
      *  episodio) riparte da qui senza riscattare l'id dal result. */
     private var pendingPlayTitleId = 0
@@ -144,6 +149,9 @@ class SctvActivity : Activity() {
         // Refresh periodico del dominio anche per l'interfaccia SCtv.
         DomainRefreshScheduler.schedule(this)
         observeDomainChanges()
+        // Cast Chromecast (C1): SOLO phone mode — su Fire TV questa funzione
+        // esce subito e NESSUN codice cast viene istanziato.
+        setupCastIfAvailable()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -161,87 +169,15 @@ class SctvActivity : Activity() {
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
 
         val bridge = SctvBridge(
-            onBootReady = { scope.launch { pushBootPayload() } },
-            onLoadTab = { tab ->
-                scope.launch {
-                    // LAVORO 1: quality al repository per i CAP rail del tier.
-                    val payload = withRecovery("loadTab($tab)") { dom ->
-                        repo.tabPayload(tab, dom, sctvQuality)
-                    }
-                    if (payload != null) push("catalog", payload)
-                    else pushError("Tab non raggiungibile: controlla la connessione")
-                }
-            },
-            onLoadDetail = { titleId, req ->
-                scope.launch {
-                    val item = withRecovery("loadDetail($titleId)") { dom ->
-                        repo.detailPayload(titleId, dom, currentProfileId)
-                    }
-                    if (item != null) {
-                        push("titleDetail", JSONObject().put("item", item), req)
-                    } else {
-                        pushError("Dettaglio non disponibile: controlla la connessione", req)
-                    }
-                }
-            },
-            onSearch = { query, req ->
-                scope.launch {
-                    val payload = withRecovery("search('$query')") { dom ->
-                        repo.searchPayload(query, dom)
-                    }
-                    if (payload != null) push("searchResults", payload, req)
-                    else pushError("Ricerca non riuscita: controlla la connessione", req)
-                }
-            },
-            onLoadCategories = { req ->
-                scope.launch {
-                    val payload = withRecovery("loadCategories") { dom ->
-                        repo.categoriesPayload(dom)
-                    }
-                    if (payload != null) push("categories", payload, req)
-                    else pushError("Categorie non disponibili: controlla la connessione", req)
-                }
-            },
-            onLoadGenre = { genreId, req ->
-                scope.launch {
-                    val payload = withRecovery("loadGenre($genreId)") { dom ->
-                        repo.genrePayload(genreId, dom)
-                    }
-                    if (payload != null) push("genreData", payload, req)
-                    else pushError("Genere non disponibile: controlla la connessione", req)
-                }
-            },
-            onLoadDetailSeason = { titleId, season, req ->
-                scope.launch {
-                    val result = withRecovery("loadDetailSeason($titleId,S$season)") { dom ->
-                        repo.seasonEpisodes(titleId, season, dom, currentProfileId)?.let { (s, eps) ->
-                            JSONObject().put("season", s).put("episodes", eps)
-                        }
-                    }
-                    if (result != null) push("titleSeason", result, req)
-                    else pushError("Stagione non disponibile: controlla la connessione", req)
-                }
-            },
-            onToggleMyList = { titleId ->
-                scope.launch {
-                    val result = withRecovery("toggleMyList($titleId)") { dom ->
-                        repo.toggleMyList(titleId, dom, currentProfileId)
-                    }
-                    if (result != null) {
-                        push("myListChanged", result)
-                    } else {
-                        pushError("Impossibile aggiornare La mia lista")
-                    }
-                }
-            },
-            onGetContinueWatching = {
-                scope.launch {
-                    val cw = withContext(Dispatchers.IO) {
-                        repo.continueWatchingJson(currentProfileId)
-                    }
-                    push("progressChanged", JSONObject().put("continueWatching", cw))
-                }
-            },
+            onBootReady = { jsBootReady() },
+            onLoadTab = { tab -> jsLoadTab(tab) },
+            onLoadDetail = { titleId, req -> jsLoadDetail(titleId, req) },
+            onSearch = { query, req -> jsSearch(query, req) },
+            onLoadCategories = { req -> jsLoadCategories(req) },
+            onLoadGenre = { genreId, req -> jsLoadGenre(genreId, req) },
+            onLoadDetailSeason = { titleId, season, req -> jsLoadDetailSeason(titleId, season, req) },
+            onToggleMyList = { titleId -> jsToggleMyList(titleId) },
+            onGetContinueWatching = { jsGetContinueWatching() },
             onReportProgress = { titleId, season, episode, pos, dur ->
                 Log.i(TAG, "reportProgress($titleId, S$season:E$episode, $pos/$dur): M3")
             },
@@ -250,7 +186,7 @@ class SctvActivity : Activity() {
             },
             onOpenSettings = { scope.launch { openNativeSettings() } },
             onOpenSiteInterface = { scope.launch { switchToSite() } },
-            onRetryConnection = { scope.launch { pushBootPayload() } },
+            onRetryConnection = { jsBootReady() },
             onSetActiveProfile = { pid -> onProfileSelected(pid) }
         )
         web.addJavascriptInterface(bridge, "AndroidJs")
@@ -260,6 +196,190 @@ class SctvActivity : Activity() {
                 // L'HTML mostra il suo splash+gate: via l'overlay nativo.
                 loadingOverlay.visibility = View.GONE
             }
+        }
+    }
+
+    // -- Cast Chromecast (C1, SOLO phone mode) -------------------------------------
+
+    /** Host del controller cast: container della WebView headless (C2) e
+     *  dispatcher dei comandi AndroidJs del receiver custom (C3). */
+    private val castHost = object : com.scviewer.fire.cast.SctvCastController.Host {
+        override fun castWebHost(): ViewGroup? =
+            findViewById(R.id.sctvCastWebHost)
+        override fun onCastAndroidJs(fn: String, args: org.json.JSONArray) {
+            dispatchCastAndroidJs(fn, args)
+        }
+    }
+
+    /**
+     * Abilita il cast SOLO se: (1) device telefono (DeviceProfile.isPhone —
+     * Fire TV esce qui e NESSUN codice cast viene istanziato: niente
+     * controller, niente CastContext, niente listener) e (2) Google Play
+     * services disponibili. Altrimenti il bottone resta GONE.
+     */
+    private fun setupCastIfAvailable() {
+        if (!com.scviewer.fire.cast.DeviceProfile.isPhone(this)) return
+        val cast = com.scviewer.fire.cast.SctvCastController.get(this)
+        if (!cast.isAvailable()) {
+            Log.i(TAG, "cast: Google Play services non disponibili — disabled")
+            return
+        }
+        val bar = findViewById<View>(R.id.sctvCastBar)
+        val btn = findViewById<androidx.mediarouter.app.MediaRouteButton>(R.id.sctvCastRoute)
+        bar.visibility = View.VISIBLE
+        com.google.android.gms.cast.framework.CastButtonFactory
+            .setUpMediaRouteButton(this, btn)
+        // DEBUG FAKE CAST: long-press sul bottone cast apre il telecomando
+        // senza un Chromecast fisico (setting "cast fake", solo build debug).
+        if (BuildConfig.DEBUG && SettingsStore.getCastFake(this)) {
+            btn.setOnLongClickListener {
+                cast.startFakeSession()
+                true
+            }
+        }
+        // Listener eventi sessione → apertura/chiusura del telecomando (C1.6).
+        cast.sessionUiListener = { event ->
+            runOnUiThread {
+                when (event) {
+                    "started", "resumed" -> {
+                        // Non coprire il player locale se fosse in primo piano.
+                        if (!localPlayerOpen) {
+                            startActivity(
+                                Intent(this, com.scviewer.fire.cast.RemoteActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                    "ended" -> {
+                        // Il telecomando si chiude da sé (listener proprio).
+                    }
+                }
+            }
+        }
+        cast.attach(castHost)
+        Log.i(TAG, "cast: abilitato (phone mode + GMS)")
+    }
+
+    // -- Handler bridge + relay receiver custom -----------------------------------
+
+    /** Handler AndroidJs come metodi nominati: usati dal bridge (WebView)
+     *  E dal relay del receiver custom cast ({cmd:"androidjs"}) — le stesse
+     *  funzioni, due canali. Ogni push() generato da questi handler viene
+     *  moltiplicato verso il namespace cast (relayReceive). */
+
+    private fun jsBootReady() {
+        scope.launch { pushBootPayload() }
+    }
+
+    private fun jsLoadTab(tab: String) {
+        scope.launch {
+            // LAVORO 1: quality al repository per i CAP rail del tier.
+            val payload = withRecovery("loadTab($tab)") { dom ->
+                repo.tabPayload(tab, dom, sctvQuality)
+            }
+            if (payload != null) push("catalog", payload)
+            else pushError("Tab non raggiungibile: controlla la connessione")
+        }
+    }
+
+    private fun jsLoadDetail(titleId: Int, req: Int) {
+        scope.launch {
+            val item = withRecovery("loadDetail($titleId)") { dom ->
+                repo.detailPayload(titleId, dom, currentProfileId)
+            }
+            if (item != null) {
+                push("titleDetail", JSONObject().put("item", item), req)
+            } else {
+                pushError("Dettaglio non disponibile: controlla la connessione", req)
+            }
+        }
+    }
+
+    private fun jsSearch(query: String, req: Int) {
+        scope.launch {
+            val payload = withRecovery("search('$query')") { dom ->
+                repo.searchPayload(query, dom)
+            }
+            if (payload != null) push("searchResults", payload, req)
+            else pushError("Ricerca non riuscita: controlla la connessione", req)
+        }
+    }
+
+    private fun jsLoadCategories(req: Int) {
+        scope.launch {
+            val payload = withRecovery("loadCategories") { dom ->
+                repo.categoriesPayload(dom)
+            }
+            if (payload != null) push("categories", payload, req)
+            else pushError("Categorie non disponibili: controlla la connessione", req)
+        }
+    }
+
+    private fun jsLoadGenre(genreId: Int, req: Int) {
+        scope.launch {
+            val payload = withRecovery("loadGenre($genreId)") { dom ->
+                repo.genrePayload(genreId, dom)
+            }
+            if (payload != null) push("genreData", payload, req)
+            else pushError("Genere non disponibile: controlla la connessione", req)
+        }
+    }
+
+    private fun jsLoadDetailSeason(titleId: Int, season: Int, req: Int) {
+        scope.launch {
+            val result = withRecovery("loadDetailSeason($titleId,S$season)") { dom ->
+                repo.seasonEpisodes(titleId, season, dom, currentProfileId)?.let { (s, eps) ->
+                    JSONObject().put("season", s).put("episodes", eps)
+                }
+            }
+            if (result != null) push("titleSeason", result, req)
+            else pushError("Stagione non disponibile: controlla la connessione", req)
+        }
+    }
+
+    private fun jsToggleMyList(titleId: Int) {
+        scope.launch {
+            val result = withRecovery("toggleMyList($titleId)") { dom ->
+                repo.toggleMyList(titleId, dom, currentProfileId)
+            }
+            if (result != null) {
+                push("myListChanged", result)
+            } else {
+                pushError("Impossibile aggiornare La mia lista")
+            }
+        }
+    }
+
+    private fun jsGetContinueWatching() {
+        scope.launch {
+            val cw = withContext(Dispatchers.IO) {
+                repo.continueWatchingJson(currentProfileId)
+            }
+            push("progressChanged", JSONObject().put("continueWatching", cw))
+        }
+    }
+
+    /**
+     * Relay del receiver CUSTOM cast (percorso 2): il receiver chiama via
+     * namespace le stesse funzioni del bridge AndroidJs. Mappatura fn→handler
+     * (argomenti posizionali nell'array `args`). openSettings/openSiteInterface
+     * NON vengono inoltrate: quei dialog vivono sul telefono.
+     */
+    private fun dispatchCastAndroidJs(fn: String, args: JSONArray) {
+        Log.d(TAG, "cast androidjs: $fn(${args})")
+        when (fn) {
+            "bootReady", "retryConnection" -> jsBootReady()
+            "loadTab" -> jsLoadTab(args.optString(0))
+            "loadDetail" -> jsLoadDetail(args.optInt(0), args.optInt(1))
+            "search" -> jsSearch(args.optString(0), args.optInt(1))
+            "loadCategories" -> jsLoadCategories(args.optInt(0))
+            "loadGenre" -> jsLoadGenre(args.optInt(0), args.optInt(1))
+            "loadDetailSeason" -> jsLoadDetailSeason(args.optInt(0), args.optInt(1), args.optInt(2))
+            "toggleMyList" -> jsToggleMyList(args.optInt(0))
+            "getContinueWatching" -> jsGetContinueWatching()
+            "play" -> scope.launch { onPlayRequested(args.optInt(0), args.optInt(1), args.optInt(2)) }
+            "setActiveProfile" -> onProfileSelected(args.optString(0))
+            else -> Log.w(TAG, "cast androidjs: fn ignota '$fn'")
         }
     }
 
@@ -314,12 +434,16 @@ class SctvActivity : Activity() {
     // -- Push nativo→JS ------------------------------------------------------------
 
     /** Unico entry nativo→JS: envelope `{"t","req","d"}` valutata sulla pagina.
-     *  SEMPRE dal thread UI (evaluateJavascript non è thread-safe). */
+     *  SEMPRE dal thread UI (evaluateJavascript non è thread-safe).
+     *  C3 (receiver custom cast): ogni evento viene MOLTIPLICATO verso il
+     *  namespace cast — il receiver SCtv ricostruisce la vista compatta da
+     *  quei dati (no-op senza sessione / su Fire TV: peek() è null). */
     private fun push(type: String, d: JSONObject, req: Int? = null) {
         val ev = JSONObject()
             .put("t", type)
             .put("req", req ?: JSONObject.NULL)
             .put("d", d)
+        com.scviewer.fire.cast.SctvCastController.peek()?.relayReceive(ev.toString())
         runOnUiThread {
             if (BuildConfig.DEBUG) Log.d(TAG, "push $type")
             web.evaluateJavascript("window.__sctvReceive(" + ev.toString() + ")", null)
@@ -491,6 +615,50 @@ class SctvActivity : Activity() {
                 (p.episode ?: 1) == episode && (p.season ?: 1) == season.coerceAtLeast(1)
             ) p.positionSec else 0
 
+            // Poster per i record del player: progresso salvato → PosterCache
+            // → dettaglio (stesso ordine con cui i rail popolano le card).
+            val poster = p?.poster?.takeIf { it.isNotBlank() }
+                ?: PosterCache.get(this@SctvActivity, titleId)
+                ?: item.optString("posterUrl").takeIf { it.isNotBlank() }
+                ?: ""
+            // Slug dall'URL titolo del dettaglio (per il record WatchProgress;
+            // il sito risolve comunque per id se lo slug fosse parziale).
+            val slug = item.optString("url").substringAfter("-$titleId-", "")
+
+            // C2 — PERCORSO CAST (phone mode, sessione attiva — reale o fake
+            // debug): lo stream va AL RECEIVER via master playlist risolta
+            // ora (StreamResolver). PlayerActivity NON si apre: nessun
+            // wrapper load, nessuna watch page. Errore di risoluzione →
+            // messaggio in UI e stop (no fallback silenzioso al player
+            // locale: la sessione è collegata, il flusso resta coerente).
+            val cast = if (com.scviewer.fire.cast.DeviceProfile.isPhone(this@SctvActivity)) {
+                com.scviewer.fire.cast.SctvCastController.peek()
+            } else null
+            if (cast != null && cast.isSessionActive()) {
+                val castMeta = com.scviewer.fire.cast.SctvCastController.CastMeta(
+                    titleId = titleId,
+                    season = if (type == "tv") season.coerceAtLeast(1) else 1,
+                    episode = if (type == "tv") episode.coerceAtLeast(1) else 1,
+                    title = name,
+                    episodeName = episodeName,
+                    type = type,
+                    slug = slug,
+                    watchPath = watchPath,
+                    poster = poster,
+                    nextEpisodeId = nextEpisodeId,
+                    nextEpisodeSeason = nextEpisodeSeason,
+                    nextEpisodeNumber = nextEpisodeNumber,
+                    profileId = currentProfileId,
+                    startPositionSec = startPositionSec,
+                    lang = SettingsStore.getSctvAudioLang(this@SctvActivity)
+                )
+                Log.i(TAG, "play titleId=$titleId → CAST (start=${startPositionSec}s, " +
+                    "nextEp=$nextEpisodeId)")
+                val ok = cast.castPlay(castMeta)
+                if (!ok) pushError("Stream non risolvibile per il cast: riprova")
+                return@launch
+            }
+
             // V2 — direct embed: GET /it/iframe/<id>?episode_id=<ep> con i
             // cookie della sessione sito (WebView) e il Referer, estrai l'src
             // vixcloud e aggiungi &nogui=1. FALLIMENTO → errore e stop: il
@@ -505,19 +673,10 @@ class SctvActivity : Activity() {
                 return@launch
             }
 
-            // Poster per i record del player: progresso salvato → PosterCache
-            // → dettaglio (stesso ordine con cui i rail popolano le card).
-            val poster = p?.poster?.takeIf { it.isNotBlank() }
-                ?: PosterCache.get(this@SctvActivity, titleId)
-                ?: item.optString("posterUrl").takeIf { it.isNotBlank() }
-                ?: ""
-            // Slug dall'URL titolo del dettaglio (per il record WatchProgress;
-            // il sito risolve comunque per id se lo slug fosse parziale).
-            val slug = item.optString("url").substringAfter("-$titleId-", "")
-
             Log.i(TAG, "play titleId=$titleId → $watchPath (start=${startPositionSec}s, " +
                 "direct, nextEp=$nextEpisodeId)")
             pendingPlayTitleId = titleId
+            localPlayerOpen = true
             startActivityForResult(
                 Intent(this@SctvActivity, PlayerActivity::class.java).apply {
                     putExtra("url", url)                 // watch URL assoluto (record/cronologia)
@@ -594,6 +753,7 @@ class SctvActivity : Activity() {
      *  onPlayRequested pulita (risoluzione episodio + embed freschi). */
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_PLAYER) localPlayerOpen = false
         if (requestCode != REQ_PLAYER || resultCode != RESULT_OK || data == null) return
         val nextId = data.getIntExtra("nextEpisodeId", 0)
         val ns = data.getIntExtra("nextEpisodeSeason", 0)
@@ -698,6 +858,9 @@ class SctvActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Cast (C1): detach del controller (rimuove listener di sessione).
+        // La SESSIONE cast non viene chiusa: il receiver continua a suonare.
+        com.scviewer.fire.cast.SctvCastController.peek()?.detach(castHost)
         scope.cancel()
         web.apply {
             stopLoading()

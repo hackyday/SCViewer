@@ -50,4 +50,38 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- Cast (C1, solo phone mode): bottone routing Chromecast in alto a
+         destra. GONE di default: SctvActivity lo rende VISIBLE SOLO se il
+         device è un telefono con Google Play services — su Fire TV resta
+         GONE e nessun codice cast viene istanziato. -->
+    <FrameLayout
+        android:id="@+id/sctvCastBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="14dp"
+        android:layout_marginEnd="18dp"
+        android:background="@drawable/bg_sctv_card"
+        android:elevation="14dp"
+        android:padding="10dp"
+        android:visibility="gone">
+
+        <androidx.mediarouter.app.MediaRouteButton
+            android:id="@+id/sctvCastRoute"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:contentDescription="@string/remote_title" />
+    </FrameLayout>
+
+    <!-- Cast (C2): host della WebView headless usata da StreamResolver per
+         estrarre window.masterPlaylist dall'embed vixcloud. 64dp, invisibile
+         (INVISIBLE e non GONE: il layout/timer JS deve girare); la WebView
+         vera viene aggiunta/tolta programmaticamente a ogni risoluzione. -->
+    <FrameLayout
+        android:id="@+id/sctvCastWebHost"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:elevation="13dp"
+        android:visibility="invisible" />
+
 </FrameLayout>

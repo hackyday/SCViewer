@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<!--
+  SCViewer — Custom Web Receiver CAF (percorso 2).
+
+  Custom Receiver Cast Application Framework che ospita una VISTA COMPATTA
+  dell'interfaccia SCtv: riceve dal telefono via namespace "urn:x-cast:sctv"
+  gli STESSI eventi nativo→JS dell'app (__sctvReceive: boot/catalog/titleDetail/
+  searchResults/...) e i comandi D-pad ({cmd:"remote", action}); parla verso
+  il telefono con uno SHADOW di AndroidJs (le funzioni del bridge SCtv inviano
+  {cmd:"androidjs", fn, args} e il telefono le esegue con gli handler reali,
+  rimandando i dati via namespace perché push() fa relay).
+
+  Player: PlayerManager CAF. Il percorso principale usa il player NATIVO
+  (MPL, che gestisce HLS m3u8 incluse le chiavi AES); con hls.js da CDN
+  (window.__sctvUseHlsJs = true) il LOAD viene inoltrato a hls.js attaccato
+  al nostro elemento <video> via playerManager.setMediaElement — comandi
+  play/pause/seek dei sender restano quelli standard CAF.
+
+  ATTIVAZIONE (richiede registrazione Cast SDK Developer Console):
+  1. Hostare receiver.html + receiver.js su HTTPS pubblico;
+  2. registrare una applicazione "Custom Receiver" con l'URL di receiver.html;
+  3. incollare l'App ID generato in Impostazioni → "Cast receiver App ID";
+  4. whitelisting del seriale Chromecast dalla Developer Console (test);
+  5. riavviare l'app SCViewer: il bottone cast apre la sessione col receiver
+     custom e la sezione D-pad appare nel telecomando.
+  Documento completo: docs/sctv/CAST_RECEIVER.md
+-->
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>SCViewer Cast Receiver</title>
+  <!-- Framework CAF receiver (obbligatorio, hostato da Google) -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- hls.js da CDN (percorso player alternativo, flag __sctvUseHlsJs) -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+  <style>
+    :root {
+      --bg: #08090c;
+      --card: #14161c;
+      --accent: #e50914;
+      --text: #f5f5f7;
+      --muted: #9a9aa2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      overflow: hidden;
+    }
+    /* Player nativo CAF: sempre a pieno schermo, sotto la UI browse. */
+    cast-media-player { width: 100%; height: 100%; }
+    #sctv-video { display: none; }
+
+    /* UI COMPATTA SCtv (browse) — overlay sopra il player */
+    #sctv-ui {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      background: var(--bg);
+      z-index: 10;
+    }
+    #sctv-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 18px 32px 8px;
+    }
+    #sctv-logo { color: var(--accent); font-weight: 800; font-size: 26px; letter-spacing: 1px; }
+    #sctv-clock { margin-left: auto; color: var(--muted); font-size: 15px; }
+    #sctv-view {
+      flex: 1; overflow: hidden;
+      padding: 10px 32px 20px;
+    }
+    .rail { margin-bottom: 22px; }
+    .rail-title { font-size: 17px; font-weight: 700; margin-bottom: 10px; }
+    .rail-cards { display: flex; gap: 12px; }
+    .card {
+      width: 128px; flex: 0 0 auto;
+      background: var(--card); border-radius: 8px; overflow: hidden;
+      cursor: pointer;
+      border: 3px solid transparent;
+    }
+    .card img { width: 100%; height: 192px; object-fit: cover; display: block; background: #22242b; }
+    .card .label { padding: 6px 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card.focused { border-color: var(--text); }
+    .card.placeholder .ph { width: 100%; height: 192px; background: #1a1c22; }
+
+    /* Dettaglio */
+    #detail {
+      position: absolute; inset: 0;
+      background: rgba(8, 9, 12, 0.97);
+      display: none;
+      padding: 40px 56px;
+      overflow-y: auto;
+    }
+    #detail.open { display: block; }
+    #detail h2 { font-size: 34px; margin-bottom: 6px; }
+    #detail .meta { color: var(--muted); font-size: 15px; margin-bottom: 16px; }
+    #detail .synopsis { max-width: 720px; color: var(--text); font-size: 16px; line-height: 1.5; margin-bottom: 20px; }
+    .btn {
+      display: inline-block; padding: 10px 22px; border-radius: 6px;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: 15px;
+      margin-right: 12px; margin-bottom: 16px; cursor: pointer;
+      border: 2px solid transparent;
+    }
+    .btn.ghost { background: #2a2c34; }
+    .btn.focused { border-color: #fff; }
+    .ep-item {
+      padding: 10px 14px; background: var(--card); border-radius: 6px;
+      margin-bottom: 8px; max-width: 720px; cursor: pointer;
+      border: 2px solid transparent;
+    }
+    .ep-item.focused { border-color: var(--text); }
+    .ep-item .ep-title { font-weight: 700; font-size: 15px; }
+    .ep-item .ep-desc { color: var(--muted); font-size: 13px; margin-top: 3px; }
+
+    /* Player view: titolo while casting */
+    #now-playing {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      padding: 14px 32px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.85));
+      display: none; z-index: 20;
+      pointer-events: none;
+    }
+    #now-playing .np-title { font-size: 20px; font-weight: 700; }
+    #now-playing .np-sub { color: var(--muted); font-size: 13px; }
+
+    #status {
+      color: var(--muted); font-size: 14px; padding: 0 32px 12px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Video dedicato al percorso hls.js (nascosto quando inutilizzato:
+       il player CAF nativo usa il SUO elemento dentro cast-media-player) -->
+  <video id="sctv-video"></video>
+
+  <!-- Player nativo CAF (MPL/hls.js): la UI browse lo copre quando attiva -->
+  <cast-media-player></cast-media-player>
+
+  <!-- Vista compatta SCtv (browse) -->
+  <div id="sctv-ui">
+    <div id="sctv-header">
+      <div id="sctv-logo">SCViewer</div>
+      <div id="status">Connessione al telefono…</div>
+      <div id="sctv-clock"></div>
+    </div>
+    <div id="sctv-view"></div>
+    <div id="detail"></div>
+  </div>
+
+  <!-- Titolo while casting (visibile sopra il player) -->
+  <div id="now-playing">
+    <div class="np-title"></div>
+    <div class="np-sub"></div>
+  </div>
+
+  <script src="receiver.js"></script>
+</body>
+</html>

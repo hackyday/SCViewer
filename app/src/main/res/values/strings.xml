@@ -89,6 +89,31 @@
     <string name="settings_cancel">Annulla</string>
     <string name="settings_saved_toast">Impostazioni salvate</string>
 
+    <!-- Cast Chromecast (C1) -->
+    <string name="settings_cast_label">Cast receiver App ID — opzionale, per receiver personalizzato</string>
+    <string name="settings_cast_hint_short">es. ABCD1234</string>
+    <string name="settings_cast_hint">Vuoto = Default Media Receiver di Google. Per il receiver SCtv personalizzato (percorso 2) incolla qui l\'App ID della Cast SDK Developer Console, poi riavvia l\'app.</string>
+    <string name="settings_cast_fake_on">CAST FINITO (DEBUG): ATTIVO</string>
+    <string name="settings_cast_fake_off">CAST FINITO (DEBUG): SPENTO</string>
+
+    <!-- Telecomando cast (C2, RemoteActivity) -->
+    <string name="remote_title">Telecomando Chromecast</string>
+    <string name="remote_no_media">Nessuna riproduzione in corso — scegli un titolo dall\'interfaccia SCtv.</string>
+    <string name="remote_receiver">Connesso a %s</string>
+    <string name="remote_receiver_fake">Cast finto (debug)</string>
+    <string name="remote_disconnect">Disconnetti</string>
+    <string name="remote_lang_audio">Lingua audio</string>
+    <string name="remote_subs">Sottotitoli</string>
+    <string name="remote_subs_unavailable">Sottotitoli non disponibili su questo stream</string>
+    <string name="remote_skip_intro">Skip Intro</string>
+    <string name="remote_next_ep">Prossimo episodio</string>
+    <string name="remote_dpad_hint">Navigazione SCtv (receiver custom): i tasti comandinano l\'interfaccia sul TV.</string>
+    <string name="remote_state_playing">In riproduzione</string>
+    <string name="remote_state_paused">In pausa</string>
+    <string name="remote_state_buffering">Buffering…</string>
+    <string name="remote_state_idle">Fermo</string>
+    <string name="remote_resolve_failed">Stream non risolvibile per il cast: riprova</string>
+
     <!-- Touch / Phone menu -->
     <string name="phone_menu_title">SCtv Menu</string>
     <string name="phone_menu_exit">Esci dall\'app</string>

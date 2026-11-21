@@ -25,3 +25,16 @@
 # OkHttp
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# Cast (C1): keeps difensivi. Il framework GMS riflette sulle sue classi
+# (CastOptionsProvider via nome dal manifest, listener e callback) e alcune
+# librerie cast/mediarouter usano annotazioni lette a runtime; senza keep il
+# release R8 può rimuovere/rimappare pezzi e rompere discovery o sessione.
+# Il telefono di test ha GMS reale: le -dontwarn evitano errori su riferimenti
+# opzionali assenti nelle vecchie versioni di Play services.
+-keep class com.scviewer.fire.cast.CastOptionsProvider { *; }
+-keep class com.google.android.gms.cast.** { *; }
+-keep class com.google.android.gms.cast.framework.** { *; }
+-keep class androidx.mediarouter.** { *; }
+-dontwarn com.google.android.gms.**
+-dontwarn androidx.mediarouter.**
