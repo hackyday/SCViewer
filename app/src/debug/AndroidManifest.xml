@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SOLO DEBUG: esporta i servizi cast per testarli da adb (am start-foreground-service) -->
+<!-- SOLO DEBUG: esporta i servizi cast per testarli da adb (am start-foreground-service)
+     e PlayerActivity per lanciare il player direttamente da adb sui device di test. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application>
@@ -7,5 +8,10 @@
             android:name="com.google.android.gms.cast.framework.media.MediaNotificationService"
             android:exported="true"
             tools:node="replace" />
+        <activity
+            android:name="com.scviewer.fire.PlayerActivity"
+            android:exported="true"
+            tools:replace="android:exported"
+            tools:node="merge" />
     </application>
 </manifest>

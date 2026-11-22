@@ -97,6 +97,16 @@ class SctvActivity : AppCompatActivity() {
      *  verso una pagina che non ha ancora il dispatcher attivo. */
     @Volatile private var booted = false
 
+    /** Form factor (DeviceProfile: touchscreen SENZA leanback = telefono):
+     *  decide l'asset caricato (mobile.html portrait touch vs index.html
+     *  D-pad) e l'orientamento richiesto. Lazy: PackageManager non cambia
+     *  mai a runtime. */
+    private val isPhoneMode: Boolean by lazy {
+        com.scviewer.fire.cast.DeviceProfile.isPhone(this).also {
+            Log.i(TAG, "SCtv form factor: ${if (it) "phone (portrait touch)" else "tv"}")
+        }
+    }
+
     /** Profilo SCtv corrente (dati scoped: My List, CW, record player).
      *  Scritto dal bridge setActiveProfile (binder thread) e letto dalle
      *  coroutine: volatile, assegnazione SINCRONA sul binder così bootReady —
@@ -143,12 +153,20 @@ class SctvActivity : AppCompatActivity() {
         web = findViewById(R.id.sctvWeb)
         loadingOverlay = findViewById(R.id.sctvLoading)
         HlsRewriter.maxHeightOverride = SettingsStore.qualityCapHeight(this)
+        // TELEFONO: interfaccia mobile portrait touch — asset separato e
+        // orientamento verticale (il requestOverride prevale sull'attributo
+        // landscape del manifest; configChanges evita la ricreazione).
+        // TV: resta landscape col D-pad.
+        if (isPhoneMode) {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
         // LAVORO 1 — tiering RAM: inizializza la tier SUBITO (primo accesso
         // alla lazy, che logga la tier scelta), prima di qualunque boot push.
         Log.d(TAG, "SCtv tier attiva: $sctvQuality")
         configureWebView()
         // Cache-busting via versionCode: aggiornare l'asset invalida la URL.
-        web.loadUrl("file:///android_asset/sctv/index.html?v=" + BuildConfig.VERSION_CODE)
+        val sctvAsset = if (isPhoneMode) "mobile.html" else "index.html"
+        web.loadUrl("file:///android_asset/sctv/$sctvAsset?v=" + BuildConfig.VERSION_CODE)
         // Refresh periodico del dominio anche per l'interfaccia SCtv.
         DomainRefreshScheduler.schedule(this)
         observeDomainChanges()
@@ -259,6 +277,16 @@ class SctvActivity : AppCompatActivity() {
         val bar = findViewById<View>(R.id.sctvCastBar)
         val btn = findViewById<androidx.mediarouter.app.MediaRouteButton>(R.id.sctvCastRoute)
         bar.visibility = View.VISIBLE
+        if (isPhoneMode) {
+            // UI mobile portrait: la top bar nativa non esiste (vive dentro
+            // l'HTML) — il bottone cast scende a FAB sopra la bottom nav.
+            val lp = bar.layoutParams as android.widget.FrameLayout.LayoutParams
+            lp.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+            lp.topMargin = 0
+            lp.bottomMargin = (92 * resources.displayMetrics.density).toInt()
+            lp.marginEnd = (16 * resources.displayMetrics.density).toInt()
+            bar.layoutParams = lp
+        }
         com.google.android.gms.cast.framework.CastButtonFactory
             .setUpMediaRouteButton(this, btn)
         // DEBUG FAKE CAST: long-press sul bottone cast apre il telecomando

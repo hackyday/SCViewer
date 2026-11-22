@@ -10,7 +10,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.GestureDetector
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.util.Log
@@ -24,6 +26,11 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
+import android.widget.SeekBar
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.scviewer.fire.cast.DeviceProfile
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +101,11 @@ class PlayerActivity : Activity() {
     private lateinit var playBtn: TextView
     private lateinit var rewBtn: TextView
     private lateinit var ffwBtn: TextView
+    /** Touch (solo telefono): superficie gesti sopra la WebView + feedback
+     *  del doppio tap ±10s + bottone VELOCITÀ (direct). */
+    private lateinit var touchSurface: View
+    private lateinit var seekFeedback: TextView
+    private lateinit var speedBtn: TextView
     /** FIX audio (SOLO direct mode): bottone MUTO — comanda __sctvPlayer
      *  .setMute (API bridge) con lo stato tenuto allineato dagli eventi
      *  'ready'/'state'/'mute' del bridge. In legacy resta GONE. */
@@ -116,6 +128,15 @@ class PlayerActivity : Activity() {
     private var skipAvailable = false
     private var posSec = 0
     private var durSec = 0
+    /** Telefono/touchscreen senza leanback (DeviceProfile): attiva i gesti
+     *  tap/double-tap, la seekbar trascinabile, i target più grandi e
+     *  l'immersive. La strada TV (D-pad + anello di fuoco) resta identica. */
+    private val isPhoneMode: Boolean by lazy { DeviceProfile.isPhone(this) }
+    /** TRUE mentre il pollice trascina la seekbar: gli eventi 'time' del
+     *  bridge non devono riscrivere la posizione sotto il gesto. */
+    private var seekbarDragging = false
+    /** Indice dentro TOUCH_SPEEDS per il bottone VELOCITÀ (phone+direct). */
+    private var speedIdx = 0
     private var nextEpisodeId = 0
     private var watchUrl = ""
     private var titleText = ""
@@ -143,6 +164,8 @@ class PlayerActivity : Activity() {
             // FIX audio: solo direct (GONE in legacy → anello invariato).
             muteBtn.takeIf { it.visibility == View.VISIBLE },
             langBtn,
+            // VELOCITÀ: solo telefono+direct (GONE altrove → anello invariato).
+            speedBtn.takeIf { ::speedBtn.isInitialized && it.visibility == View.VISIBLE },
             skipBtn.takeIf { it.visibility == View.VISIBLE },
             nextPlay.takeIf { nextCard.visibility == View.VISIBLE },
             nextCancel.takeIf { nextCard.visibility == View.VISIBLE }
@@ -250,6 +273,28 @@ class PlayerActivity : Activity() {
 
     private val adBlocker by lazy { AdBlocker.get(this) }
 
+    /** Rilevatore gesti touch (SOLO telefono): singolo tap confermato =
+     *  mostra/nascondi i controlli; doppio tap sulla metà sinistra/destra =
+     *  seek ∓10s con feedback a schermo (stesso comportamento del player
+     *  di riferimento mobile). In legacy la superficie è GONE e questo
+     *  detector non riceve mai un evento. */
+    private val playerGestures: GestureDetector by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (controlsVisible) hideControls() else showControls()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                // Nessun seek durante lo scrub (target gestito dai tasti media).
+                if (!directEmbed || scrubActive || durSec <= 0) return true
+                val delta = if (e.x < touchSurface.width / 2) -10 else 10
+                seekBy(delta)
+                flashSeekFeedback(delta)
+                return true
+            }
+        })
+    }
+
     private fun DomainHome(): String =
         com.scviewer.fire.data.DomainRepository.get(this).currentDomain()
 
@@ -278,6 +323,9 @@ class PlayerActivity : Activity() {
         timeTot = findViewById(R.id.playerTimeTot)
         scrubBox = findViewById(R.id.playerScrubBox)
         scrubTime = findViewById(R.id.playerScrubTime)
+        touchSurface = findViewById(R.id.playerTouchSurface)
+        seekFeedback = findViewById(R.id.playerSeekFeedback)
+        speedBtn = findViewById(R.id.playerSpeed)
 
         titleText = intent.getStringExtra("title") ?: ""
         watchUrl = intent.getStringExtra("url") ?: ""
@@ -563,6 +611,14 @@ class PlayerActivity : Activity() {
             } catch (_: Throwable) { }
         }
         setup()
+        // TELEFONO: controlli touch (gesti, seekbar trascinabile, target
+        // ingranditi, velocità, immersive). Qui DOPO tutti i findViewById
+        // (langBtn incluso). Su Fire TV nessuna di queste modifiche si
+        // attiva: isPhoneMode è false e tutto resta com'era.
+        if (isPhoneMode) {
+            setupTouchControls()
+            applyImmersive()
+        }
         showControls()
         // Copertura nera ON finché il contenuto vero non entra (anti-flash
         // dello stage1) — in direct mode finché l'evento 'ready' del bridge.
@@ -1176,7 +1232,7 @@ class PlayerActivity : Activity() {
         // gli eventi 'time' residui (il video è in pausa) non devono
         // sovrascriverli. posSec/durSec restano aggiornati come posizione
         // reale per commit/annullamento.
-        if (scrubActive) return
+        if (scrubActive || seekbarDragging) return
         val now = System.currentTimeMillis()
         if (now - lastTimeUiAt < 1000) return
         lastTimeUiAt = now
@@ -1447,6 +1503,103 @@ class PlayerActivity : Activity() {
         muteBtn.text = if (directMuted) "MUTO" else "AUDIO"
     }
 
+    // -- Controlli touch (SOLO telefono) ---------------------------------------
+
+    /** Attiva il comportamento touch del player su telefono/touchscreen:
+     *  - superficie gesti sopra la WebView (direct mode: l'embed nogui non
+     *    ha GUI propria — in legacy resta GONE perché il player del sito
+     *    deve ricevere i tocchi);
+     *  - seekbar TRASCINABILE (tap/drag = preview del tempo, rilascio =
+     *    seek reale: un seek HLS per gesto, come il commit dello scrub TV);
+     *  - bottoni ingranditi (target touch ≥ 48dp);
+     *  - bottone VELOCITÀ (1x → 1.25x → 1.5x → 0.75x via __sctvPlayer).
+     *  Fuoco TV e tasti media NON cambiano: il SeekBar è focusable=false e
+     *  fuori dall'anello di fuoco esattamente come prima era il ProgressBar. */
+    private fun setupTouchControls() {
+        if (directEmbed) {
+            touchSurface.visibility = View.VISIBLE
+            touchSurface.setOnTouchListener { _, ev ->
+                playerGestures.onTouchEvent(ev)
+                true
+            }
+            speedBtn.visibility = View.VISIBLE
+            speedBtn.setOnClickListener {
+                speedIdx = (speedIdx + 1) % TOUCH_SPEEDS.size
+                val rate = TOUCH_SPEEDS[speedIdx]
+                directCall("setRate($rate)")
+                speedBtn.text = when (rate) {
+                    1f -> "1x"; 1.25f -> "1.25x"; 1.5f -> "1.5x"; else -> "0.75x"
+                }
+                showControls()
+                scheduleHide()
+            }
+        }
+        (scrubber as? SeekBar)?.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, value: Int, fromUser: Boolean) {
+                    // Solo preview del tempo durante il trascinamento; il seek
+                    // vero parte al rilascio (onStopTrackingTouch).
+                    if (fromUser && !scrubActive) timeCur.text = fmt(value)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {
+                    seekbarDragging = true
+                    showControls()
+                    handler.removeCallbacks(hideRunnable)
+                }
+                override fun onStopTrackingTouch(sb: SeekBar) {
+                    seekbarDragging = false
+                    if (!scrubActive) playerSeekTo(sb.progress)
+                    scheduleHide()
+                }
+            }
+        )
+        // Target touch: pill più larghe + play più grande (legibile a occhio
+        // chiuso sotto il pollice). I layout restano quelli del design TV.
+        (playBtn.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+            lp.width = dp(64); lp.height = dp(64)
+            playBtn.layoutParams = lp
+        }
+        fun widen(v: TextView, horizontalDp: Int, sizeSp: Float? = null) {
+            v.setPadding(dp(horizontalDp), v.paddingTop, dp(horizontalDp), v.paddingBottom)
+            sizeSp?.let { v.textSize = it }
+        }
+        widen(rewBtn, 24, 18f)
+        widen(ffwBtn, 24, 18f)
+        widen(muteBtn, 22, 18f)
+        widen(langBtn, 22, 18f)
+        widen(backBtn, 24, 16f)
+        backBtn.setPadding(dp(24), dp(14), dp(24), dp(14))
+    }
+
+    /** Feedback visivo del doppio tap: pillola centrata "◀◀ 10s"/"▶▶ 10s"
+     *  che svanisce (stesso stile dell'indicatore scrub TV). */
+    private fun flashSeekFeedback(delta: Int) {
+        seekFeedback.text = if (delta < 0) "◀◀ 10s" else "▶▶ 10s"
+        seekFeedback.visibility = View.VISIBLE
+        seekFeedback.alpha = 1f
+        seekFeedback.animate().alpha(0f).setStartDelay(280).setDuration(420)
+            .withEndAction { seekFeedback.visibility = View.GONE }
+            .start()
+    }
+
+    /** Immersive sticky (solo telefono): barre di sistema via durante il
+     *  film, riappaiono con lo swipe dal bordo. Su TV non fa nulla. */
+    private fun applyImmersive() {
+        if (!isPhoneMode) return
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Dopo dialog/toast/ripristino focus le barre possono tornare:
+        // ri-nascondile finché il telefono è in riproduzione.
+        if (hasFocus) applyImmersive()
+    }
+
     // -- Controlli: visibilità + fuoco ---------------------------------------
 
     private fun showControls() {
@@ -1565,6 +1718,10 @@ class PlayerActivity : Activity() {
         private const val SCRUB_REPEATS_FAST = 12
         /** Minimo intervallo (ms) tra aggiustamenti col D-pad in scrub mode. */
         private const val SCRUB_DPAD_MIN_MS = 120L
+
+        /** Velocità del bottone VELOCITÀ (touch, direct mode): ciclo in ordine
+         *  di probabilità d'uso — torna a 1x dopo 0.75x. */
+        private val TOUCH_SPEEDS = floatArrayOf(1f, 1.25f, 1.5f, 0.75f)
 
         /** Pulizia difensiva della watch page (legacy, piano §5.2 — RE
          *  schermata watch): nasconde la modal premium (body>.modal) e i

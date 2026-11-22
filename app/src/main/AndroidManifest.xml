@@ -55,11 +55,14 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!-- Nuova interfaccia SCtv (M1): WebView fullscreen con asset locale
-             + bridge. Il sito resta MainActivity (invariata). -->
+             + bridge. Il sito resta MainActivity (invariata). Sui telefoni
+             carica mobile.html in portrait (richiesta runtime) — adjustResize
+             serve alla ricerca col tastierino in modal portrait. -->
         <activity
             android:name=".SctvActivity"
             android:exported="false"
             android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:theme="@style/Theme.SCViewer" />
 

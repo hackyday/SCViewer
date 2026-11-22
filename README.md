@@ -296,6 +296,37 @@ branch name ever changes.
 | D-pad ↑ ↓ ← → | Move the **virtual mouse cursor**; it accelerates while held |
 | D-pad held at top/bottom edge | Scroll the page up/down |
 | **Phones/tablets** (touch) | Floating ☰ button opens the touch menu: **Trasmetti** (Chromecast), Home, Preferiti, Cronologia, Riprendi, Impostazioni |
+
+### Interfaccia mobile portrait (v1.10)
+
+Sui **telefoni** (touchscreen senza leanback, `DeviceProfile.isPhone`) la
+modalità SCtv cambia volto:
+
+- **`SctvActivity` carica `assets/sctv/mobile.html`** al posto di
+  `index.html`: UI portrait touch autonoma (self-contained, nessun CDN,
+  font locali in `assets/sctv/fonts/`) che parla lo STESSO contratto
+  bridge (`AndroidJs.*` + `window.__sctvReceive`) — nessuna logica nativa
+  duplicata, stessi store (profili su `sctv.profiles` in localStorage,
+  condivisi col TV, My List / Riprendi scopati per profilo sul nativo).
+- Struttura: splash → gate "Chi sta guardando?" (griglia 2 col + editor
+  profili + Kids mode) → app shell (top bar con pill Serie TV / Film /
+  Categorie, bottom nav 5 voci) → Home con hero billboard e rail
+  (Continua a guardare con barra progresso, Top 10 con numeri outline),
+  Novità, Cerca (ricerca server debounced che non rompe l'IME), La mia
+  lista, Categorie (archivio reale + filtro genere), Altro (profilo,
+  audio, impostazioni native, interfaccia sito, stato rete/dominio).
+  Dettaglio in bottom-sheet con episodi/stagioni e titoli simili; BACK
+  Android gestito via `window.__sctvBackState()` (editor → sheet → gate →
+  home → exit).
+- **Player touch** (`PlayerActivity`, solo telefono + direct mode):
+  singolo tap mostra/nasconde i controlli, doppio tap metà sinistra/destra
+  = seek ∓10s con pill di feedback, seekbar trascinabile (preview del
+  tempo al dito, seek reale al rilascio — gli eventi 'time' sono sospesi
+  durante il drag), bottoni ingranditi, bottone **VELOCITÀ**
+  (1x→1.25x→1.5x→0.75x via `__sctvPlayer.setRate` nel bridge) e barra di
+  sistema in immersive sticky. Su TV il D-pad, l'anello di fuoco e lo
+  scrub coi tasti media restano identici (il SeekBar è focusable=false e
+  fuori dall'anello, come prima il ProgressBar).
 | OK (short press) | **Click** at the cursor position (real tap dispatched to the WebView) |
 | OK (long press) | Open the **Favorites** overlay |
 | Menu button | Toggle the bottom **menu bar** (Home / Favorites / History / Riprendi / Reload / Back / Impostazioni) |

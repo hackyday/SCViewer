@@ -23,6 +23,34 @@
         android:layout_height="match_parent"
         android:background="@color/black" />
 
+    <!-- SUPERFICIE GESTI TOUCH (solo telefono + direct mode): singolo tap =
+         mostra/nascondi i controlli, doppio tap su metà sinistra/destra =
+         seek ∓10s con feedback. Sopra blackout e WebView, SOTTO le barre
+         (che restano cliccabili). In legacy resta GONE: il player del sito
+         ha la propria GUI touch e riceve i tocchi dalla WebView. -->
+    <FrameLayout
+        android:id="@+id/playerTouchSurface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+    <!-- Feedback del doppio tap (±10s): pillola centrata, stile scrub box. -->
+    <TextView
+        android:id="@+id/playerSeekFeedback"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/player_pill"
+        android:paddingStart="26dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="26dp"
+        android:paddingBottom="10dp"
+        android:text="▶▶ 10s"
+        android:textColor="@color/white"
+        android:textSize="30sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <!-- Vignette superiore -->
     <View
         android:layout_width="match_parent"
@@ -242,7 +270,12 @@
                 android:textSize="13sp"
                 android:textStyle="bold" />
 
-            <ProgressBar
+            <!-- SeekBar (era ProgressBar): stessa API di rendering per il
+                 D-pad TV (max/progress), ma su telefono è TRASCINABILE col
+                 dito (tap/drag = preview del tempo, rilascio = seek). Il
+                 thumb è piccolo e focusable=false: il fuoco TV resta sugli
+                 altri controlli e la barra non intrappola mai il D-pad. -->
+            <SeekBar
                 android:id="@+id/playerScrubber"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="0dp"
@@ -251,8 +284,15 @@
                 android:layout_marginEnd="12dp"
                 android:layout_weight="1"
                 android:max="100"
+                android:minHeight="30dp"
+                android:focusable="false"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
                 android:progressBackgroundTint="#40FFFFFF"
-                android:progressTint="@color/sc_accent" />
+                android:progressTint="@color/sc_accent"
+                android:thumb="@drawable/player_seek_thumb"
+                android:thumbTint="@color/white"
+                android:splitTrack="false" />
 
             <TextView
                 android:id="@+id/playerTimeTot"
@@ -346,6 +386,23 @@
                 android:textColor="@color/white"
                 android:textSize="16sp"
                 android:textStyle="bold" />
+
+            <!-- VELOCITÀ (solo telefono + direct mode): cicla 1x → 1.25x →
+                 1.5x → 0.75x via __sctvPlayer.setRate. GONE altrove. -->
+            <TextView
+                android:id="@+id/playerSpeed"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginStart="18dp"
+                android:background="@drawable/player_focus"
+                android:gravity="center"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="1x"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

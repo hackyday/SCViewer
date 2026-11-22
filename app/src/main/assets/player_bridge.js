@@ -113,6 +113,8 @@
     setAudio: function (i) { jwplayer().setCurrentAudioTrack(i); },
     setCaptions: function (i) { jwplayer().setCurrentCaptions(i); },
     setQuality: function (i) { jwplayer().setCurrentQuality(i); },
+    // VELOCITÀ (solo telefono): la seek UI nativa cicla 1x/1.25x/1.5x/0.75x.
+    setRate: function (r) { try { jwplayer().setPlaybackRate(r); } catch (e) {} },
     // FIX audio: mute esplicito del nativo (bottone MUTO direct mode) —
     // registra l'intento utente così l'auto-unmute al primo 'play' non lo
     // sovrascrive mai.

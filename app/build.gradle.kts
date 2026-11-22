@@ -27,8 +27,8 @@ android {
         applicationId = "com.scviewer.fire"
         minSdk = 24          // Fire TV Stick Lite / 4K and most sticks still in use
         targetSdk = 34
-        versionCode = 20     // v1.9.0 (cast dal telefono + tasti media + auto-update SCtv)     // v1.8.1 (fix audio prima riproduzione + La mia lista + profili kids disattivati)
-        versionName = "1.9.0"
+        versionCode = 21     // v1.10.0 (interfaccia mobile portrait touch + player touch)
+        versionName = "1.10.0"
 
         // In case the user is on a non-UI build, but Fire TV always has Leanback.
         vectorDrawables { useSupportLibrary = true }
