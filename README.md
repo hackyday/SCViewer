@@ -361,9 +361,33 @@ salta ai crediti.
 Preferiti, Cronologia e Riprendi mostrano il poster del titolo (catturato
 dalla pagina al momento della visita e salvato nei dati).
 
-### Controllo aggiornamenti
-Ogni 12 ore l'app verifica l'ultima release GitHub e mostra un chip
-"Aggiorna" che apre la pagina di download.
+### Controllo aggiornamenti e CANALI di rilascio (v1.10)
+Ogni 12 ore l'app verifica le release GitHub e mostra un chip "Aggiorna"
+che scarica e avvia l'installer. Le release sono divise per **canale** via
+prefisso del tag, con numerazioni completamente indipendenti:
+
+- `phone-vX.Y.Z` → canale **telefono** (touchscreen senza leanback)
+- `tv-vX.Y.Z` → canale **Fire TV / box**
+
+Un device vede SOLO i tag del proprio canale (le release legacy senza
+prefisso non sono più proposte). Le release dei canali si pubblicano
+marcate **prerelease**: `/releases/latest` le esclude, quindi anche i
+client vecchi che ancora leggono `latest` non vedono mai il ramo
+dell'altro device. L'asset deve chiamarsi `app-release.apk`.
+
+Pubblicare una release di canale:
+
+```bash
+# Telefono (dal branch che vuoi rilasciare):
+gh release create phone-v1.10.1 app/build/outputs/apk/release/app-release.apk \
+  --prerelease --target mobile-portrait-ui \
+  --title "SC Viewer phone v1.10.1" --notes "Interfaccia mobile: ..."
+
+# TV:
+gh release create tv-v1.9.1 app/build/outputs/apk/release/app-release.apk \
+  --prerelease --target main \
+  --title "SC Viewer tv v1.9.1" --notes "Fix player TV: ..."
+```
 
 ### Qualità massima selezionabile
 Impostazioni → Qualità massima video: Auto (1080p) / 720p / 480p — applicata

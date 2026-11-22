@@ -28,9 +28,16 @@ import kotlinx.coroutines.launch
  *    "available_tag"/"available_at") torna a ogni avvio, senza rete e senza
  *    gate — il gate 12h su "last_check" (condiviso fra le due activity: un
  *    check in una modalità copre anche l'altra) limita SOLO la fetch GET
- *    GitHub /releases/latest. Confronto semantico dei tag — solo versioni
- *    PIÙ NUOVE (una beta con tag superiore non deve "aggiornare" v1.5.6).
- *    Motivo: Cancel nell'installer di sistema (Fire TV reale) — senza
+ *    GitHub /releases?per_page=30. CANALI: ogni form factor (DeviceProfile:
+ *    phone = touchscreen senza leanback, tv altrimenti) vede SOLO le release
+ *    col proprio prefisso di tag — "phone-vX.Y.Z" / "tv-vX.Y.Z", numerazioni
+ *    completamente indipendenti; le release legacy senza prefisso (v1.3–v1.9)
+ *    non appartengono a nessun canale e non sono più proposte. Le release dei
+ *    canali si pubblicano marcate PRERELEASE: /releases/latest le esclude, così
+ *    anche i client VECCHI (che ancora leggono /releases/latest) non vedono
+ *    mai il ramo dell'altro device. Confronto semantico dei tag — solo
+ *    versioni PIÙ NUOVE (una beta con tag superiore non deve "aggiornare"
+ *    v1.5.6). Motivo: Cancel nell'installer di sistema (Fire TV reale) — senza
  *    proposta persistita il gate silenziava l'app per 12 ore e l'utente
  *    percepiva "non rifà mai più l'update";
  *  - showChip: chip nativo stile bg_sctv_chip, NON focusabile (si usa solo
@@ -115,21 +122,19 @@ object UpdateManager {
             // 2) Gate 12h: solo la fetch di rete GitHub, mai la proposta sopra.
             val last = prefs.getLong("last_check", 0L)
             if (System.currentTimeMillis() - last < CHECK_INTERVAL_MS) return@launch
-            val latest = runCatching {
-                val client = okhttp3.OkHttpClient.Builder()
-                    .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
-                client.newCall(
-                    okhttp3.Request.Builder()
-                        .url("https://api.github.com/repos/hackyday/SCViewer/releases/latest")
-                        .header("Accept", "application/vnd.github+json")
-                        .build()
-                ).execute().use { resp ->
-                    if (!resp.isSuccessful) null
-                    else resp.body?.string()?.let {
-                        org.json.JSONObject(it).optString("tag_name")
-                    }
-                }
-            }.getOrNull() ?: return@launch
+            // CANALI DI RILASCIO (phone/tv): ogni form factor vede SOLO le
+            // release col proprio prefisso di tag — "phone-vX.Y.Z" e
+            // "tv-vX.Y.Z", versioni completamente indipendenti fra i canali.
+            // La fetch è unica (/releases?per_page=30), il filtro è il
+            // prefisso; il download usa il tag completo (URL canonica
+            // releases/download/<tag>/app-release.apk, idente per tutti).
+            // Regola di pubblicazione: l'asset DEVE chiamarsi
+            // app-release.apk e i tag di un canale crescono sempre
+            // (phone-v1.10.1 dopo phone-v1.10.0, ecc.).
+            val channel = if (com.scviewer.fire.cast.DeviceProfile.isPhone(activity))
+                CHANNEL_PHONE else CHANNEL_TV
+            val latest = fetchNewestChannelRelease(channel, current)
+            if (latest.isNullOrBlank()) return@launch
             // Il gate si aggiorna ad ogni fetch RIUSCITO (anche se la release
             // corrente è già la più recente): stessa semantica di MainActivity.
             prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
@@ -154,14 +159,57 @@ object UpdateManager {
         }
     }
 
-    /** Confronto semantico dei tag "vMAJ.MIN.PATCH" (estratto da MainActivity). */
+    /** Confronto semantico dei tag "vMAJ.MIN.PATCH" (estratto da MainActivity;
+     *  tollerante anche ai tag di canale "phone-vX.Y.Z" / "tv-vX.Y.Z"). */
     private fun isVersionNewer(latest: String, current: String): Boolean {
-        fun nums(v: String) = v.removePrefix("v").split('.').let {
+        return runCatching { numsOf(latest) > numsOf(current) }.getOrDefault(false)
+    }
+
+    /** Peso numerico di un tag di versione: la parte numerica è quella dopo
+     *  l'ultimo "v" del tag ("v1.10.0" → "1.10.0", "phone-v1.10.0" →
+     *  "1.10.0"); suffissi extra sono ignorati nel confronto. */
+    private fun numsOf(v: String): Long =
+        v.substringAfterLast("v").split('.').let {
             (it.getOrNull(0)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L) * 1_000_000L +
             (it.getOrNull(1)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L) * 1_000L +
             (it.getOrNull(2)?.filter { c -> c.isDigit() }?.toLongOrNull() ?: 0L)
         }
-        return runCatching { nums(latest) > nums(current) }.getOrDefault(false)
+
+    /** Canali di rilascio (prefisso dei tag su GitHub). */
+    private const val CHANNEL_PHONE = "phone"
+    private const val CHANNEL_TV = "tv"
+
+    /** GET /releases?per_page=30 e filtro sul CANALE [channel]: ritorna il
+     *  TAG COMPLETO ("phone-vX.Y.Z" / "tv-vX.Y.Z") della release più nuova
+     *  di quella installata [current] ("vX.Y.Z"), null se nessuna lo è o la
+     *  fetch fallisce. Le due liste di canali sono indipendenti: un canale
+     *  non vede MAI i tag dell'altro (né i legacy senza prefisso, v1.3–v1.9).
+     *  Il download usa il tag completo: releases/download/<tag>/app-release.apk. */
+    private fun fetchNewestChannelRelease(channel: String, current: String): String? {
+        return runCatching {
+            val client = okhttp3.OkHttpClient.Builder()
+                .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+            client.newCall(
+                okhttp3.Request.Builder()
+                    .url("https://api.github.com/repos/hackyday/SCViewer/releases?per_page=30")
+                    .header("Accept", "application/vnd.github+json")
+                    .build()
+            ).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val body = resp.body?.string() ?: return@use null
+                val arr = org.json.JSONArray(body)
+                val prefix = "$channel-"
+                var best: String? = null
+                for (i in 0 until arr.length()) {
+                    val tag = arr.optJSONObject(i)?.optString("tag_name") ?: continue
+                    if (!tag.startsWith(prefix)) continue
+                    val version = tag.substringAfter(prefix)
+                    if (!isVersionNewer(version, current)) continue
+                    if (best == null || numsOf(version) > numsOf(best.substringAfter(prefix))) best = tag
+                }
+                best
+            }
+        }.getOrNull()
     }
 
     // -- Chip nativo ------------------------------------------------------------
